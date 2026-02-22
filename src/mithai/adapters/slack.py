@@ -61,12 +61,14 @@ class SlackAdapter(Adapter):
             logger.warning("Received approval for unknown request: %s", request_id)
             return
 
-        user = body.get("user", {}).get("name", "unknown")
+        user_id = body.get("user", {}).get("id", "")
+        user_name = body.get("user", {}).get("name", "unknown")
+        user_mention = f"<@{user_id}>" if user_id else user_name
         action_text = "Approved" if approved else "Denied"
-        logger.info("Approval %s by %s for request %s", action_text.lower(), user, request_id)
+        logger.info("Approval %s by %s for request %s", action_text.lower(), user_name, request_id)
 
         pending["approved"] = approved
-        pending["user"] = user
+        pending["user"] = user_name
         pending["event"].set()
 
         # Update the original message to show the decision
@@ -82,13 +84,13 @@ class SlackAdapter(Adapter):
             self._app.client.chat_update(
                 channel=channel,
                 ts=ts,
-                text=f"{action_text} by {user}",
+                text=f"{action_text} by {user_mention}",
                 blocks=[
                     {
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": f"{original_text}\n\n*{action_text}* by {user}",
+                            "text": f"{original_text}\n\n*{action_text}* by {user_mention}",
                         },
                     },
                 ],
@@ -112,7 +114,7 @@ class SlackAdapter(Adapter):
             )
 
             response = on_message(incoming, self)
-            say(response)
+            say(text=response, thread_ts=message.get("ts"))
 
         @self._app.event("app_mention")
         def handle_app_mention(event, say):
@@ -135,7 +137,7 @@ class SlackAdapter(Adapter):
             )
 
             response = on_message(incoming, self)
-            say(response)
+            say(text=response, thread_ts=event.get("ts"))
 
         logger.info("Starting Slack adapter (Socket Mode)")
         self._handler.start()

@@ -1,10 +1,13 @@
 """Discover and load skills from disk."""
 
+from __future__ import annotations
+
 import importlib.util
 import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +29,9 @@ class Skill:
     name: str
     prompt: str
     tools: list[ToolDefinition]
-    handle: callable
+    handle: Callable
     source_dir: Path = field(repr=False)
+    resolve_human: Callable | None = field(default=None, repr=False)
 
 
 def _load_skill(skill_dir: Path) -> Skill | None:
@@ -55,6 +59,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
 
     raw_tools = getattr(mod, "TOOLS", None)
     handle_fn = getattr(mod, "handle", None)
+    resolve_human_fn = getattr(mod, "resolve_human", None)
 
     if raw_tools is None:
         logger.warning("Skill %s: missing TOOLS export", skill_dir.name)
@@ -79,6 +84,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
         tools=tools,
         handle=handle_fn,
         source_dir=skill_dir,
+        resolve_human=resolve_human_fn,
     )
 
 
@@ -162,8 +168,8 @@ def validate_skill(skill_dir: Path) -> list[str]:
             if "input_schema" not in t:
                 errors.append(f"Tool {i}: missing 'input_schema'")
             human = t.get("human")
-            if human is not None and human not in ("approve", "confirm"):
-                errors.append(f"Tool {i}: invalid human level '{human}' (must be approve or confirm)")
+            if human is not None and human not in ("approve", "confirm", "dynamic"):
+                errors.append(f"Tool {i}: invalid human level '{human}' (must be approve, confirm, or dynamic)")
 
     if not hasattr(mod, "handle"):
         errors.append("tools.py does not export handle() function")

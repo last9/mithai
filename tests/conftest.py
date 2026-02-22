@@ -56,6 +56,50 @@ def handle(name, input, ctx):
 
 
 @pytest.fixture
+def tmp_dynamic_skill_dir(tmp_path):
+    """Create a skill with resolve_human for dynamic approval."""
+    skill_dir = tmp_path / "skills" / "dynamic_shell"
+    skill_dir.mkdir(parents=True)
+
+    (skill_dir / "prompt.md").write_text("Run commands dynamically.")
+
+    (skill_dir / "tools.py").write_text('''
+import json
+
+SAFE_COMMANDS = ["uptime", "whoami"]
+
+TOOLS = [
+    {
+        "name": "run_command",
+        "description": "Run a command.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+            },
+            "required": ["command"],
+        },
+        "human": "dynamic",
+    },
+]
+
+def resolve_human(name, input, ctx):
+    if name != "run_command":
+        return None
+    if input.get("command", "") in SAFE_COMMANDS:
+        return None
+    return "approve"
+
+def handle(name, input, ctx):
+    if name == "run_command":
+        return json.dumps({"ran": input["command"]})
+    return json.dumps({"error": f"Unknown: {name}"})
+''')
+
+    return tmp_path / "skills"
+
+
+@pytest.fixture
 def tmp_config(tmp_path):
     """Create a temporary config.yaml."""
     config = {

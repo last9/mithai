@@ -7,6 +7,7 @@ with Human MCP checks, and coordinates all components.
 
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from mithai.adapters.base import Adapter, IncomingMessage
@@ -113,24 +114,31 @@ class Engine:
                         "error": f"Unknown tool: {prefixed_name}",
                     })
                 else:
+                    # Build context early — needed for dynamic human resolution and execution
+                    skill_name = prefixed_name.split("__")[0]
+                    skill_ctx = build_context(
+                        state=self._state,
+                        channel_id=message.channel_id,
+                        user_id=message.user_id,
+                        skill_config=get_skill_config(self._config, skill_name),
+                    )
+
+                    # Resolve dynamic human level — let the skill decide
+                    effective_def = tool_def
+                    if tool_def.human == "dynamic":
+                        skill = self._skills.get(skill_name)
+                        if skill and skill.resolve_human:
+                            resolved = skill.resolve_human(tool_def.name, tool_input, skill_ctx)
+                            effective_def = replace(tool_def, human=resolved)
+
                     # Human MCP check — routes through the originating adapter
                     approved = self._human.request_approval(
-                        prefixed_name, tool_input, tool_def, message.channel_id,
+                        prefixed_name, tool_input, effective_def, message.channel_id,
                         adapter=adapter,
                     )
 
                     if approved:
                         logger.info("Executing tool: %s", prefixed_name)
-                        skill_name = prefixed_name.split("__")[0]
-                        skill_ctx = build_context(
-                            state=self._state,
-                            channel_id=message.channel_id,
-                            user_id=message.user_id,
-                            skill_config=get_skill_config(self._config, skill_name),
-                        )
-                        # Let the skill know a human explicitly approved this call
-                        if tool_def.human is not None:
-                            skill_ctx["human_approved"] = True
                         result = self._router.route(prefixed_name, tool_input, skill_ctx)
                     else:
                         logger.info("Tool denied by human: %s", prefixed_name)

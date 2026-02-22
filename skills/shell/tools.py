@@ -1,4 +1,4 @@
-"""Skill: Shell command runner with allowlist."""
+"""Skill: Shell command runner with dynamic approval."""
 
 import json
 import shlex
@@ -8,7 +8,7 @@ import subprocess
 TOOLS = [
     {
         "name": "run_command",
-        "description": "Run any shell command. Requires human approval. Commands in the allowlist run directly after approval; commands outside the allowlist also run if the human approves.",
+        "description": "Run a shell command on the host system.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -19,41 +19,37 @@ TOOLS = [
             },
             "required": ["command"],
         },
-        "human": "approve",
-    },
-    {
-        "name": "list_allowed",
-        "description": "List the commands that are allowed to run.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-        },
+        "human": "dynamic",
     },
 ]
 
 DEFAULT_ALLOWED = ["df -h", "free -h", "uptime", "whoami", "uname -a", "ps aux"]
 
 
-def handle(name: str, input: dict, ctx: dict) -> str:
+def resolve_human(name: str, input: dict, ctx: dict) -> str | None:
+    """Determine approval level at runtime.
+
+    Commands in the allowlist auto-execute.
+    Everything else requires human approval.
+    """
+    if name != "run_command":
+        return None
+
     config = ctx.get("config", {})
     allowed = config.get("allowed_commands", DEFAULT_ALLOWED)
+    command = input.get("command", "")
+
+    if command in allowed:
+        return None  # auto-execute
+    return "approve"
+
+
+def handle(name: str, input: dict, ctx: dict) -> str:
+    config = ctx.get("config", {})
     timeout = config.get("timeout", 30)
 
-    if name == "list_allowed":
-        return json.dumps({"allowed_commands": allowed})
-
-    elif name == "run_command":
+    if name == "run_command":
         command = input["command"]
-        human_approved = ctx.get("human_approved", False)
-
-        # If a human approved this via Human MCP, skip the allowlist —
-        # the human already reviewed the exact command.
-        if not human_approved and command not in allowed:
-            return json.dumps({
-                "error": f"Command not in allowlist: {command}",
-                "allowed": allowed,
-            })
-
         try:
             result = subprocess.run(
                 shlex.split(command),

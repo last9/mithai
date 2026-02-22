@@ -9,6 +9,11 @@ Levels:
   - None: auto-execute (default)
   - "approve": show what will happen, human approves or denies
   - "confirm": show what will happen, human types confirmation text
+  - "dynamic": resolved at runtime by the skill's resolve_human() function.
+    The engine calls resolve_human(tool_name, tool_input, ctx) which returns
+    the actual level (None, "approve", or "confirm") based on the input.
+    This allows skills to auto-execute safe operations while requiring
+    approval for dangerous ones (e.g. allowlisted vs unknown shell commands).
 """
 
 from __future__ import annotations

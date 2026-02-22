@@ -66,3 +66,43 @@ def handle(n, i, c): pass
 
     errors = validate_skill(skill_dir)
     assert any("invalid" in e for e in errors)
+
+
+def test_load_dynamic_skill(tmp_dynamic_skill_dir):
+    """Skills with resolve_human are loaded correctly."""
+    skills = load_skills([tmp_dynamic_skill_dir])
+    assert "dynamic_shell" in skills
+
+    skill = skills["dynamic_shell"]
+    assert skill.tools[0].human == "dynamic"
+    assert skill.resolve_human is not None
+
+    # Safe command → auto-execute
+    level = skill.resolve_human("run_command", {"command": "uptime"}, {})
+    assert level is None
+
+    # Unsafe command → needs approval
+    level = skill.resolve_human("run_command", {"command": "rm -rf /"}, {})
+    assert level == "approve"
+
+
+def test_load_skill_without_resolve_human(tmp_skill_dir):
+    """Skills without resolve_human have it set to None."""
+    skills = load_skills([tmp_skill_dir])
+    skill = skills["test_skill"]
+    assert skill.resolve_human is None
+
+
+def test_validate_dynamic_human_level(tmp_path):
+    """dynamic is a valid human level."""
+    skill_dir = tmp_path / "dynamic_skill"
+    skill_dir.mkdir()
+    (skill_dir / "prompt.md").write_text("test")
+    (skill_dir / "tools.py").write_text('''
+TOOLS = [{"name": "x", "description": "x", "input_schema": {}, "human": "dynamic"}]
+def resolve_human(n, i, c): return None
+def handle(n, i, c): pass
+''')
+
+    errors = validate_skill(skill_dir)
+    assert errors == []

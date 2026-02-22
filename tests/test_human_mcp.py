@@ -71,3 +71,34 @@ def test_config_override_deescalate():
     level = mcp.resolve_level("k8s__restart", tool_def)
 
     assert level is None  # De-escalated to auto-execute
+
+
+def test_dynamic_level_resolves_to_none():
+    """When dynamic resolves to None, tool auto-executes without asking human."""
+    adapter = FakeAdapter()
+    mcp = HumanMCP()
+
+    # Simulate what the engine does: resolve dynamic → replace tool_def
+    tool_def = ToolDefinition(
+        name="run_command", description="Run a shell command", input_schema={}, human=None
+    )
+    result = mcp.request_approval("shell__run_command", {"command": "uptime"}, tool_def, "ch1", adapter=adapter)
+
+    assert result is True
+    assert len(adapter.requests) == 0  # No human asked
+
+
+def test_dynamic_level_resolves_to_approve():
+    """When dynamic resolves to approve, human is consulted."""
+    adapter = FakeAdapter(approve=True)
+    mcp = HumanMCP()
+
+    # Simulate what the engine does: resolve dynamic → replace tool_def with "approve"
+    tool_def = ToolDefinition(
+        name="run_command", description="Run a shell command", input_schema={}, human="approve"
+    )
+    result = mcp.request_approval("shell__run_command", {"command": "rm -rf /"}, tool_def, "ch1", adapter=adapter)
+
+    assert result is True
+    assert len(adapter.requests) == 1
+    assert adapter.requests[0].level == "approve"

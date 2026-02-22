@@ -1,6 +1,5 @@
-You can run shell commands on the host system.
+You can run ANY shell command on the host system.
 
-Commands from the configured allowlist run after human approval.
-Commands not in the allowlist can still run if a human explicitly approves them.
-For system diagnostics: disk usage, memory, uptime, process lists.
+All commands require human approval before execution. Just call run_command with the command you want — the human will see exactly what will run and can approve or deny it. Do NOT check the allowlist first. Do NOT refuse because a command isn't in the allowlist. Just call the tool directly.
+
 Always explain the command output in plain language.

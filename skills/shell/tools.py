@@ -8,13 +8,13 @@ import subprocess
 TOOLS = [
     {
         "name": "run_command",
-        "description": "Run a shell command from the allowlist. Returns stdout/stderr.",
+        "description": "Run any shell command. Requires human approval. Commands in the allowlist run directly after approval; commands outside the allowlist also run if the human approves.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The command to run (must be in the allowlist)",
+                    "description": "The shell command to run",
                 },
             },
             "required": ["command"],

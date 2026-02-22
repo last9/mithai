@@ -81,7 +81,7 @@ class Engine:
             system=system,
             messages=messages,
             tools=tools if tools else None,
-            max_tokens=self._llm_config.get("max_tokens", 1024),
+            max_tokens=self._llm_config.get("max_tokens", 4096),
         )
         messages.append({"role": "assistant", "content": response.content})
 
@@ -156,7 +156,7 @@ class Engine:
                 system=system,
                 messages=messages,
                 tools=tools,
-                max_tokens=self._llm_config.get("max_tokens", 1024),
+                max_tokens=self._llm_config.get("max_tokens", 4096),
             )
             messages.append({"role": "assistant", "content": response.content})
 
@@ -175,14 +175,31 @@ class Engine:
         return response_text
 
     def _build_history(self, session: dict) -> list[dict]:
-        """Convert recent session turns into LLM message pairs."""
+        """Convert recent session turns into LLM message pairs.
+
+        Includes tool call summaries so the LLM knows what actions
+        it took in previous turns, not just the text response.
+        """
         turns = session.get("turns", [])
         recent = turns[-self._max_history:] if turns else []
 
         messages = []
         for turn in recent:
             messages.append({"role": "user", "content": turn["user_message"]})
-            messages.append({"role": "assistant", "content": turn["assistant_response"]})
+
+            # Build assistant content with tool context
+            parts = []
+            tool_calls = turn.get("tool_calls", [])
+            if tool_calls:
+                summary = ", ".join(
+                    f"{tc['tool']}({json.dumps(tc.get('input', {}), separators=(',', ':'))})"
+                    + (" → approved" if tc.get("approved") else " → denied")
+                    for tc in tool_calls
+                )
+                parts.append(f"[Tools called: {summary}]")
+            parts.append(turn["assistant_response"])
+
+            messages.append({"role": "assistant", "content": "\n".join(parts)})
         return messages
 
     def _compose_system_prompt(self) -> str:

@@ -109,8 +109,14 @@ class SlackAdapter(Adapter):
             if self._allowed_channels and channel not in self._allowed_channels:
                 return
 
+            raw_text = message.get("text", "")
+
+            # Skip messages with @mentions — app_mention handler covers those
+            if re.search(r"<@[A-Z0-9]+>", raw_text):
+                return
+
             incoming = IncomingMessage(
-                text=message.get("text", ""),
+                text=raw_text.strip(),
                 channel_id=channel,
                 user_id=message.get("user", "unknown"),
                 platform="slack",

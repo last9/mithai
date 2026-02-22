@@ -95,6 +95,8 @@ class SlackAdapter(Adapter):
             )
 
     def start(self, on_message: MessageHandler) -> None:
+        import re
+
         @self._app.message("")
         def handle_message(message, say):
             channel = message.get("channel", "")
@@ -107,6 +109,29 @@ class SlackAdapter(Adapter):
                 user_id=message.get("user", "unknown"),
                 platform="slack",
                 message_id=message.get("ts", ""),
+            )
+
+            response = on_message(incoming, self)
+            say(response)
+
+        @self._app.event("app_mention")
+        def handle_app_mention(event, say):
+            channel = event.get("channel", "")
+            if self._allowed_channels and channel not in self._allowed_channels:
+                return
+
+            # Strip the @mention from the text
+            text = re.sub(r"<@[A-Z0-9]+>\s*", "", event.get("text", "")).strip()
+            if not text:
+                say("How can I help?")
+                return
+
+            incoming = IncomingMessage(
+                text=text,
+                channel_id=channel,
+                user_id=event.get("user", "unknown"),
+                platform="slack",
+                message_id=event.get("ts", ""),
             )
 
             response = on_message(incoming, self)

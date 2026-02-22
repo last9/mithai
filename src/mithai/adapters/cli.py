@@ -1,6 +1,7 @@
 """CLI/terminal adapter for local development and testing."""
 
 from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
+from mithai.adapters.formatters import CLIFormatter
 from mithai.human.mcp import HumanRequest
 
 
@@ -13,6 +14,7 @@ class CLIAdapter(Adapter):
 
     def __init__(self):
         self._running = False
+        self._formatter = CLIFormatter()
 
     def start(self, on_message: MessageHandler) -> None:
         self._running = True
@@ -38,13 +40,15 @@ class CLIAdapter(Adapter):
             )
 
             response = on_message(message, self)
-            print(f"\nmithai> {response}\n")
+            for chunk in self._formatter.format(response):
+                print(f"\nmithai> {chunk}\n")
 
     def stop(self) -> None:
         self._running = False
 
     def send(self, message: OutgoingMessage) -> None:
-        print(f"mithai> {message.text}")
+        for chunk in self._formatter.format(message.text):
+            print(f"mithai> {chunk}")
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
         print(f"\n{'=' * 50}")

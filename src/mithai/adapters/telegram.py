@@ -6,6 +6,7 @@ import time
 import requests
 
 from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
+from mithai.adapters.formatters import TelegramFormatter
 from mithai.human.mcp import HumanRequest
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class TelegramAdapter(Adapter):
         self._poll_interval = poll_interval
         self._offset = 0
         self._running = False
+        self._formatter = TelegramFormatter()
 
     def _api(self, method: str, **kwargs) -> dict:
         resp = requests.post(f"{self._base_url}/{method}", json=kwargs, timeout=30)
@@ -82,12 +84,13 @@ class TelegramAdapter(Adapter):
         self._running = False
 
     def send(self, message: OutgoingMessage) -> None:
-        self._api(
-            "sendMessage",
-            chat_id=message.channel_id,
-            text=message.text,
-            parse_mode="Markdown",
-        )
+        for chunk in self._formatter.format(message.text):
+            self._api(
+                "sendMessage",
+                chat_id=message.channel_id,
+                text=chunk,
+                parse_mode="HTML",
+            )
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
         """Send approval request with inline keyboard buttons."""

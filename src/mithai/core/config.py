@@ -61,16 +61,28 @@ def _validate_config(config: dict) -> None:
     """Validate required config sections exist."""
     if "adapter" not in config:
         raise ValueError("Config must have an 'adapter' section")
-    if "type" not in config.get("adapter", {}):
-        raise ValueError("Config adapter must have a 'type' field")
+    adapter = config["adapter"]
+    has_type = "type" in adapter
+    has_types = "types" in adapter
+    if not has_type and not has_types:
+        raise ValueError("Config adapter must have 'type' or 'types' field")
     if "llm" not in config:
         raise ValueError("Config must have an 'llm' section")
 
 
-def get_adapter_config(config: dict) -> dict:
-    """Extract adapter-specific config based on adapter type."""
+def get_adapter_types(config: dict) -> list[str]:
+    """Get list of adapter types to run. Supports both 'type' and 'types'."""
     adapter = config["adapter"]
-    adapter_type = adapter["type"]
+    if "types" in adapter:
+        return adapter["types"]
+    return [adapter["type"]]
+
+
+def get_adapter_config(config: dict, adapter_type: str | None = None) -> dict:
+    """Extract adapter-specific config for a given adapter type."""
+    adapter = config["adapter"]
+    if adapter_type is None:
+        adapter_type = adapter.get("type", "cli")
     return adapter.get(adapter_type, {})
 
 

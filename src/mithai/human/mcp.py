@@ -45,8 +45,7 @@ class HumanMCP:
     a tool call needs human consultation before execution.
     """
 
-    def __init__(self, adapter: Adapter, config: dict | None = None):
-        self._adapter = adapter
+    def __init__(self, config: dict | None = None):
         self._timeout = (config or {}).get("timeout_seconds", 300)
         self._overrides: dict[str, str | None] = (config or {}).get("overrides", {})
 
@@ -70,9 +69,13 @@ class HumanMCP:
         tool_input: dict,
         tool_def: ToolDefinition,
         channel_id: str,
+        adapter: Adapter,
     ) -> bool:
         """
         Check if human consultation is needed and request it.
+
+        Routes the approval request through the adapter that received
+        the original message.
 
         Returns True if the tool should be executed.
         """
@@ -90,7 +93,7 @@ class HumanMCP:
         )
 
         logger.info("Human MCP: requesting %s for %s", level, prefixed_name)
-        return self._adapter.request_human_approval(request, channel_id)
+        return adapter.request_human_approval(request, channel_id)
 
     def _describe_action(
         self, prefixed_name: str, tool_input: dict, tool_def: ToolDefinition

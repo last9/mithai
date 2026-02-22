@@ -1,9 +1,6 @@
 """CLI/terminal adapter for local development and testing."""
 
-import sys
-from typing import Callable
-
-from mithai.adapters.base import Adapter, IncomingMessage, OutgoingMessage
+from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.human.mcp import HumanRequest
 
 
@@ -17,7 +14,7 @@ class CLIAdapter(Adapter):
     def __init__(self):
         self._running = False
 
-    def start(self, on_message: Callable[[IncomingMessage], str]) -> None:
+    def start(self, on_message: MessageHandler) -> None:
         self._running = True
         print("mithai> ready (type 'quit' to exit)\n")
 
@@ -40,7 +37,7 @@ class CLIAdapter(Adapter):
                 platform="cli",
             )
 
-            response = on_message(message)
+            response = on_message(message, self)
             print(f"\nmithai> {response}\n")
 
     def stop(self) -> None:
@@ -57,7 +54,6 @@ class CLIAdapter(Adapter):
         print(f"{'=' * 50}")
 
         if request.level == "confirm":
-            # Extract a confirmation token from the tool input
             confirm_text = _extract_confirm_token(request)
             print(f"\nType '{confirm_text}' to confirm, or anything else to deny:")
             try:
@@ -67,7 +63,6 @@ class CLIAdapter(Adapter):
                 return False
             approved = answer == confirm_text
         else:
-            # "approve" level — simple yes/no
             print("\nApprove? [y/N]: ", end="")
             try:
                 answer = input().strip().lower()
@@ -85,7 +80,6 @@ class CLIAdapter(Adapter):
 
 def _extract_confirm_token(request: HumanRequest) -> str:
     """Extract a confirmation token from tool input for the confirm level."""
-    # Use the first string value from tool_input, or the tool name
     for value in request.tool_input.values():
         if isinstance(value, str) and value:
             return value

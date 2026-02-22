@@ -28,17 +28,18 @@ class Engine:
     Takes an incoming message, builds context, calls the LLM with all
     skill tools, runs the tool-use loop (with Human MCP for approvals),
     and returns the final response text.
+
+    The engine is adapter-agnostic — the adapter is passed per-call
+    so the same engine can serve multiple adapters simultaneously.
     """
 
     def __init__(
         self,
         config: dict,
-        adapter: Adapter,
         llm: LLMProvider,
         state: StateBackend,
     ):
         self._config = config
-        self._adapter = adapter
         self._llm = llm
         self._state = state
 
@@ -46,14 +47,15 @@ class Engine:
         skill_paths = get_skill_paths(config)
         self._skills = load_skills(skill_paths)
         self._router = ToolRouter(self._skills)
-        self._human = HumanMCP(adapter, get_human_config(config))
+        self._human = HumanMCP(get_human_config(config))
         self._llm_config = get_llm_config(config)
 
-    def handle(self, message: IncomingMessage) -> str:
+    def handle(self, message: IncomingMessage, adapter: Adapter) -> str:
         """
         Process an incoming message and return the response text.
 
-        This is the main entry point — called by adapters for each message.
+        Called by adapters for each message. The adapter is passed so
+        Human MCP approvals route back to the correct platform.
         """
         system = self._compose_system_prompt()
         tools = self._router.collect_tools_for_llm()
@@ -98,14 +100,14 @@ class Engine:
                 if tool_def is None:
                     result = json.dumps({"error": f"Unknown tool: {prefixed_name}"})
                 else:
-                    # Human MCP check
+                    # Human MCP check — routes through the originating adapter
                     approved = self._human.request_approval(
-                        prefixed_name, tool_input, tool_def, message.channel_id
+                        prefixed_name, tool_input, tool_def, message.channel_id,
+                        adapter=adapter,
                     )
 
                     if approved:
                         logger.info("Executing tool: %s", prefixed_name)
-                        # Build skill-specific context
                         skill_name = prefixed_name.split("__")[0]
                         skill_ctx = build_context(
                             state=self._state,

@@ -3,11 +3,9 @@
 import json
 import logging
 import time
-from typing import Callable
-
 import requests
 
-from mithai.adapters.base import Adapter, IncomingMessage, OutgoingMessage
+from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.human.mcp import HumanRequest
 
 logger = logging.getLogger(__name__)
@@ -41,7 +39,7 @@ class TelegramAdapter(Adapter):
             raise RuntimeError(f"Telegram API error: {data}")
         return data.get("result", {})
 
-    def start(self, on_message: Callable[[IncomingMessage], str]) -> None:
+    def start(self, on_message: MessageHandler) -> None:
         self._running = True
         logger.info("Starting Telegram adapter (long-polling)")
 
@@ -71,7 +69,7 @@ class TelegramAdapter(Adapter):
                         message_id=str(msg["message_id"]),
                     )
 
-                    response = on_message(incoming)
+                    response = on_message(incoming, self)
                     self.send(OutgoingMessage(text=response, channel_id=chat_id))
 
             except KeyboardInterrupt:

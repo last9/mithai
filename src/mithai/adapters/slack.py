@@ -2,9 +2,8 @@
 
 import logging
 import threading
-from typing import Callable
 
-from mithai.adapters.base import Adapter, IncomingMessage, OutgoingMessage
+from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.human.mcp import HumanRequest
 
 logger = logging.getLogger(__name__)
@@ -95,7 +94,7 @@ class SlackAdapter(Adapter):
                 ],
             )
 
-    def start(self, on_message: Callable[[IncomingMessage], str]) -> None:
+    def start(self, on_message: MessageHandler) -> None:
         @self._app.message("")
         def handle_message(message, say):
             channel = message.get("channel", "")
@@ -110,7 +109,7 @@ class SlackAdapter(Adapter):
                 message_id=message.get("ts", ""),
             )
 
-            response = on_message(incoming)
+            response = on_message(incoming, self)
             say(response)
 
         logger.info("Starting Slack adapter (Socket Mode)")

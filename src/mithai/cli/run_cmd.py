@@ -1,9 +1,11 @@
-"""mithai run — start the bot with configured adapter."""
+"""mithai run — start the bot with configured adapters."""
 
 import logging
+import threading
+
 import click
 
-from mithai.core.config import get_adapter_config, get_llm_config, load_config
+from mithai.core.config import get_adapter_config, get_adapter_types, get_llm_config, load_config
 
 
 @click.command()
@@ -13,42 +15,82 @@ from mithai.core.config import get_adapter_config, get_llm_config, load_config
     "adapter_override",
     type=click.Choice(["cli", "slack", "telegram"]),
     default=None,
-    help="Override adapter type from config",
+    help="Run only this adapter (overrides config)",
 )
 @click.option("--verbose", is_flag=True, help="Enable debug logging")
 def run(config_path, adapter_override, verbose):
-    """Start mithai with the configured adapter and skills."""
+    """Start mithai with configured adapters and skills."""
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
     config = load_config(config_path)
-
-    if adapter_override:
-        config["adapter"]["type"] = adapter_override
-
-    adapter = _create_adapter(config)
     llm = _create_llm(config)
     state = _create_state(config)
 
     from mithai.core.engine import Engine
+    engine = Engine(config=config, llm=llm, state=state)
 
-    engine = Engine(config=config, adapter=adapter, llm=llm, state=state)
+    if adapter_override:
+        adapter_types = [adapter_override]
+    else:
+        adapter_types = get_adapter_types(config)
 
-    click.echo(f"Starting mithai with {config['adapter']['type']} adapter...")
+    adapters = []
+    for adapter_type in adapter_types:
+        adapter = _create_adapter(config, adapter_type)
+        adapters.append((adapter_type, adapter))
 
+    if len(adapters) == 1:
+        # Single adapter — run in main thread
+        name, adapter = adapters[0]
+        click.echo(f"Starting mithai with {name} adapter...")
+        try:
+            adapter.start(on_message=engine.handle)
+        except KeyboardInterrupt:
+            click.echo("\nShutting down...")
+        finally:
+            adapter.stop()
+    else:
+        # Multiple adapters — each in its own thread
+        names = [name for name, _ in adapters]
+        click.echo(f"Starting mithai with adapters: {', '.join(names)}")
+
+        threads = []
+        for name, adapter in adapters:
+            t = threading.Thread(
+                target=_run_adapter,
+                args=(name, adapter, engine),
+                daemon=True,
+            )
+            t.start()
+            threads.append(t)
+
+        try:
+            # Wait for any thread to finish (or Ctrl+C)
+            for t in threads:
+                t.join()
+        except KeyboardInterrupt:
+            click.echo("\nShutting down...")
+            for _, adapter in adapters:
+                adapter.stop()
+
+
+def _run_adapter(name: str, adapter, engine):
+    """Run a single adapter in a thread."""
+    logger = logging.getLogger(f"mithai.adapter.{name}")
     try:
+        logger.info("Starting %s adapter", name)
         adapter.start(on_message=engine.handle)
-    except KeyboardInterrupt:
-        click.echo("\nShutting down...")
+    except Exception:
+        logger.exception("Adapter %s crashed", name)
     finally:
         adapter.stop()
 
 
-def _create_adapter(config: dict):
-    adapter_type = config["adapter"]["type"]
-    adapter_config = get_adapter_config(config)
+def _create_adapter(config: dict, adapter_type: str):
+    adapter_config = get_adapter_config(config, adapter_type)
 
     if adapter_type == "cli":
         from mithai.adapters.cli import CLIAdapter

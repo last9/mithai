@@ -3,7 +3,7 @@
 import logging
 import click
 
-from mithai.core.config import get_llm_config, load_config
+from mithai.core.config import load_config
 
 
 @click.command()
@@ -17,7 +17,6 @@ def chat(config_path, verbose):
     )
 
     config = load_config(config_path)
-    config["adapter"]["type"] = "cli"  # Force CLI adapter
 
     from mithai.adapters.cli import CLIAdapter
     from mithai.core.engine import Engine
@@ -27,7 +26,7 @@ def chat(config_path, verbose):
     llm = _create_llm(config)
     state = _create_state(config)
 
-    engine = Engine(config=config, adapter=adapter, llm=llm, state=state)
+    engine = Engine(config=config, llm=llm, state=state)
 
     try:
         adapter.start(on_message=engine.handle)

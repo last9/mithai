@@ -10,6 +10,9 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from mithai.human.mcp import HumanRequest
 
+# Callback type: (message, adapter) -> response text
+MessageHandler = Callable[["IncomingMessage", "Adapter"], str]
+
 
 @dataclass
 class IncomingMessage:
@@ -40,12 +43,13 @@ class Adapter(ABC):
     """
 
     @abstractmethod
-    def start(self, on_message: Callable[[IncomingMessage], str]) -> None:
+    def start(self, on_message: MessageHandler) -> None:
         """
         Start listening for messages.
 
-        on_message is called for each incoming message and should return
-        the response text. The adapter handles sending the response.
+        on_message(message, adapter) is called for each incoming message.
+        The adapter passes itself so the engine can route Human MCP
+        approvals back through the correct platform.
         """
         ...
 

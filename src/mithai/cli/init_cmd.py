@@ -15,6 +15,8 @@ bot:
     Be concise and precise. Explain before acting.
 
 adapter:
+  # Single adapter: type: cli
+  # Multiple adapters: types: [slack, telegram]
   type: {adapter_type}
   slack:
     bot_token: ${{SLACK_BOT_TOKEN}}

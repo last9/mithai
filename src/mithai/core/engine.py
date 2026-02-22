@@ -7,6 +7,7 @@ with Human MCP checks, and coordinates all components.
 
 import json
 import logging
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -71,7 +72,9 @@ class Engine:
         tools = self._router.collect_tools_for_llm()
 
         # Load session and build conversation history
-        session_key = SessionManager.session_key(message.platform, message.channel_id)
+        # Use thread_id for Slack threads, fall back to channel_id
+        scope = message.thread_id or message.channel_id
+        session_key = SessionManager.session_key(message.platform, scope)
         session = self._sessions.load(session_key)
         history = self._build_history(session)
 
@@ -168,8 +171,9 @@ class Engine:
             )
             messages.append({"role": "assistant", "content": response.content})
 
-        # Extract final text
+        # Extract final text, strip any leaked history-format prefix
         response_text = self._extract_text(response)
+        response_text = re.sub(r"^\[Tools called:.*?\]\n?", "", response_text).strip()
 
         # Record turn to session
         turn = SessionManager.build_turn(
@@ -185,29 +189,46 @@ class Engine:
     def _build_history(self, session: dict) -> list[dict]:
         """Convert recent session turns into LLM message pairs.
 
-        Includes tool call summaries so the LLM knows what actions
-        it took in previous turns, not just the text response.
+        Uses the native Anthropic tool_use/tool_result format so the LLM
+        sees its own calling convention rather than a text summary it might mimic.
         """
         turns = session.get("turns", [])
         recent = turns[-self._max_history:] if turns else []
 
         messages = []
-        for turn in recent:
+        for turn_idx, turn in enumerate(recent):
             messages.append({"role": "user", "content": turn["user_message"]})
 
-            # Build assistant content with tool context
-            parts = []
             tool_calls = turn.get("tool_calls", [])
             if tool_calls:
-                summary = ", ".join(
-                    f"{tc['tool']}({json.dumps(tc.get('input', {}), separators=(',', ':'))})"
-                    + (" → approved" if tc.get("approved") else " → denied")
-                    for tc in tool_calls
-                )
-                parts.append(f"[Tools called: {summary}]")
-            parts.append(turn["assistant_response"])
+                # Assistant message with tool_use blocks
+                tool_use_blocks = []
+                tool_result_blocks = []
+                for tc_idx, tc in enumerate(tool_calls):
+                    tool_id = f"hist_{turn_idx}_{tc_idx}"
+                    tool_use_blocks.append({
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": tc["tool"],
+                        "input": tc.get("input", {}),
+                    })
+                    result = tc.get("result_summary", "")
+                    if tc.get("error"):
+                        result = json.dumps({"error": tc["error"]})
+                    elif not tc.get("approved", True):
+                        result = json.dumps({"denied": True})
+                    tool_result_blocks.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": result,
+                    })
 
-            messages.append({"role": "assistant", "content": "\n".join(parts)})
+                messages.append({"role": "assistant", "content": tool_use_blocks})
+                messages.append({"role": "user", "content": tool_result_blocks})
+
+            # Final assistant text response
+            messages.append({"role": "assistant", "content": turn["assistant_response"]})
+
         return messages
 
     def _compose_system_prompt(self) -> str:

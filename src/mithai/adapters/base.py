@@ -23,6 +23,7 @@ class IncomingMessage:
     user_id: str
     platform: str = ""
     message_id: str = field(default_factory=lambda: uuid4().hex[:12])
+    thread_id: str | None = None  # Slack thread_ts, etc.
 
 
 @dataclass

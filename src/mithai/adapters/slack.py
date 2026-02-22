@@ -121,6 +121,7 @@ class SlackAdapter(Adapter):
                 user_id=message.get("user", "unknown"),
                 platform="slack",
                 message_id=message.get("ts", ""),
+                thread_id=message.get("thread_ts"),
             )
 
             self._current_thread_ts = message.get("ts")
@@ -146,6 +147,7 @@ class SlackAdapter(Adapter):
                 user_id=event.get("user", "unknown"),
                 platform="slack",
                 message_id=event.get("ts", ""),
+                thread_id=event.get("thread_ts"),
             )
 
             self._current_thread_ts = event.get("ts")

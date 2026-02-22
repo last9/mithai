@@ -4,6 +4,7 @@ import logging
 import threading
 
 from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
+from mithai.adapters.formatters import SlackFormatter
 from mithai.human.mcp import HumanRequest
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,8 @@ class SlackAdapter(Adapter):
         self._allowed_channels = set(allowed_channels) if allowed_channels else None
         self._bot_token = bot_token
         self._approval_timeout = approval_timeout
+
+        self._formatter = SlackFormatter()
 
         # Pending approval requests: request_id -> threading.Event + result
         self._pending_approvals: dict[str, dict] = {}
@@ -114,7 +117,8 @@ class SlackAdapter(Adapter):
             )
 
             response = on_message(incoming, self)
-            say(text=response, thread_ts=message.get("ts"))
+            for chunk in self._formatter.format(response):
+                say(text=chunk, thread_ts=message.get("ts"))
 
         @self._app.event("app_mention")
         def handle_app_mention(event, say):
@@ -137,7 +141,8 @@ class SlackAdapter(Adapter):
             )
 
             response = on_message(incoming, self)
-            say(text=response, thread_ts=event.get("ts"))
+            for chunk in self._formatter.format(response):
+                say(text=chunk, thread_ts=event.get("ts"))
 
         logger.info("Starting Slack adapter (Socket Mode)")
         self._handler.start()
@@ -146,10 +151,11 @@ class SlackAdapter(Adapter):
         self._handler.close()
 
     def send(self, message: OutgoingMessage) -> None:
-        self._app.client.chat_postMessage(
-            channel=message.channel_id,
-            text=message.text,
-        )
+        for chunk in self._formatter.format(message.text):
+            self._app.client.chat_postMessage(
+                channel=message.channel_id,
+                text=chunk,
+            )
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
         """

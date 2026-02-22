@@ -34,6 +34,7 @@ class SlackAdapter(Adapter):
         self._approval_timeout = approval_timeout
 
         self._formatter = SlackFormatter()
+        self._current_thread_ts: str | None = None
 
         # Pending approval requests: request_id -> threading.Event + result
         self._pending_approvals: dict[str, dict] = {}
@@ -116,6 +117,7 @@ class SlackAdapter(Adapter):
                 message_id=message.get("ts", ""),
             )
 
+            self._current_thread_ts = message.get("ts")
             response = on_message(incoming, self)
             for chunk in self._formatter.format(response):
                 say(text=chunk, thread_ts=message.get("ts"))
@@ -140,6 +142,7 @@ class SlackAdapter(Adapter):
                 message_id=event.get("ts", ""),
             )
 
+            self._current_thread_ts = event.get("ts")
             response = on_message(incoming, self)
             for chunk in self._formatter.format(response):
                 say(text=chunk, thread_ts=event.get("ts"))
@@ -202,11 +205,14 @@ class SlackAdapter(Adapter):
                 },
             ]
 
-            self._app.client.chat_postMessage(
-                channel=channel_id,
-                text=f"Approval required for {request.tool_name}",
-                blocks=blocks,
-            )
+            post_kwargs = {
+                "channel": channel_id,
+                "text": f"Approval required for {request.tool_name}",
+                "blocks": blocks,
+            }
+            if self._current_thread_ts:
+                post_kwargs["thread_ts"] = self._current_thread_ts
+            self._app.client.chat_postMessage(**post_kwargs)
 
             logger.info(
                 "Waiting for approval on %s (timeout: %ds)",
@@ -219,10 +225,13 @@ class SlackAdapter(Adapter):
 
             if not clicked:
                 logger.warning("Approval timed out for %s", request.tool_name)
-                self._app.client.chat_postMessage(
-                    channel=channel_id,
-                    text=f"Approval timed out for `{request.tool_name}` — auto-denied.",
-                )
+                timeout_kwargs = {
+                    "channel": channel_id,
+                    "text": f"Approval timed out for `{request.tool_name}` — auto-denied.",
+                }
+                if self._current_thread_ts:
+                    timeout_kwargs["thread_ts"] = self._current_thread_ts
+                self._app.client.chat_postMessage(**timeout_kwargs)
                 return False
 
             return self._pending_approvals[request.request_id]["approved"]

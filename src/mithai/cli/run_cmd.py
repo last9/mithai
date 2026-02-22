@@ -81,7 +81,7 @@ def _create_llm(config: dict):
         from mithai.llm.anthropic import AnthropicProvider
         return AnthropicProvider(
             api_key=llm_config["api_key"],
-            model=llm_config.get("model", "claude-sonnet-4-5-20241022"),
+            model=llm_config.get("model", "claude-sonnet-4-6"),
         )
 
     else:

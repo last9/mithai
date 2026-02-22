@@ -81,7 +81,7 @@ def get_llm_config(config: dict) -> dict:
     provider_config = llm.get(provider, {})
     return {
         "provider": provider,
-        "model": llm.get("model", "claude-sonnet-4-5-20241022"),
+        "model": llm.get("model", "claude-sonnet-4-6"),
         "max_tokens": llm.get("max_tokens", 1024),
         **provider_config,
     }

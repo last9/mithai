@@ -134,7 +134,7 @@ adapter:
 
 llm:
   provider: anthropic
-  model: claude-sonnet-4-5-20241022
+  model: claude-sonnet-4-6
   anthropic:
     api_key: ${ANTHROPIC_API_KEY}
 

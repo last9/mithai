@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class AnthropicProvider(LLMProvider):
     """Claude via the Anthropic API."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-5-20241022"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
 

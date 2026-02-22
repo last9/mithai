@@ -12,6 +12,7 @@ from pathlib import Path
 from mithai.adapters.base import Adapter, IncomingMessage
 from mithai.core.config import get_human_config, get_llm_config, get_skill_config, get_skill_paths
 from mithai.core.context import build_context
+from mithai.core.session import SessionManager
 from mithai.core.skill_loader import Skill, load_skills
 from mithai.core.tool_router import ToolRouter
 from mithai.human.mcp import HumanMCP
@@ -50,6 +51,14 @@ class Engine:
         self._human = HumanMCP(get_human_config(config))
         self._llm_config = get_llm_config(config)
 
+        # Session memory
+        session_config = config.get("sessions", {})
+        self._sessions = SessionManager(
+            state,
+            max_turns=session_config.get("max_stored", 50),
+        )
+        self._max_history = session_config.get("max_history", 10)
+
     def handle(self, message: IncomingMessage, adapter: Adapter) -> str:
         """
         Process an incoming message and return the response text.
@@ -59,16 +68,13 @@ class Engine:
         """
         system = self._compose_system_prompt()
         tools = self._router.collect_tools_for_llm()
-        ctx = build_context(
-            state=self._state,
-            channel_id=message.channel_id,
-            user_id=message.user_id,
-            skill_config={
-                name: get_skill_config(self._config, name) for name in self._skills
-            },
-        )
 
-        messages = [{"role": "user", "content": message.text}]
+        # Load session and build conversation history
+        session_key = SessionManager.session_key(message.platform, message.channel_id)
+        session = self._sessions.load(session_key)
+        history = self._build_history(session)
+
+        messages = history + [{"role": "user", "content": message.text}]
 
         # Initial LLM call
         response = self._llm.create_message(
@@ -85,7 +91,9 @@ class Engine:
             len(response.content),
         )
 
-        # Tool-use loop
+        # Tool-use loop — track tool calls for session logging
+        turn_tool_calls = []
+
         while response.stop_reason == "tool_use":
             tool_results = []
 
@@ -99,6 +107,11 @@ class Engine:
 
                 if tool_def is None:
                     result = json.dumps({"error": f"Unknown tool: {prefixed_name}"})
+                    turn_tool_calls.append({
+                        "tool": prefixed_name,
+                        "input": tool_input,
+                        "error": f"Unknown tool: {prefixed_name}",
+                    })
                 else:
                     # Human MCP check — routes through the originating adapter
                     approved = self._human.request_approval(
@@ -126,6 +139,13 @@ class Engine:
                             "reason": "Human denied this action",
                         })
 
+                    turn_tool_calls.append({
+                        "tool": prefixed_name,
+                        "input": tool_input,
+                        "approved": approved,
+                        "result_summary": result[:500],
+                    })
+
                 tool_results.append(
                     LLMProvider.format_tool_result(block["id"], result)
                 )
@@ -141,7 +161,29 @@ class Engine:
             messages.append({"role": "assistant", "content": response.content})
 
         # Extract final text
-        return self._extract_text(response)
+        response_text = self._extract_text(response)
+
+        # Record turn to session
+        turn = SessionManager.build_turn(
+            user_id=message.user_id,
+            user_message=message.text,
+            tool_calls=turn_tool_calls,
+            assistant_response=response_text,
+        )
+        self._sessions.append_turn(session_key, turn)
+
+        return response_text
+
+    def _build_history(self, session: dict) -> list[dict]:
+        """Convert recent session turns into LLM message pairs."""
+        turns = session.get("turns", [])
+        recent = turns[-self._max_history:] if turns else []
+
+        messages = []
+        for turn in recent:
+            messages.append({"role": "user", "content": turn["user_message"]})
+            messages.append({"role": "assistant", "content": turn["assistant_response"]})
+        return messages
 
     def _compose_system_prompt(self) -> str:
         """Build the full system prompt from config + skill prompts."""

@@ -1,8 +1,12 @@
 """Skill: Shell command runner with dynamic approval."""
 
 import json
+import re
 import shlex
 import subprocess
+
+# Shell operators that require sh -c to interpret
+_SHELL_OPERATORS = re.compile(r"[|&;<>]")
 
 
 TOOLS = [
@@ -51,12 +55,15 @@ def handle(name: str, input: dict, ctx: dict) -> str:
     if name == "run_command":
         command = input["command"]
         try:
+            # Use shell mode for pipes, redirects, chained commands
+            use_shell = bool(_SHELL_OPERATORS.search(command))
             result = subprocess.run(
-                shlex.split(command),
+                command if use_shell else shlex.split(command),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
+                shell=use_shell,
             )
             return json.dumps({
                 "command": command,

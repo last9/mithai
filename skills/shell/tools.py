@@ -56,6 +56,7 @@ def handle(name: str, input: dict, ctx: dict) -> str:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                stdin=subprocess.DEVNULL,
             )
             return json.dumps({
                 "command": command,

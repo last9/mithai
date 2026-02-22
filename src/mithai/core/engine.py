@@ -148,7 +148,19 @@ class Engine:
         bot_config = self._config.get("bot", {})
         base = bot_config.get("system_prompt", "You are a helpful operations assistant.")
 
-        parts = [base, "\n---\n\n## Your Skills\n"]
+        parts = [base]
+
+        parts.append("\n---\n\n## Important: Tool Execution\n")
+        parts.append(
+            "When you decide a tool is needed, call it directly. "
+            "Do NOT ask the user for permission before calling a tool. "
+            "Dangerous or sensitive tools have a built-in human approval step — "
+            "the user will be prompted with Approve/Deny buttons automatically. "
+            "Your job is to decide which tool to call and call it. "
+            "Never say 'Would you like me to run this?' — just run it.\n"
+        )
+
+        parts.append("\n---\n\n## Your Skills\n")
         for name, skill in self._skills.items():
             parts.append(f"### {name}\n{skill.prompt}\n")
 

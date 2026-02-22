@@ -44,9 +44,11 @@ def handle(name: str, input: dict, ctx: dict) -> str:
 
     elif name == "run_command":
         command = input["command"]
+        human_approved = ctx.get("human_approved", False)
 
-        # Check allowlist
-        if command not in allowed:
+        # If a human approved this via Human MCP, skip the allowlist —
+        # the human already reviewed the exact command.
+        if not human_approved and command not in allowed:
             return json.dumps({
                 "error": f"Command not in allowlist: {command}",
                 "allowed": allowed,

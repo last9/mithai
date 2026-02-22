@@ -115,6 +115,9 @@ class Engine:
                             user_id=message.user_id,
                             skill_config=get_skill_config(self._config, skill_name),
                         )
+                        # Let the skill know a human explicitly approved this call
+                        if tool_def.human is not None:
+                            skill_ctx["human_approved"] = True
                         result = self._router.route(prefixed_name, tool_input, skill_ctx)
                     else:
                         logger.info("Tool denied by human: %s", prefixed_name)

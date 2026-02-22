@@ -2,7 +2,7 @@
 
 AI agent framework for infrastructure operations.
 
-mithai gives your team an AI-powered ops agent that lives in Slack, Telegram, or a terminal. It can query your infrastructure, take actions, and ask a human before doing anything dangerous.
+mithai gives your team an AI-powered ops agent that lives in Slack, Telegram, and a terminal — simultaneously. It can query your infrastructure, take actions, and ask a human before doing anything dangerous.
 
 ## How it works
 
@@ -127,10 +127,21 @@ bot:
     You are an ops assistant. Be concise.
 
 adapter:
-  type: slack  # or: telegram, cli
+  # Run one adapter:
+  type: slack
+
+  # Or run multiple adapters simultaneously:
+  # types:
+  #   - slack
+  #   - telegram
+
   slack:
     bot_token: ${SLACK_BOT_TOKEN}
     app_token: ${SLACK_APP_TOKEN}
+  telegram:
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    allowed_chat_ids:
+      - ${TELEGRAM_CHAT_ID}
 
 llm:
   provider: anthropic
@@ -148,11 +159,14 @@ skills:
       allowed_commands: ["df -h", "free -h", "uptime"]
 ```
 
+When using `types`, each adapter runs in its own thread sharing the same engine and skills. Human MCP approvals route back through whichever platform the message came from.
+
 ## CLI
 
 ```
 mithai init                    # scaffold project
-mithai run                     # start with configured adapter
+mithai run                     # start all configured adapters
+mithai run --adapter slack     # start only one adapter
 mithai chat                    # CLI REPL for development
 mithai skill create <name>     # create a new skill
 mithai skill list              # list loaded skills

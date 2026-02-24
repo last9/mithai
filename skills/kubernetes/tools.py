@@ -1,4 +1,4 @@
-"""Skill: Kubernetes operations and self-healing agent."""
+"""Skill: Kubernetes operations, self-healing agent, security auditing, and manifest generation."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ TOOLS = [
     },
     {
         "name": "get_logs",
-        "description": "Get recent logs from a pod.",
+        "description": "Get recent logs from a pod. Use previous=true to get logs from a crashed/previous container instance.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -46,6 +47,10 @@ TOOLS = [
                 "container": {
                     "type": "string",
                     "description": "Container name (optional, for multi-container pods)",
+                },
+                "previous": {
+                    "type": "boolean",
+                    "description": "Get logs from previous (crashed) container instance. Useful for CrashLoopBackOff.",
                 },
             },
             "required": ["pod"],
@@ -121,6 +126,73 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "cluster_health_score",
+        "description": (
+            "Run a comprehensive cluster health assessment and return a score from 0-100. "
+            "Checks node health, pod issues, CrashLoopBackOff count, privileged containers, "
+            "resource limits, PVC status, and warning event volume. "
+            "Use this for a quick 'how healthy is my cluster?' overview."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "security_audit",
+        "description": (
+            "Audit the cluster (or a specific namespace) for security issues: "
+            "privileged containers, root-running pods, host namespace access, "
+            "missing resource limits, default service accounts, wildcard RBAC, "
+            "and missing NetworkPolicies."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "namespace": {
+                    "type": "string",
+                    "description": "Namespace to audit. Omit to audit all namespaces.",
+                },
+            },
+        },
+    },
+    {
+        "name": "get_resource_usage",
+        "description": "Show live CPU and memory usage for pods or nodes (requires metrics-server).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["pods", "nodes"],
+                    "description": "Whether to show pod or node resource usage (default: pods)",
+                },
+                "namespace": {
+                    "type": "string",
+                    "description": "Namespace for pods (default: all namespaces)",
+                },
+            },
+        },
+    },
+    {
+        "name": "generate_manifest",
+        "description": (
+            "Generate a production-ready Kubernetes YAML manifest. "
+            "Supported types: deployment, statefulset, service, ingress, configmap, "
+            "secret, pvc, networkpolicy, hpa."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["deployment", "statefulset", "service", "ingress", "configmap", "secret", "pvc", "networkpolicy", "hpa"],
+                    "description": "Resource type to generate",
+                },
+                "name": {"type": "string", "description": "Resource name"},
+                "namespace": {"type": "string", "description": "Target namespace (default: default)"},
+            },
+            "required": ["kind", "name"],
+        },
+    },
     # --- Mutating tools (require Slack approval) ---
     {
         "name": "restart_deployment",
@@ -190,6 +262,34 @@ TOOLS = [
         },
         "human": "approve",
     },
+    {
+        "name": "drain_node",
+        "description": "Safely cordon and drain a node for maintenance (evicts all non-daemonset pods).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node": {"type": "string", "description": "Node name to drain"},
+                "force": {
+                    "type": "boolean",
+                    "description": "Force drain even if pods can't be gracefully evicted",
+                },
+            },
+            "required": ["node"],
+        },
+        "human": "approve",
+    },
+    {
+        "name": "uncordon_node",
+        "description": "Uncordon a node after maintenance so it can accept new pods again.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node": {"type": "string", "description": "Node name to uncordon"},
+            },
+            "required": ["node"],
+        },
+        "human": "approve",
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -197,6 +297,34 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 
 _KUBECTL_TIMEOUT = 30
+_SCRIPTS_DIR = Path(__file__).parent / "scripts"
+
+
+def _run_script(script_name: str, *args, timeout: int = 60) -> dict:
+    """Run a bundled shell script and return parsed JSON output."""
+    script = _SCRIPTS_DIR / script_name
+    if not script.exists():
+        return {"error": f"Script not found: {script_name}"}
+    try:
+        result = subprocess.run(
+            ["bash", str(script), *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        # Scripts write diagnostics to stderr and JSON to stdout
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if not stdout:
+            return {"error": stderr or "Script produced no output", "returncode": result.returncode}
+        try:
+            return {"result": json.loads(stdout), "log": stderr}
+        except json.JSONDecodeError:
+            return {"output": stdout, "log": stderr}
+    except subprocess.TimeoutExpired:
+        return {"error": f"Script timed out after {timeout}s"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def _kubectl(*args, timeout=_KUBECTL_TIMEOUT) -> dict:
@@ -393,6 +521,8 @@ def handle(name: str, input: dict, ctx: dict) -> str:  # noqa: A002
         cmd = ["logs", input["pod"], "-n", ns, f"--tail={tail}"]
         if input.get("container"):
             cmd += ["-c", input["container"]]
+        if input.get("previous"):
+            cmd += ["--previous"]
         result = _kubectl(*cmd, *flags)
         return json.dumps(result)
 
@@ -490,6 +620,49 @@ def handle(name: str, input: dict, ctx: dict) -> str:  # noqa: A002
             "--type=strategic", "-p", json.dumps(patch),
             *flags,
         )
+        return json.dumps(result)
+
+    if name == "cluster_health_score":
+        # Pass kubectl context/kubeconfig via env if configured
+        result = _run_script("cluster-health-check.sh", timeout=60)
+        return json.dumps(result)
+
+    if name == "security_audit":
+        args_list = []
+        if input.get("namespace"):
+            args_list.append(input["namespace"])
+        result = _run_script("security-audit.sh", *args_list, timeout=60)
+        return json.dumps(result)
+
+    if name == "get_resource_usage":
+        kind = input.get("kind", "pods")
+        if kind == "nodes":
+            result = _kubectl("top", "nodes", *flags)
+        else:
+            ns = input.get("namespace")
+            if ns:
+                result = _kubectl("top", "pods", "-n", ns, *flags)
+            else:
+                result = _kubectl("top", "pods", "-A", *flags)
+        return json.dumps(result)
+
+    if name == "generate_manifest":
+        kind = input["kind"]
+        resource_name = input["name"]
+        ns = input.get("namespace", "default")
+        result = _run_script("generate-manifest.sh", kind, resource_name, ns, timeout=10)
+        return json.dumps(result)
+
+    if name == "drain_node":
+        node = input["node"]
+        args_list = [node]
+        if input.get("force"):
+            args_list.append("--force")
+        result = _run_script("node-maintenance.sh", *args_list, timeout=360)
+        return json.dumps(result)
+
+    if name == "uncordon_node":
+        result = _kubectl("uncordon", input["node"], *flags)
         return json.dumps(result)
 
     return json.dumps({"error": f"Unknown tool: {name}"})

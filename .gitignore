@@ -1,5 +1,7 @@
 .env
 .mithai/
+.venv/
+/memory/
 __pycache__/
 *.pyc
 *.pyo

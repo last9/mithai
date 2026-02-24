@@ -30,10 +30,25 @@ TOOLS = [
 DEFAULT_ALLOWED = ["df -h", "free -h", "uptime", "whoami", "uname -a", "ps aux"]
 
 
+def _load_approvals(ctx: dict) -> dict:
+    """Load approval history from memory."""
+    from pathlib import Path
+    config = ctx.get("config", {})
+    memory_dir = Path(config.get("memory_dir", "./memory")).resolve()
+    approvals_file = memory_dir / "approvals.json"
+    if approvals_file.exists():
+        try:
+            return json.loads(approvals_file.read_text())
+        except Exception:
+            pass
+    return {}
+
+
 def resolve_human(name: str, input: dict, ctx: dict) -> str | None:
     """Determine approval level at runtime.
 
     Commands in the allowlist auto-execute.
+    Commands with enough prior approvals and no denials auto-promote.
     Everything else requires human approval.
     """
     if name != "run_command":
@@ -43,8 +58,17 @@ def resolve_human(name: str, input: dict, ctx: dict) -> str | None:
     allowed = config.get("allowed_commands", DEFAULT_ALLOWED)
     command = input.get("command", "")
 
+    # Static allowlist
     if command in allowed:
-        return None  # auto-execute
+        return None
+
+    # Learned approvals — auto-promote after threshold
+    threshold = config.get("approval_auto_promote", 3)
+    approvals = _load_approvals(ctx)
+    history = approvals.get("shell__run_command", {}).get(command, {})
+    if history.get("approved", 0) >= threshold and history.get("denied", 0) == 0:
+        return None  # Auto-promoted by learning
+
     return "approve"
 
 

@@ -31,6 +31,12 @@ skills:
   paths:
     - ./skills
 
+learning:
+  enabled: true
+  memory_dir: ./memory
+  reflection: true
+  approval_auto_promote: 3
+
 state:
   backend: filesystem
   filesystem:

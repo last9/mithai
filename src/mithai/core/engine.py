@@ -9,11 +9,15 @@ import json
 import logging
 import re
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
+
+import threading
 
 from mithai.adapters.base import Adapter, IncomingMessage
 from mithai.core.config import get_human_config, get_llm_config, get_skill_config, get_skill_paths
 from mithai.core.context import build_context
+from mithai.core.reflection import reflect
 from mithai.core.session import SessionManager
 from mithai.core.skill_loader import Skill, load_skills
 from mithai.core.tool_router import ToolRouter
@@ -52,6 +56,11 @@ class Engine:
         self._router = ToolRouter(self._skills)
         self._human = HumanMCP(get_human_config(config))
         self._llm_config = get_llm_config(config)
+
+        # Learning / memory
+        learning_config = config.get("learning", {})
+        self._learning_config = learning_config
+        self._memory_dir = Path(learning_config.get("memory_dir", "./memory")).resolve()
 
         # Session memory
         session_config = config.get("sessions", {})
@@ -157,6 +166,10 @@ class Engine:
                         "result_summary": result[:500],
                     })
 
+                    # Record approval pattern for learning
+                    if effective_def.human is not None:
+                        self._record_approval(prefixed_name, tool_input, approved)
+
                 tool_results.append(
                     LLMProvider.format_tool_result(block["id"], result)
                 )
@@ -183,6 +196,14 @@ class Engine:
             assistant_response=response_text,
         )
         self._sessions.append_turn(session_key, turn)
+
+        # Post-turn reflection — extract learnings in background
+        if self._learning_config.get("reflection") and turn_tool_calls:
+            threading.Thread(
+                target=reflect,
+                args=(turn, self._llm, self._memory_dir),
+                daemon=True,
+            ).start()
 
         return response_text
 
@@ -248,6 +269,22 @@ class Engine:
             "Never say 'Would you like me to run this?' — just run it.\n"
         )
 
+        # Inject persistent memory
+        memory_file = self._memory_dir / "MEMORY.md"
+        if memory_file.exists():
+            content = memory_file.read_text().strip()
+            if content:
+                parts.append("\n---\n\n## Your Memory\n")
+                parts.append(content)
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        daily_file = self._memory_dir / "daily" / f"{today}.md"
+        if daily_file.exists():
+            content = daily_file.read_text().strip()
+            if content:
+                parts.append(f"\n---\n\n## Today's Observations\n")
+                parts.append(content)
+
         parts.append("\n---\n\n## Your Skills\n")
         for name, skill in self._skills.items():
             parts.append(f"### {name}\n{skill.prompt}\n")
@@ -262,3 +299,35 @@ class Engine:
             if block.get("type") == "text":
                 parts.append(block["text"])
         return "\n".join(parts).strip() or "(no response)"
+
+    def _record_approval(self, prefixed_name: str, tool_input: dict, approved: bool) -> None:
+        """Record an approval decision for learning."""
+        approvals_file = self._memory_dir / "approvals.json"
+        try:
+            if approvals_file.exists():
+                data = json.loads(approvals_file.read_text())
+            else:
+                data = {}
+
+            # Key by tool name, sub-key by a normalized input string
+            if prefixed_name not in data:
+                data[prefixed_name] = {}
+
+            # For shell commands, use the command string as key
+            if "command" in tool_input:
+                input_key = tool_input["command"]
+            else:
+                input_key = json.dumps(tool_input, sort_keys=True, separators=(",", ":"))
+
+            if input_key not in data[prefixed_name]:
+                data[prefixed_name][input_key] = {"approved": 0, "denied": 0}
+
+            if approved:
+                data[prefixed_name][input_key]["approved"] += 1
+            else:
+                data[prefixed_name][input_key]["denied"] += 1
+
+            approvals_file.parent.mkdir(parents=True, exist_ok=True)
+            approvals_file.write_text(json.dumps(data, indent=2))
+        except Exception:
+            logger.debug("Failed to record approval", exc_info=True)

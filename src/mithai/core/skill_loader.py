@@ -32,6 +32,7 @@ class Skill:
     handle: Callable
     source_dir: Path = field(repr=False)
     resolve_human: Callable | None = field(default=None, repr=False)
+    startup: Callable | None = field(default=None, repr=False)
 
 
 def _load_skill(skill_dir: Path) -> Skill | None:
@@ -60,6 +61,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
     raw_tools = getattr(mod, "TOOLS", None)
     handle_fn = getattr(mod, "handle", None)
     resolve_human_fn = getattr(mod, "resolve_human", None)
+    startup_fn = getattr(mod, "startup", None)
 
     if raw_tools is None:
         logger.warning("Skill %s: missing TOOLS export", skill_dir.name)
@@ -85,6 +87,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
         handle=handle_fn,
         source_dir=skill_dir,
         resolve_human=resolve_human_fn,
+        startup=startup_fn,
     )
 
 

@@ -55,6 +55,14 @@ class Engine:
         self._skills = load_skills(skill_paths)
         self._router = ToolRouter(self._skills)
         self._human = HumanMCP(get_human_config(config))
+
+        # Run startup hooks for skills that need background work (e.g. polling loops)
+        for skill_name, skill in self._skills.items():
+            if skill.startup:
+                try:
+                    skill.startup(get_skill_config(config, skill_name))
+                except Exception:
+                    logger.warning("Skill %s startup() failed", skill_name, exc_info=True)
         self._llm_config = get_llm_config(config)
 
         # Learning / memory

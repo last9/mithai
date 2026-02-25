@@ -27,6 +27,21 @@ llm:
   anthropic:
     api_key: ${ANTHROPIC_API_KEY}
 
+# MCP servers — shared infrastructure for tool backends
+# Skills declare which MCP tools they need in their tools.py (MCP_TOOLS)
+mcp_servers:
+  linear:
+    transport: sse
+    url: https://mcp.linear.app/sse
+    headers:
+      Authorization: Bearer ${LINEAR_API_KEY}
+#   github:
+#     transport: stdio
+#     command: npx
+#     args: ["-y", "@github/mcp-server"]
+#     env:
+#       GITHUB_TOKEN: ${GITHUB_TOKEN}
+
 skills:
   paths:
     - ./skills

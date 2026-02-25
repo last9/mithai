@@ -85,6 +85,9 @@ class SlackAdapter(Adapter):
                     original_text = block.get("text", {}).get("text", "")
                     break
 
+            updated_text = f"{original_text}\n\n*{action_text}* by {user_mention}"
+            if len(updated_text) > 3000:
+                updated_text = updated_text[:2950] + f"\n...\n\n*{action_text}* by {user_mention}"
             self._app.client.chat_update(
                 channel=channel,
                 ts=ts,
@@ -94,7 +97,7 @@ class SlackAdapter(Adapter):
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": f"{original_text}\n\n*{action_text}* by {user_mention}",
+                            "text": updated_text,
                         },
                     },
                 ],

@@ -42,6 +42,9 @@ def run(config_path, adapter_override, verbose):
         adapter = _create_adapter(config, adapter_type)
         adapters.append((adapter_type, adapter))
 
+    # Give skills access to engine + adapter before starting
+    engine.late_bind(adapters)
+
     if len(adapters) == 1:
         # Single adapter — run in main thread
         name, adapter = adapters[0]

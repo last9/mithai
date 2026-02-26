@@ -14,6 +14,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Late-bind state — set by bind() after engine + adapters are ready
+# ---------------------------------------------------------------------------
+
+_engine = None
+
+# ---------------------------------------------------------------------------
 # Tool definitions
 # ---------------------------------------------------------------------------
 
@@ -730,7 +736,7 @@ def _format_slack_alert(issue: dict, flap_count: int) -> dict:
 
 
 def _healing_loop(alert_channel: str, poll_interval: int, cooldown_minutes: int, skill_config: dict) -> None:
-    """Background daemon loop: scan cluster and post Slack alerts for issues."""
+    """Background daemon loop: scan cluster, post Slack alerts, and auto-investigate."""
     token = os.environ.get("SLACK_BOT_TOKEN")
     if not token:
         logger.warning("kubernetes: SLACK_BOT_TOKEN not set — healing loop cannot post alerts")
@@ -744,13 +750,13 @@ def _healing_loop(alert_channel: str, poll_interval: int, cooldown_minutes: int,
         return
 
     client = WebClient(token=token)
+    auto_investigate = skill_config.get("auto_investigate", True)
     logger.info(
-        "kubernetes: healing loop started — channel=%s interval=%dm cooldown=%dm",
-        alert_channel, poll_interval, cooldown_minutes,
+        "kubernetes: healing loop started — channel=%s interval=%dm cooldown=%dm auto_investigate=%s",
+        alert_channel, poll_interval, cooldown_minutes, auto_investigate,
     )
 
     while True:
-        time.sleep(poll_interval * 60)
         try:
             issues = _scan_namespaces(
                 namespaces=skill_config.get("namespaces") or [],
@@ -766,12 +772,122 @@ def _healing_loop(alert_channel: str, poll_interval: int, cooldown_minutes: int,
                 payload = _format_slack_alert(issue, flap_count)
 
                 try:
-                    client.chat_postMessage(channel=alert_channel, **payload)
+                    resp = client.chat_postMessage(channel=alert_channel, **payload)
+                    thread_ts = resp["ts"]
+
+                    # Auto-investigate in the alert thread
+                    if auto_investigate and _engine is not None:
+                        try:
+                            _investigate_issue(issue, alert_channel, thread_ts, client)
+                        except Exception:
+                            logger.exception("kubernetes: investigation failed for %s/%s", issue["namespace"], issue["name"])
+
                 except SlackApiError as e:
                     logger.warning("kubernetes: failed to post alert: %s", e)
 
         except Exception:
             logger.exception("kubernetes: error during healing loop scan")
+
+        time.sleep(poll_interval * 60)
+
+
+# ---------------------------------------------------------------------------
+# BackgroundAdapter — used for auto-investigations (no human in the loop)
+# ---------------------------------------------------------------------------
+
+class _BackgroundAdapter:
+    """Minimal adapter for background-triggered engine calls.
+
+    Auto-denies all human approval requests so investigations stay read-only.
+    The LLM can still recommend fixes in its text response.
+    """
+
+    def start(self, on_message=None):
+        pass
+
+    def stop(self):
+        pass
+
+    def send(self, message):
+        pass
+
+    def request_human_approval(self, request, channel_id):
+        logger.debug("kubernetes: background adapter denied tool %s", request.tool_name)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Late-bind hook — receives engine + adapter after full initialization
+# ---------------------------------------------------------------------------
+
+def bind(engine, adapter) -> None:
+    """Receive the engine reference for background investigations."""
+    global _engine
+    _engine = engine
+    logger.info("kubernetes: bind() received engine — auto-investigation enabled")
+
+
+# ---------------------------------------------------------------------------
+# Auto-investigation — runs after an alert is posted
+# ---------------------------------------------------------------------------
+
+def _investigate_issue(issue: dict, alert_channel: str, thread_ts: str, client) -> None:
+    """Call the engine to investigate an issue and post findings as a thread reply."""
+    if _engine is None:
+        logger.debug("kubernetes: skipping investigation — engine not bound")
+        return
+
+    from mithai.adapters.base import IncomingMessage
+
+    resource = f"{issue['namespace']}/{issue['name']}"
+    reason = issue["reason"]
+    restart_info = f" ({issue['restart_count']} restarts)" if issue.get("restart_count") else ""
+    container_info = f", container: {issue['container']}" if issue.get("container") else ""
+    message_info = f"\nError details: {issue['message']}" if issue.get("message") else ""
+
+    prompt = (
+        f"Investigate this Kubernetes issue: {issue['kind']} {resource}{container_info} — {reason}{restart_info}\n"
+        f"{message_info}\n\n"
+        f"Steps:\n"
+        f"1. Call get_logs (with previous=true for CrashLoopBackOff/OOMKilled), describe_pod, and get_events for this resource\n"
+        f"2. Analyze the data\n"
+        f"3. Respond using EXACTLY this format (no other tools, no extra steps):\n\n"
+        f"*Root Cause*\n"
+        f"<1-2 sentence summary of why this is happening>\n\n"
+        f"*Evidence*\n"
+        f"<key log lines or events that confirm the cause — use `code blocks` for log snippets>\n\n"
+        f"*Fix*\n"
+        f"<numbered steps to resolve, with exact commands where applicable>\n\n"
+        f"*Severity*: high/medium/low — <1 sentence justification>\n\n"
+        f"IMPORTANT: Only use kubernetes tools (get_logs, describe_pod, get_events). Do NOT use shell, memory, or scan_cluster tools. Keep the response under 500 words."
+    )
+
+    msg = IncomingMessage(
+        text=prompt,
+        channel_id=alert_channel,
+        user_id="healing-loop",
+        platform="background",
+        thread_id=thread_ts,
+    )
+
+    try:
+        response = _engine.handle(msg, _BackgroundAdapter())
+        # Format for Slack and post as thread reply
+        from mithai.adapters.formatters import SlackFormatter
+        from slack_sdk.errors import SlackApiError
+        formatter = SlackFormatter()
+        chunks = formatter.format(response)
+        try:
+            for chunk in chunks:
+                client.chat_postMessage(
+                    channel=alert_channel,
+                    text=chunk,
+                    thread_ts=thread_ts,
+                )
+        except SlackApiError as e:
+            logger.warning("kubernetes: failed to post investigation reply: %s", e)
+    except Exception:
+        logger.exception("kubernetes: auto-investigation failed for %s", resource)
 
 
 def startup(config: dict) -> None:

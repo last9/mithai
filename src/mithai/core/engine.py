@@ -78,6 +78,20 @@ class Engine:
         )
         self._max_history = session_config.get("max_history", 10)
 
+    def late_bind(self, adapters: list[tuple[str, "Adapter"]]) -> None:
+        """Give skills access to engine + adapter after full initialization.
+
+        Called from run_cmd after adapters are created but before they start.
+        Skills that export bind(engine, adapter) get called here.
+        """
+        primary_adapter = adapters[0][1] if adapters else None
+        for skill_name, skill in self._skills.items():
+            if skill.bind:
+                try:
+                    skill.bind(self, primary_adapter)
+                except Exception:
+                    logger.warning("Skill %s bind() failed", skill_name, exc_info=True)
+
     def handle(self, message: IncomingMessage, adapter: Adapter) -> str:
         """
         Process an incoming message and return the response text.

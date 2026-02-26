@@ -45,6 +45,8 @@ skills:
       cooldown_minutes: 30
       # Namespaces to scan (empty = all non-system namespaces)
       namespaces: []
+      # Auto-investigate alerts in thread (LLM diagnoses + recommends fixes)
+      auto_investigate: true
       # Namespaces to always exclude from scanning
       exclude_namespaces:
         - kube-system

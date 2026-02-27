@@ -36,7 +36,7 @@ skills:
       # kubectl context override (empty = use current context)
       context: ""
       # Path to kubeconfig (empty = use default ~/.kube/config)
-      kubeconfig: ""
+      kubeconfig: "/tmp/kubeconfig/REDACTED_KUBECONFIG_CONTEXT/platform"
       # Slack channel to post self-healing alerts (leave empty to disable polling loop)
       alert_channel: ""
       # How often to scan the cluster for issues (minutes)

@@ -306,17 +306,21 @@ _KUBECTL_TIMEOUT = 30
 _SCRIPTS_DIR = Path(__file__).parent / "scripts"
 
 
-def _run_script(script_name: str, *args, timeout: int = 60) -> dict:
+def _run_script(script_name: str, *args, timeout: int = 60, env: dict | None = None) -> dict:
     """Run a bundled shell script and return parsed JSON output."""
     script = _SCRIPTS_DIR / script_name
     if not script.exists():
         return {"error": f"Script not found: {script_name}"}
     try:
+        run_env = os.environ.copy()
+        if env:
+            run_env.update(env)
         result = subprocess.run(
             ["bash", str(script), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=run_env,
         )
         # Scripts write diagnostics to stderr and JSON to stdout
         stdout = result.stdout.strip()
@@ -511,10 +515,21 @@ def _scan_namespaces(namespaces: list[str], config: dict) -> list[dict]:
 # Tool handler
 # ---------------------------------------------------------------------------
 
+def _script_env(config: dict) -> dict:
+    """Build env vars for shell scripts so they use the configured kubeconfig/context."""
+    env = {}
+    if config.get("kubeconfig"):
+        env["KUBECONFIG"] = config["kubeconfig"]
+    if config.get("context"):
+        env["KUBECTL_CONTEXT"] = config["context"]
+    return env
+
+
 def handle(name: str, input: dict, ctx: dict) -> str:  # noqa: A002
     config = ctx.get("config", {})
     flags = _kubectl_flags(config)
     default_ns = config.get("default_namespace", "default")
+    script_env = _script_env(config)
 
     if name == "get_pods":
         ns = input.get("namespace", default_ns)
@@ -630,14 +645,14 @@ def handle(name: str, input: dict, ctx: dict) -> str:  # noqa: A002
 
     if name == "cluster_health_score":
         # Pass kubectl context/kubeconfig via env if configured
-        result = _run_script("cluster-health-check.sh", timeout=60)
+        result = _run_script("cluster-health-check.sh", timeout=60, env=script_env)
         return json.dumps(result)
 
     if name == "security_audit":
         args_list = []
         if input.get("namespace"):
             args_list.append(input["namespace"])
-        result = _run_script("security-audit.sh", *args_list, timeout=60)
+        result = _run_script("security-audit.sh", *args_list, timeout=60, env=script_env)
         return json.dumps(result)
 
     if name == "get_resource_usage":
@@ -656,7 +671,7 @@ def handle(name: str, input: dict, ctx: dict) -> str:  # noqa: A002
         kind = input["kind"]
         resource_name = input["name"]
         ns = input.get("namespace", "default")
-        result = _run_script("generate-manifest.sh", kind, resource_name, ns, timeout=10)
+        result = _run_script("generate-manifest.sh", kind, resource_name, ns, timeout=10, env=script_env)
         return json.dumps(result)
 
     if name == "drain_node":
@@ -664,7 +679,7 @@ def handle(name: str, input: dict, ctx: dict) -> str:  # noqa: A002
         args_list = [node]
         if input.get("force"):
             args_list.append("--force")
-        result = _run_script("node-maintenance.sh", *args_list, timeout=360)
+        result = _run_script("node-maintenance.sh", *args_list, timeout=360, env=script_env)
         return json.dumps(result)
 
     if name == "uncordon_node":

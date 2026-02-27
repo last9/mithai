@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mithai
+  namespace: mithai
+  labels:
+    app.kubernetes.io/name: mithai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mithai
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mithai
+    spec:
+      serviceAccountName: mithai
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        - name: last9-registry
+
+      containers:
+        - name: mithai
+          image: docker-registry.last9.io/mithai:latest
+          imagePullPolicy: Always
+
+          # Secrets injected as env vars — config.yaml references them via ${VAR}
+          envFrom:
+            - secretRef:
+                name: mithai-secrets
+
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: state
+              mountPath: /app/.mithai/state
+            - name: memory
+              mountPath: /app/memory
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          # No HTTP server — check the process is alive via exec
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-f", "mithai"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+
+      volumes:
+        - name: config
+          configMap:
+            name: mithai-config
+        - name: state
+          emptyDir: {}
+        - name: memory
+          emptyDir: {}

@@ -28,9 +28,10 @@ def run(config_path, adapter_override, verbose):
     config = load_config(config_path)
     llm = _create_llm(config)
     state = _create_state(config)
+    memory = _create_memory_backend(config)
 
     from mithai.core.engine import Engine
-    engine = Engine(config=config, llm=llm, state=state)
+    engine = Engine(config=config, llm=llm, state=state, memory=memory)
 
     if adapter_override:
         adapter_types = [adapter_override]
@@ -148,3 +149,55 @@ def _create_state(config: dict):
 
     else:
         raise click.ClickException(f"Unknown state backend: {backend}")
+
+
+def _create_memory_backend(config: dict):
+    learning = config.get("learning", {})
+
+    # Backward compat: legacy memory_dir key
+    memory_config = learning.get("memory", {})
+    if not memory_config and "memory_dir" in learning:
+        memory_config = {"backend": "filesystem", "filesystem": {"path": learning["memory_dir"]}}
+
+    backend = memory_config.get("backend", "filesystem")
+
+    if backend == "filesystem":
+        from mithai.memory.filesystem import FilesystemMemoryBackend
+        fs_config = memory_config.get("filesystem", {})
+        path = fs_config.get("path", "./memory")
+        return FilesystemMemoryBackend(path)
+
+    elif backend == "redis":
+        try:
+            from mithai.memory.redis import RedisMemoryBackend
+        except ImportError:
+            raise click.ClickException(
+                "Redis memory backend requires 'redis' package. "
+                "Install with: pip install mithai[redis]"
+            )
+        redis_config = memory_config.get("redis", {})
+        return RedisMemoryBackend(
+            url=redis_config.get("url", "redis://localhost:6379"),
+            prefix=redis_config.get("prefix", "mithai:memory"),
+        )
+
+    elif backend == "s3":
+        try:
+            from mithai.memory.s3 import S3MemoryBackend
+        except ImportError:
+            raise click.ClickException(
+                "S3 memory backend requires 'boto3' package. "
+                "Install with: pip install mithai[s3]"
+            )
+        s3_config = memory_config.get("s3", {})
+        if "bucket" not in s3_config:
+            raise click.ClickException("S3 memory backend requires 'bucket' in config")
+        return S3MemoryBackend(
+            bucket=s3_config["bucket"],
+            prefix=s3_config.get("prefix", "memory"),
+            region=s3_config.get("region"),
+            profile=s3_config.get("profile"),
+        )
+
+    else:
+        raise click.ClickException(f"Unknown memory backend: {backend}")

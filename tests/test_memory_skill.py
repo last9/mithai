@@ -1,9 +1,10 @@
 """Tests for the memory skill."""
 
 import json
-from pathlib import Path
 
 import pytest
+
+from mithai.memory.filesystem import FilesystemMemoryBackend
 
 
 @pytest.fixture
@@ -15,9 +16,15 @@ def memory_dir(tmp_path):
 
 
 @pytest.fixture
-def ctx(memory_dir):
-    """Build a skill context pointing to the temp memory dir."""
-    return {"config": {"memory_dir": str(memory_dir)}}
+def memory_backend(memory_dir):
+    """Create a FilesystemMemoryBackend pointing to the temp dir."""
+    return FilesystemMemoryBackend(memory_dir)
+
+
+@pytest.fixture
+def ctx(memory_backend):
+    """Build a skill context with memory backend."""
+    return {"memory": memory_backend, "config": {}}
 
 
 def _handle(name, input, ctx):
@@ -107,6 +114,14 @@ class TestMemorySearch:
         matches = result["results"][0]["matches"]
         assert matches[0]["line"] == 2
         assert "kubernetes" in matches[0]["text"]
+
+
+class TestNoMemoryBackend:
+    def test_no_memory_returns_error(self):
+        ctx = {"config": {}}
+        result = _handle("memory_read", {"path": "test.md"}, ctx)
+        assert "error" in result
+        assert "not configured" in result["error"]
 
 
 class TestUnknownTool:

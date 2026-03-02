@@ -3,9 +3,9 @@
 import json
 import logging
 from datetime import date
-from pathlib import Path
 
 from mithai.llm.base import LLMProvider
+from mithai.memory.base import MemoryBackend
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ Be concise — one bullet per learning. If nothing new was learned, respond with
 """
 
 
-def reflect(turn_data: dict, llm: LLMProvider, memory_dir: Path) -> None:
+def reflect(turn_data: dict, llm: LLMProvider, memory: MemoryBackend) -> None:
     """Extract learnings from a turn and append to daily log.
 
     Runs as a background task after the response is sent.
@@ -54,14 +54,11 @@ def reflect(turn_data: dict, llm: LLMProvider, memory_dir: Path) -> None:
         if not text or text.lower() == "none":
             return
 
-        daily = memory_dir / "daily" / f"{date.today()}.md"
-        daily.parent.mkdir(parents=True, exist_ok=True)
-
+        path = f"daily/{date.today()}.md"
         timestamp = turn_data.get("timestamp", "")
-        with open(daily, "a") as f:
-            f.write(f"\n### {timestamp}\n{text}\n")
+        memory.write(path, f"\n### {timestamp}\n{text}\n", append=True)
 
-        logger.debug("Reflection written to %s", daily)
+        logger.debug("Reflection written to %s", path)
 
     except Exception:
         logger.debug("Reflection failed", exc_info=True)

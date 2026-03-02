@@ -53,11 +53,28 @@ skills:
         - kube-public
         - kube-node-lease
 
+    aws_costs:
+      region: us-east-1
+      profile: ""          # AWS CLI profile (empty = default)
+      account_id: ""       # for budgets API (empty = auto-detect via STS)
+
 learning:
   enabled: true
-  memory_dir: ./memory
   reflection: true
   approval_auto_promote: 3
+  # Memory backend: filesystem (default), redis, or s3
+  memory:
+    backend: filesystem
+    filesystem:
+      path: ./memory
+    # redis:
+    #   url: redis://localhost:6379
+    #   prefix: mithai:memory
+    # s3:
+    #   bucket: my-mithai-memory
+    #   prefix: memory
+    #   region: us-east-1
+    #   profile: ""
 
 state:
   backend: filesystem

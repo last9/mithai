@@ -84,6 +84,16 @@ class ToolRouter:
                     )
                     continue
 
+                existing = self._mcp_index.get(prefixed)
+                if existing is not None:
+                    prev_server = existing[0]
+                    if prev_server != server_name:
+                        logger.warning(
+                            "MCP tool name collision in skill '%s': tool '%s' from server "
+                            "'%s' overwrites same tool from server '%s'",
+                            skill_name, tool_def.name, server_name, prev_server,
+                        )
+
                 self._mcp_index[prefixed] = (server_name, tool_def.name, effective_def)
 
     def collect_tools_for_llm(self) -> list[dict]:

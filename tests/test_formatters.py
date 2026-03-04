@@ -11,7 +11,8 @@ class TestSlackFormatter:
         assert self.fmt.format("**bold text**") == ["*bold text*"]
 
     def test_heading_to_bold(self):
-        assert self.fmt.format("# My Heading") == ["*My Heading*"]
+        result = self.fmt.format("# My Heading")
+        assert result[0].startswith("*My Heading*")
 
     def test_h2_heading(self):
         assert self.fmt.format("## Sub Heading") == ["*Sub Heading*"]

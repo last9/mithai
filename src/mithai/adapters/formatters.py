@@ -56,8 +56,13 @@ class Formatter(ABC):
         return chunks
 
 
+_MD_FORMATTING = re.compile(r"\*\*|(?<!\*)\*(?!\*)|`|\[")
+_LONG_CELL_THRESHOLD = 40
+
+
 def _convert_md_tables(text: str) -> str:
-    """Convert markdown tables to aligned monospace code blocks."""
+    """Convert markdown tables to either aligned code blocks (short/plain cells)
+    or mrkdwn bullet lists (long or markdown-formatted cells)."""
     table_pattern = re.compile(r"((?:^\|.+\|\s*\n)+)", re.MULTILINE)
 
     def render_table(match: re.Match) -> str:
@@ -72,17 +77,73 @@ def _convert_md_tables(text: str) -> str:
 
         max_cols = max(len(r) for r in rows)
         rows = [r + [""] * (max_cols - len(r)) for r in rows]
-        widths = [max(len(r[i]) for r in rows) for i in range(max_cols)]
 
-        lines = []
-        for idx, row in enumerate(rows):
-            lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
-            if idx == 0:
-                lines.append("  ".join("─" * widths[i] for i in range(max_cols)))
+        # Detect whether any data cell is long or contains markdown formatting
+        data_rows = rows[1:] if len(rows) > 1 else rows
+        rich = any(
+            len(cell) > _LONG_CELL_THRESHOLD or bool(_MD_FORMATTING.search(cell))
+            for row in data_rows
+            for cell in row
+        )
 
-        return "```\n" + "\n".join(lines) + "\n```\n"
+        if rich:
+            return _render_table_as_mrkdwn(rows)
+        else:
+            return _render_table_as_code_block(rows)
 
     return table_pattern.sub(render_table, text)
+
+
+def _render_table_as_code_block(rows: list[list[str]]) -> str:
+    """Render a table as an aligned monospace code block (good for numeric/short data)."""
+    max_cols = max(len(r) for r in rows)
+    rows = [r + [""] * (max_cols - len(r)) for r in rows]
+    widths = [max(len(r[i]) for r in rows) for i in range(max_cols)]
+
+    lines = []
+    for idx, row in enumerate(rows):
+        lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
+        if idx == 0:
+            lines.append("  ".join("─" * widths[i] for i in range(max_cols)))
+
+    return "```\n" + "\n".join(lines) + "\n```\n"
+
+
+def _render_table_as_mrkdwn(rows: list[list[str]]) -> str:
+    """Render a table as a mrkdwn list (good for long/formatted content).
+
+    For 2-column tables: *col1* — col2
+    For N-column tables: *col1* | col2 | col3
+    """
+    if not rows:
+        return ""
+
+    header, data_rows = rows[0], rows[1:]
+    two_col = len(header) == 2
+
+    lines = []
+
+    # Header as bold labels
+    if two_col:
+        lines.append(f"*{header[0]}* — *{header[1]}*")
+    else:
+        lines.append("  |  ".join(f"*{h}*" for h in header))
+    lines.append("")  # blank line after header
+
+    # Data rows — pre-apply mrkdwn to cells so bold/links render correctly
+    # and _apply_mrkdwn in flush() won't double-convert them
+    for row in data_rows:
+        if not any(cell.strip() for cell in row):
+            continue
+        converted = [_apply_mrkdwn(cell) for cell in row]
+        if two_col:
+            col1, col2 = converted[0], converted[1] if len(converted) > 1 else ""
+            # Don't wrap col1 in *...* — it may already contain *bold* markers
+            lines.append(f"• {col1} — {col2}" if col2 else f"• {col1}")
+        else:
+            lines.append("• " + "  |  ".join(converted))
+
+    return "\n".join(lines) + "\n\n"
 
 
 def _stash_code_blocks(text: str) -> tuple[str, dict[str, str]]:
@@ -234,8 +295,16 @@ class TelegramFormatter(Formatter):
 
 def _apply_mrkdwn(text: str) -> str:
     """Apply markdown → Slack mrkdwn conversions for use inside Block Kit sections."""
-    # Bold: **text** → *text*
-    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    # Numbered list items: strip ** wrapping FIRST — Slack won't bold "N." patterns
+    # e.g. **1. prometheus-pod** → 1. prometheus-pod (before the main bold pass)
+    text = re.sub(r"\*\*(\d+\..+?)\*\*", r"\1", text)
+    # Bold: **text** → *text*  (loop handles adjacent spans like **a** — **b**)
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    # Strip any unmatched ** left over from malformed LLM output
+    text = re.sub(r"\*\*", "", text)
     # Links: [text](url) → <url|text>
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", text)
     # Bullets: - item → • item

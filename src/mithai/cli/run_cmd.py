@@ -24,6 +24,11 @@ def run(config_path, adapter_override, verbose):
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+    # Silence noisy third-party loggers
+    if not verbose:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("mcp").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     config = load_config(config_path)
     llm = _create_llm(config)

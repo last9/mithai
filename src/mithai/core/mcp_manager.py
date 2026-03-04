@@ -1,18 +1,24 @@
 """MCP server manager — connects to MCP servers and exposes their tools.
 
 Manages the lifecycle of MCP client sessions. Each configured server
-is a subprocess (stdio transport) that the manager connects to, discovers
-tools from, and can execute tool calls against.
+is a subprocess (stdio transport) or connected via SSE/streamablehttp.
 
 Skills declare which MCP tools they need via MCP_TOOLS in their tools.py.
 The manager only starts servers that are actually referenced by skills.
+
+Architecture: A background thread runs an asyncio event loop that keeps
+all MCP sessions alive (required by transports like streamablehttp that
+use anyio task groups). Sync callers use run_coroutine_threadsafe to
+bridge into the async loop.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 
 from mithai.core.skill_loader import ToolDefinition
@@ -25,11 +31,11 @@ class MCPServerConfig:
     """Parsed config for a single MCP server."""
 
     name: str
-    transport: str  # "stdio" or "sse"
+    transport: str  # "stdio", "sse", or "streamablehttp"
     command: str | None = None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
-    url: str | None = None  # sse only
+    url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
 
 
@@ -37,8 +43,7 @@ class MCPManager:
     """
     Manages connections to MCP servers and exposes their tools.
 
-    Each server is started as a subprocess (stdio) or connected via SSE.
-    Tools are discovered on startup and can be called by name.
+    Runs a background event loop thread to keep async transports alive.
     """
 
     def __init__(self, mcp_config: dict):
@@ -46,6 +51,7 @@ class MCPManager:
         self._sessions: dict[str, dict] = {}
         self._server_tools: dict[str, list[ToolDefinition]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
         self._parse_config(mcp_config)
 
     def _parse_config(self, mcp_config: dict) -> None:
@@ -61,17 +67,34 @@ class MCPManager:
                 headers=conf.get("headers", {}),
             )
 
+    def _ensure_loop(self) -> None:
+        """Start the background event loop thread if not running."""
+        if self._loop is not None:
+            return
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever,
+            name="mcp-event-loop",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run_async(self, coro, timeout: float = 30.0):
+        """Run an async coroutine on the background loop and block for result."""
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=timeout)
+
     def start(self, needed_servers: set[str]) -> None:
         """Connect to MCP servers that skills actually reference."""
         servers_to_start = needed_servers & set(self._configs.keys())
         if not servers_to_start:
             return
 
-        self._loop = asyncio.new_event_loop()
+        self._ensure_loop()
         for name in servers_to_start:
             config = self._configs[name]
             try:
-                self._loop.run_until_complete(self._connect_server(name, config))
+                self._run_async(self._connect_server(name, config), timeout=30.0)
                 tool_count = len(self._server_tools.get(name, []))
                 logger.info("Connected to MCP server: %s (%d tools)", name, tool_count)
             except Exception:
@@ -91,7 +114,6 @@ class MCPManager:
                 args=config.args,
                 env=config.env or None,
             )
-            # Enter both context managers and keep them open
             transport_ctx = stdio_client(params)
             read_stream, write_stream = await transport_ctx.__aenter__()
 
@@ -123,6 +145,26 @@ class MCPManager:
                 "session_ctx": session_ctx,
                 "transport_ctx": transport_ctx,
             }
+
+        elif config.transport == "streamablehttp":
+            from mcp.client.streamable_http import streamablehttp_client
+
+            if not config.url:
+                raise ValueError(f"MCP server '{name}' requires a url for streamablehttp transport")
+
+            transport_ctx = streamablehttp_client(url=config.url, headers=config.headers)
+            # streamablehttp returns (read, write, get_session_id) — 3 values
+            read_stream, write_stream, _get_session_id = await transport_ctx.__aenter__()
+
+            session_ctx = ClientSession(read_stream, write_stream)
+            session = await session_ctx.__aenter__()
+            await session.initialize()
+
+            self._sessions[name] = {
+                "session": session,
+                "session_ctx": session_ctx,
+                "transport_ctx": transport_ctx,
+            }
         else:
             raise ValueError(f"Unknown transport '{config.transport}' for MCP server '{name}'")
 
@@ -134,7 +176,7 @@ class MCPManager:
                 name=tool.name,
                 description=tool.description or "",
                 input_schema=tool.inputSchema,
-                human=None,  # Skills set human levels, not the server
+                human=None,
             ))
         self._server_tools[name] = tools
 
@@ -145,7 +187,7 @@ class MCPManager:
     def _reconnect(self, server_name: str) -> bool:
         """Reconnect to an MCP server after a connection failure."""
         config = self._configs.get(server_name)
-        if not config:
+        if not config or not self._loop:
             return False
 
         # Close stale session
@@ -155,12 +197,12 @@ class MCPManager:
                 try:
                     ctx = entry.get(ctx_key)
                     if ctx:
-                        self._loop.run_until_complete(ctx.__aexit__(None, None, None))
+                        self._run_async(ctx.__aexit__(None, None, None), timeout=10.0)
                 except Exception:
                     pass
 
         try:
-            self._loop.run_until_complete(self._connect_server(server_name, config))
+            self._run_async(self._connect_server(server_name, config), timeout=30.0)
             logger.info("Reconnected to MCP server: %s", server_name)
             return True
         except Exception:
@@ -178,8 +220,9 @@ class MCPManager:
 
         session = entry["session"]
         try:
-            result = self._loop.run_until_complete(
-                session.call_tool(name=tool_name, arguments=arguments)
+            result = self._run_async(
+                session.call_tool(name=tool_name, arguments=arguments),
+                timeout=60.0,
             )
             return self._extract_result(result)
 
@@ -188,13 +231,13 @@ class MCPManager:
                 "MCP tool call failed (%s.%s), attempting reconnect: %s",
                 server_name, tool_name, e,
             )
-            # Try reconnecting once
             if self._reconnect(server_name):
                 entry = self._sessions.get(server_name)
                 if entry:
                     try:
-                        result = self._loop.run_until_complete(
-                            entry["session"].call_tool(name=tool_name, arguments=arguments)
+                        result = self._run_async(
+                            entry["session"].call_tool(name=tool_name, arguments=arguments),
+                            timeout=60.0,
                         )
                         return self._extract_result(result)
                     except Exception as retry_err:
@@ -220,25 +263,25 @@ class MCPManager:
         return "\n".join(parts) if parts else json.dumps({"result": "ok"})
 
     def stop(self) -> None:
-        """Disconnect from all MCP servers."""
+        """Disconnect from all MCP servers and stop the background loop."""
         if not self._loop:
             return
 
         for name, entry in self._sessions.items():
-            try:
-                session_ctx = entry.get("session_ctx")
-                if session_ctx:
-                    self._loop.run_until_complete(session_ctx.__aexit__(None, None, None))
-            except Exception:
-                logger.debug("Error closing MCP session %s", name, exc_info=True)
-            try:
-                transport_ctx = entry.get("transport_ctx")
-                if transport_ctx:
-                    self._loop.run_until_complete(transport_ctx.__aexit__(None, None, None))
-            except Exception:
-                logger.debug("Error closing MCP transport %s", name, exc_info=True)
+            for ctx_key in ("session_ctx", "transport_ctx"):
+                try:
+                    ctx = entry.get(ctx_key)
+                    if ctx:
+                        self._run_async(ctx.__aexit__(None, None, None), timeout=10.0)
+                except Exception:
+                    logger.debug("Error closing MCP %s for %s", ctx_key, name, exc_info=True)
+
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread:
+            self._thread.join(timeout=5.0)
 
         self._loop.close()
         self._loop = None
+        self._thread = None
         self._sessions.clear()
         self._server_tools.clear()

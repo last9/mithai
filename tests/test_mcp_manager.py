@@ -1,6 +1,8 @@
 """Tests for MCP server manager."""
 
+import asyncio
 import json
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,6 +26,25 @@ def mcp_config():
             "env": {"GITHUB_TOKEN": "test-token"},
         },
     }
+
+
+def _setup_loop(mgr):
+    """Set up a background event loop for testing (mimics _ensure_loop)."""
+    mgr._loop = asyncio.new_event_loop()
+    mgr._thread = threading.Thread(target=mgr._loop.run_forever, daemon=True)
+    mgr._thread.start()
+
+
+def _teardown_loop(mgr):
+    """Tear down the background event loop."""
+    if mgr._loop and mgr._loop.is_running():
+        mgr._loop.call_soon_threadsafe(mgr._loop.stop)
+    if mgr._thread:
+        mgr._thread.join(timeout=5.0)
+    if mgr._loop and not mgr._loop.is_closed():
+        mgr._loop.close()
+    mgr._loop = None
+    mgr._thread = None
 
 
 def test_parse_config(mcp_config):
@@ -87,6 +108,7 @@ def test_start_only_needed_servers(mcp_config):
         mock_connect.assert_awaited_once()
         call_args = mock_connect.call_args
         assert call_args[0][0] == "linear"
+    _teardown_loop(mgr)
 
 
 def test_start_no_overlap(mcp_config):
@@ -128,8 +150,7 @@ def test_call_tool_not_connected():
 def test_call_tool_success():
     """Successful tool call returns text content."""
     mgr = MCPManager({})
-    import asyncio
-    mgr._loop = asyncio.new_event_loop()
+    _setup_loop(mgr)
 
     mock_session = MagicMock()
     mock_result = MagicMock()
@@ -146,14 +167,13 @@ def test_call_tool_success():
     assert result == "result data"
     mock_session.call_tool.assert_awaited_once_with(name="my_tool", arguments={"arg": "val"})
 
-    mgr._loop.close()
+    _teardown_loop(mgr)
 
 
 def test_call_tool_error_result():
     """MCP tool returning isError=True is handled."""
     mgr = MCPManager({})
-    import asyncio
-    mgr._loop = asyncio.new_event_loop()
+    _setup_loop(mgr)
 
     mock_session = MagicMock()
     mock_result = MagicMock()
@@ -171,14 +191,13 @@ def test_call_tool_error_result():
     assert "error" in data
     assert "something went wrong" in data["error"]
 
-    mgr._loop.close()
+    _teardown_loop(mgr)
 
 
 def test_call_tool_exception():
     """Exceptions during tool call are caught and returned as error."""
     mgr = MCPManager({})
-    import asyncio
-    mgr._loop = asyncio.new_event_loop()
+    _setup_loop(mgr)
 
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(side_effect=RuntimeError("connection lost"))
@@ -190,17 +209,20 @@ def test_call_tool_exception():
     assert "error" in data
     assert "connection lost" in data["error"]
 
-    mgr._loop.close()
+    _teardown_loop(mgr)
 
 
 def test_stop_cleans_up():
     """stop() closes sessions and clears state."""
     mgr = MCPManager({})
-    import asyncio
-    mgr._loop = asyncio.new_event_loop()
+    _setup_loop(mgr)
 
     mock_ctx = AsyncMock()
-    mgr._sessions["srv"] = {"session": MagicMock(), "context": mock_ctx}
+    mgr._sessions["srv"] = {
+        "session": MagicMock(),
+        "session_ctx": mock_ctx,
+        "transport_ctx": mock_ctx,
+    }
     mgr._server_tools["srv"] = []
 
     mgr.stop()

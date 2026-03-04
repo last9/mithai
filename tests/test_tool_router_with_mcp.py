@@ -1,6 +1,7 @@
 """Tests for ToolRouter with MCP tools integrated."""
 
 import json
+import logging
 from unittest.mock import MagicMock
 
 from mithai.core.skill_loader import Skill, ToolDefinition, load_skills
@@ -280,3 +281,26 @@ class TestToolRouterWithMCP:
         # Each is namespaced under its own skill
         assert "triage__createIssue" not in names
         assert "planning__searchIssues" not in names
+
+    def test_mcp_tool_collision_across_servers_warns(self, caplog):
+        """Overlapping tool names from different MCP servers within a skill log a warning."""
+        mcp = _make_mock_mcp_manager({
+            "server_a": [
+                ToolDefinition(name="search", description="From A", input_schema={}),
+            ],
+            "server_b": [
+                ToolDefinition(name="search", description="From B", input_schema={}),
+            ],
+        })
+        skill = _make_skill_with_mcp("triage", [
+            {"server": "server_a", "tools": ["search"]},
+            {"server": "server_b", "tools": ["search"]},
+        ])
+
+        with caplog.at_level(logging.WARNING, logger="mithai.core.tool_router"):
+            router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+
+        assert any("collision" in r.message.lower() for r in caplog.records)
+        # The last server wins
+        server_name, _, _ = router._mcp_index["triage__search"]  # noqa: SLF001
+        assert server_name == "server_b"

@@ -101,25 +101,67 @@ class MCPManager:
                 logger.exception("Failed to connect to MCP server: %s", name)
 
     async def _connect_server(self, name: str, config: MCPServerConfig) -> None:
-        """Connect to a single MCP server and discover its tools."""
+        """Connect to a single MCP server and discover its tools.
+
+        Uses try/except to ensure partially opened transport and session
+        contexts are closed if initialization or tool discovery fails.
+        """
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
-        if config.transport == "stdio":
-            if not config.command:
-                raise ValueError(f"MCP server '{name}' requires a command for stdio transport")
+        transport_ctx = None
+        session_ctx = None
 
-            params = StdioServerParameters(
-                command=config.command,
-                args=config.args,
-                env=config.env or None,
-            )
-            transport_ctx = stdio_client(params)
-            read_stream, write_stream = await transport_ctx.__aenter__()
+        try:
+            if config.transport == "stdio":
+                if not config.command:
+                    raise ValueError(f"MCP server '{name}' requires a command for stdio transport")
+
+                params = StdioServerParameters(
+                    command=config.command,
+                    args=config.args,
+                    env=config.env or None,
+                )
+                transport_ctx = stdio_client(params)
+                read_stream, write_stream = await transport_ctx.__aenter__()
+
+            elif config.transport == "sse":
+                from mcp.client.sse import sse_client
+
+                if not config.url:
+                    raise ValueError(f"MCP server '{name}' requires a url for sse transport")
+
+                transport_ctx = sse_client(url=config.url, headers=config.headers)
+                read_stream, write_stream = await transport_ctx.__aenter__()
+
+            elif config.transport == "streamablehttp":
+                from mcp.client.streamable_http import streamablehttp_client
+
+                if not config.url:
+                    raise ValueError(f"MCP server '{name}' requires a url for streamablehttp transport")
+
+                transport_ctx = streamablehttp_client(url=config.url, headers=config.headers)
+                # streamablehttp returns (read, write, get_session_id) — 3 values
+                read_stream, write_stream, _get_session_id = await transport_ctx.__aenter__()
+
+            else:
+                raise ValueError(f"Unknown transport '{config.transport}' for MCP server '{name}'")
 
             session_ctx = ClientSession(read_stream, write_stream)
             session = await session_ctx.__aenter__()
             await session.initialize()
+
+            # Discover tools
+            result = await session.list_tools()
+            tools = []
+            for tool in result.tools:
+                tools.append(ToolDefinition(
+                    name=tool.name,
+                    description=tool.description or "",
+                    input_schema=tool.inputSchema,
+                    human=None,
+                ))
+            self._server_tools[name] = tools
 
             self._sessions[name] = {
                 "session": session,
@@ -127,58 +169,16 @@ class MCPManager:
                 "transport_ctx": transport_ctx,
             }
 
-        elif config.transport == "sse":
-            from mcp.client.sse import sse_client
-
-            if not config.url:
-                raise ValueError(f"MCP server '{name}' requires a url for sse transport")
-
-            transport_ctx = sse_client(url=config.url, headers=config.headers)
-            read_stream, write_stream = await transport_ctx.__aenter__()
-
-            session_ctx = ClientSession(read_stream, write_stream)
-            session = await session_ctx.__aenter__()
-            await session.initialize()
-
-            self._sessions[name] = {
-                "session": session,
-                "session_ctx": session_ctx,
-                "transport_ctx": transport_ctx,
-            }
-
-        elif config.transport == "streamablehttp":
-            from mcp.client.streamable_http import streamablehttp_client
-
-            if not config.url:
-                raise ValueError(f"MCP server '{name}' requires a url for streamablehttp transport")
-
-            transport_ctx = streamablehttp_client(url=config.url, headers=config.headers)
-            # streamablehttp returns (read, write, get_session_id) — 3 values
-            read_stream, write_stream, _get_session_id = await transport_ctx.__aenter__()
-
-            session_ctx = ClientSession(read_stream, write_stream)
-            session = await session_ctx.__aenter__()
-            await session.initialize()
-
-            self._sessions[name] = {
-                "session": session,
-                "session_ctx": session_ctx,
-                "transport_ctx": transport_ctx,
-            }
-        else:
-            raise ValueError(f"Unknown transport '{config.transport}' for MCP server '{name}'")
-
-        # Discover tools
-        result = await session.list_tools()
-        tools = []
-        for tool in result.tools:
-            tools.append(ToolDefinition(
-                name=tool.name,
-                description=tool.description or "",
-                input_schema=tool.inputSchema,
-                human=None,
-            ))
-        self._server_tools[name] = tools
+        except BaseException:
+            # Clean up partially opened contexts to avoid leaking
+            # subprocesses or HTTP connections.
+            for ctx in (session_ctx, transport_ctx):
+                if ctx is not None:
+                    try:
+                        await ctx.__aexit__(None, None, None)
+                    except Exception:
+                        logger.debug("Error cleaning up context for %s", name, exc_info=True)
+            raise
 
     def discover_tools(self, server_name: str) -> list[ToolDefinition]:
         """Return all tools discovered from a specific MCP server."""

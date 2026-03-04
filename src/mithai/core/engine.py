@@ -14,11 +14,11 @@ from datetime import datetime
 import threading
 
 from mithai.adapters.base import Adapter, IncomingMessage
-from mithai.core.config import get_human_config, get_llm_config, get_skill_config, get_skill_paths
+from mithai.core.config import get_human_config, get_llm_config, get_skill_config, get_skill_paths, get_agents
 from mithai.core.context import build_context
 from mithai.core.reflection import reflect
 from mithai.core.session import SessionManager
-from mithai.core.skill_loader import Skill, load_skills
+from mithai.core.skill_loader import Skill, load_skills, filter_skills
 from mithai.core.tool_router import ToolRouter
 from mithai.human.mcp import HumanMCP
 from mithai.llm.base import LLMProvider
@@ -46,16 +46,26 @@ class Engine:
         llm: LLMProvider,
         state: StateBackend,
         memory: MemoryBackend | None = None,
+        *,
+        agent_id: str | None = None,
+        skills: dict[str, Skill] | None = None,
     ):
         self._config = config
         self._llm = llm
         self._state = state
         self._memory = memory
+        self._agent_id = agent_id
 
-        # Load skills
-        skill_paths = get_skill_paths(config)
-        self._skills = load_skills(skill_paths)
-        self._router = ToolRouter(self._skills)
+        # Load skills — accept pre-filtered skills for multi-agent, otherwise load all
+        if skills is not None:
+            self._skills = skills
+        else:
+            skill_paths = get_skill_paths(config)
+            self._skills = load_skills(skill_paths)
+
+        # Build allowed tools set from loaded skills for hard rejection
+        allowed_tools = {f"{sname}__{t.name}" for sname, s in self._skills.items() for t in s.tools}
+        self._router = ToolRouter(self._skills, allowed_tools=allowed_tools)
         self._human = HumanMCP(get_human_config(config))
 
         # Run startup hooks for skills that need background work (e.g. polling loops)
@@ -106,7 +116,7 @@ class Engine:
         # Load session and build conversation history
         # Use thread_id for Slack threads, fall back to channel_id
         scope = message.thread_id or message.channel_id
-        session_key = SessionManager.session_key(message.platform, scope)
+        session_key = SessionManager.session_key(message.platform, scope, agent_id=self._agent_id)
         session = self._sessions.load(session_key)
         history = self._build_history(session)
 

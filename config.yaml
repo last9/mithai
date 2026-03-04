@@ -8,8 +8,8 @@ bot:
     You have access to skills that let you interact with infrastructure.
     Be concise and precise. Explain before acting.
 
+# Global adapter kept for --adapter cli override and validation
 adapter:
-  # Run multiple adapters simultaneously
   types:
     - slack
   slack:
@@ -33,21 +33,13 @@ skills:
   config:
     kubernetes:
       default_namespace: default
-      # kubectl context override (empty = use current context)
       context: ""
-      # Path to kubeconfig (empty = use default ~/.kube/config)
       kubeconfig: "/tmp/kubeconfig/alpha.last9.io_parallel/platform"
-      # Slack channel to post self-healing alerts (leave empty to disable polling loop)
       alert_channel: ""
-      # How often to scan the cluster for issues (minutes)
       poll_interval_minutes: 5
-      # Minimum time between alerts for the same resource (minutes)
       cooldown_minutes: 30
-      # Namespaces to scan (empty = all non-system namespaces)
       namespaces: []
-      # Auto-investigate alerts in thread (LLM diagnoses + recommends fixes)
       auto_investigate: true
-      # Namespaces to always exclude from scanning
       exclude_namespaces:
         - kube-system
         - kube-public
@@ -55,31 +47,55 @@ skills:
 
     aws_costs:
       region: us-east-1
-      profile: ""          # AWS CLI profile (empty = default)
-      account_id: ""       # for budgets API (empty = auto-detect via STS)
+      profile: ""
+      account_id: ""
 
 learning:
   enabled: true
   reflection: true
   approval_auto_promote: 3
-  # Memory backend: filesystem (default), redis, or s3
   memory:
     backend: filesystem
     filesystem:
       path: ./memory
-    # redis:
-    #   url: redis://localhost:6379
-    #   prefix: mithai:memory
-    # s3:
-    #   bucket: my-mithai-memory
-    #   prefix: memory
-    #   region: us-east-1
-    #   profile: ""
+
+# Multi-agent mode — each agent is its own Slack app
+agents:
+  devops:
+    name: "DevOps Agent"
+    system_prompt: |
+      You are a helpful operations assistant. You are a member of the devops team. You have a funny personality.
+      You have access to skills that let you interact with infrastructure.
+      Be concise and precise. Explain before acting.
+    skills:
+      allowed: [shell, kubernetes, memory, http_checker, aws_costs, parrot]
+    memory:
+      path: ./memory/devops
+    adapter:
+      slack:
+        bot_token: ${FIRST_SLACK_BOT_TOKEN}
+        app_token: ${FIRST_SLACK_APP_TOKEN}
+
+  tester:
+    name: "Tester Agent"
+    system_prompt: |
+      You are a testing assistant. You are a member of the testing team. You have a not so funny personality.
+      You help verify infrastructure, run checks, and validate deployments.
+      Be thorough and report findings clearly.
+    skills:
+      allowed: [shell, memory, http_checker]
+    memory:
+      path: ./memory/tester
+    adapter:
+      slack:
+        bot_token: ${SECOND_SLACK_BOT_TOKEN}
+        app_token: ${SECOND_SLACK_APP_TOKEN}
+
+  default_agent: devops
 
 ui:
   host: 0.0.0.0
   port: 8420
-  # Optional token for simple auth (empty = no auth)
   auth_token: ${MITHAI_UI_TOKEN}
 
 state:

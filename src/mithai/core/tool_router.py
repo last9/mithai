@@ -15,11 +15,16 @@ class ToolRouter:
 
     Tools are prefixed as skill_name__tool_name when sent to the LLM.
     Incoming tool calls are parsed and dispatched to the correct skill handler.
+
+    When allowed_tools is set, route() rejects any tool not in the set.
+    This is the hard boundary that prevents an agent from calling tools
+    outside its allowlist even if the LLM hallucinates the call.
     """
 
-    def __init__(self, skills: dict[str, Skill]):
+    def __init__(self, skills: dict[str, Skill], *, allowed_tools: set[str] | None = None):
         self._skills = skills
         self._tool_index: dict[str, tuple[str, ToolDefinition]] = {}
+        self._allowed_tools = allowed_tools
         self._build_index()
 
     def _build_index(self):
@@ -64,7 +69,13 @@ class ToolRouter:
         Route a tool call to the correct skill handler.
 
         Returns the handler's result as a string.
+        Rejects tools not in the allowed set (if configured).
         """
+        # Hard tool boundary — reject tools outside agent's allowlist
+        if self._allowed_tools is not None and prefixed_name not in self._allowed_tools:
+            logger.warning("Tool %s rejected — not in agent allowlist", prefixed_name)
+            return json.dumps({"error": f"Tool {prefixed_name} is not available to this agent."})
+
         entry = self._tool_index.get(prefixed_name)
         if entry is None:
             logger.warning("Unknown tool: %s", prefixed_name)

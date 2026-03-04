@@ -5,7 +5,15 @@ import threading
 
 import click
 
-from mithai.core.config import get_adapter_config, get_adapter_types, get_llm_config, load_config
+from mithai.core.config import (
+    get_adapter_config,
+    get_adapter_types,
+    get_agent_config,
+    get_agents,
+    get_llm_config,
+    get_skill_paths,
+    load_config,
+)
 
 
 @click.command()
@@ -15,7 +23,7 @@ from mithai.core.config import get_adapter_config, get_adapter_types, get_llm_co
     "adapter_override",
     type=click.Choice(["cli", "slack", "telegram"]),
     default=None,
-    help="Run only this adapter (overrides config)",
+    help="Run only this adapter (overrides config, single-agent mode only)",
 )
 @click.option("--verbose", is_flag=True, help="Enable debug logging")
 def run(config_path, adapter_override, verbose):
@@ -26,12 +34,19 @@ def run(config_path, adapter_override, verbose):
     )
 
     config = load_config(config_path)
-    llm = _create_llm(config)
-    state = _create_state(config)
-    memory = _create_memory_backend(config)
 
-    from mithai.core.engine import Engine
-    engine = Engine(config=config, llm=llm, state=state, memory=memory)
+    agents_config = get_agents(config)
+
+    if agents_config:
+        _run_multi_agent(config, agents_config)
+    else:
+        _run_single_agent(config, adapter_override)
+
+
+def _run_single_agent(config: dict, adapter_override: str | None):
+    """Single-agent mode — one engine, adapters from global config."""
+    engines = _create_engine_single(config)
+    engine = engines["default"]
 
     if adapter_override:
         adapter_types = [adapter_override]
@@ -43,13 +58,11 @@ def run(config_path, adapter_override, verbose):
         adapter = _create_adapter(config, adapter_type)
         adapters.append((adapter_type, adapter))
 
-    # Give skills access to engine + adapter before starting
     engine.late_bind(adapters)
 
     if len(adapters) == 1:
-        # Single adapter — run in main thread
         name, adapter = adapters[0]
-        click.echo(f"Starting mithai with {name} adapter...")
+        click.echo(f"Starting mithai with {name} adapter")
         try:
             adapter.start(on_message=engine.handle)
         except KeyboardInterrupt:
@@ -57,7 +70,6 @@ def run(config_path, adapter_override, verbose):
         finally:
             adapter.stop()
     else:
-        # Multiple adapters — each in its own thread
         names = [name for name, _ in adapters]
         click.echo(f"Starting mithai with adapters: {', '.join(names)}")
 
@@ -65,14 +77,13 @@ def run(config_path, adapter_override, verbose):
         for name, adapter in adapters:
             t = threading.Thread(
                 target=_run_adapter,
-                args=(name, adapter, engine),
+                args=(name, adapter, engine.handle),
                 daemon=True,
             )
             t.start()
             threads.append(t)
 
         try:
-            # Wait for any thread to finish (or Ctrl+C)
             for t in threads:
                 t.join()
         except KeyboardInterrupt:
@@ -81,20 +92,131 @@ def run(config_path, adapter_override, verbose):
                 adapter.stop()
 
 
-def _run_adapter(name: str, adapter, engine):
+def _run_multi_agent(config: dict, agents_config: dict):
+    """Multi-agent mode — each agent gets its own adapter(s), wired to its own engine."""
+    engines = _create_engines_multi(config, agents_config)
+
+    # Create per-agent adapters from agents.<id>.adapter config
+    all_adapters: list[tuple[str, str, object, object]] = []  # (agent_id, adapter_type, adapter, engine)
+    for agent_id, agent_def in agents_config.items():
+        engine = engines[agent_id]
+        agent_adapter_cfg = agent_def.get("adapter", {})
+        for adapter_type, type_cfg in agent_adapter_cfg.items():
+            adapter = _create_adapter(config, adapter_type, adapter_config=type_cfg)
+            all_adapters.append((agent_id, adapter_type, adapter, engine))
+
+    if not all_adapters:
+        raise click.ClickException(
+            "Multi-agent mode requires at least one agent with an 'adapter' section"
+        )
+
+    # Late-bind each engine with its own adapters
+    for agent_id, engine in engines.items():
+        agent_adapters = [(t, a) for aid, t, a, _ in all_adapters if aid == agent_id]
+        engine.late_bind(agent_adapters)
+
+    # Start all adapters in daemon threads
+    agent_names = list(engines.keys())
+    click.echo(f"Starting mithai in multi-agent mode: {agent_names}")
+
+    threads = []
+    for agent_id, adapter_type, adapter, engine in all_adapters:
+        label = f"{agent_id}/{adapter_type}"
+        click.echo(f"  {label}")
+        t = threading.Thread(
+            target=_run_adapter,
+            args=(label, adapter, engine.handle),
+            daemon=True,
+        )
+        t.start()
+        threads.append(t)
+
+    try:
+        for t in threads:
+            t.join()
+    except KeyboardInterrupt:
+        click.echo("\nShutting down...")
+        for _, _, adapter, _ in all_adapters:
+            adapter.stop()
+
+
+def _run_adapter(name: str, adapter, handler):
     """Run a single adapter in a thread."""
     logger = logging.getLogger(f"mithai.adapter.{name}")
     try:
         logger.info("Starting %s adapter", name)
-        adapter.start(on_message=engine.handle)
+        adapter.start(on_message=handler)
     except Exception:
         logger.exception("Adapter %s crashed", name)
     finally:
         adapter.stop()
 
 
-def _create_adapter(config: dict, adapter_type: str):
-    adapter_config = get_adapter_config(config, adapter_type)
+def _create_engine_single(config: dict) -> dict:
+    """Create a single engine (no agents: config). Returns {"default": engine}."""
+    from mithai.core.engine import Engine
+
+    llm = _create_llm(config)
+    state = _create_state(config)
+    memory = _create_memory_backend(config)
+    engine = Engine(config=config, llm=llm, state=state, memory=memory)
+    return {"default": engine}
+
+
+def _create_engines_multi(config: dict, agents_config: dict) -> dict:
+    """Create one Engine per agent with filtered skills and isolated memory."""
+    from mithai.core.engine import Engine
+    from mithai.core.skill_loader import load_skills, filter_skills
+
+    llm = _create_llm(config)
+    state = _create_state(config)
+
+    # Load all skills once, then filter per agent
+    skill_paths = get_skill_paths(config)
+    all_skills = load_skills(skill_paths)
+
+    engines = {}
+    for agent_id, agent_def in agents_config.items():
+        # Filter skills by allowlist
+        allowed = agent_def.get("skills", {}).get("allowed")
+        if allowed:
+            agent_skills = filter_skills(all_skills, allowed)
+        else:
+            agent_skills = dict(all_skills)
+
+        # Agent-specific memory backend
+        memory_path = agent_def.get("memory", {}).get("path")
+        if memory_path:
+            from mithai.memory.filesystem import FilesystemMemoryBackend
+            agent_memory = FilesystemMemoryBackend(memory_path)
+        else:
+            agent_memory = _create_memory_backend(config)
+
+        # Merge agent config on top of global
+        agent_config = get_agent_config(config, agent_id)
+
+        engine = Engine(
+            config=agent_config,
+            llm=llm,
+            state=state,
+            memory=agent_memory,
+            agent_id=agent_id,
+            skills=agent_skills,
+        )
+        engines[agent_id] = engine
+        click.echo(f"  Agent '{agent_id}': {len(agent_skills)} skills ({list(agent_skills.keys())})")
+
+    return engines
+
+
+def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None = None):
+    """Create an adapter instance.
+
+    If adapter_config is provided (per-agent mode), use it directly.
+    Otherwise fall back to global adapter config.
+    """
+    if adapter_config is None:
+        adapter_config = get_adapter_config(config, adapter_type)
 
     if adapter_type == "cli":
         from mithai.adapters.cli import CLIAdapter

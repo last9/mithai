@@ -1,0 +1,117 @@
+# mithai configuration
+# Docs: https://github.com/nishantmodak/mithai
+
+bot:
+  name: mithai
+  system_prompt: |
+    You are a helpful operations assistant.
+    You have access to skills that let you interact with infrastructure.
+    Be concise and precise. Explain before acting.
+
+adapter:
+  # Run multiple adapters simultaneously
+  types:
+    - slack
+  slack:
+    bot_token: ${SLACK_BOT_TOKEN}
+    app_token: ${SLACK_APP_TOKEN}
+  telegram:
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    allowed_chat_ids:
+      - ${TELEGRAM_CHAT_ID}
+
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  max_tokens: 4096
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+
+skills:
+  paths:
+    - ./skills
+  config:
+    kubernetes:
+      default_namespace: default
+      # kubectl context override (empty = use current context)
+      context: ""
+      # Path to kubeconfig (empty = use default ~/.kube/config)
+      kubeconfig: "/tmp/kubeconfig/alpha.last9.io_parallel/platform"
+      # Slack channel to post self-healing alerts (leave empty to disable polling loop)
+      alert_channel: ""
+      # How often to scan the cluster for issues (minutes)
+      poll_interval_minutes: 5
+      # Minimum time between alerts for the same resource (minutes)
+      cooldown_minutes: 30
+      # Namespaces to scan (empty = all non-system namespaces)
+      namespaces: []
+      # Auto-investigate alerts in thread (LLM diagnoses + recommends fixes)
+      auto_investigate: true
+      # Namespaces to always exclude from scanning
+      exclude_namespaces:
+        - kube-system
+        - kube-public
+        - kube-node-lease
+
+    aws_costs:
+      region: us-east-1
+      profile: ""          # AWS CLI profile (empty = default)
+      account_id: ""       # for budgets API (empty = auto-detect via STS)
+
+learning:
+  enabled: true
+  reflection: true
+  approval_auto_promote: 3
+  # Memory backend: filesystem (default), redis, or s3
+  memory:
+    backend: filesystem
+    filesystem:
+      path: ./memory
+    # redis:
+    #   url: redis://localhost:6379
+    #   prefix: mithai:memory
+    # s3:
+    #   bucket: my-mithai-memory
+    #   prefix: memory
+    #   region: us-east-1
+    #   profile: ""
+
+# Multi-agent mode (optional — omit for single-agent mode)
+# Each agent is its own Slack app with distinct name, avatar, and @mention.
+# agents:
+#   devops:
+#     name: "DevOps Agent"
+#     system_prompt: "You are a DevOps assistant."
+#     skills:
+#       allowed: [shell, kubernetes, memory]
+#     memory:
+#       path: ./memory/devops
+#     adapter:
+#       slack:
+#         bot_token: ${DEVOPS_SLACK_BOT_TOKEN}
+#         app_token: ${DEVOPS_SLACK_APP_TOKEN}
+#
+#   support:
+#     name: "Support Agent"
+#     system_prompt: "You are a support assistant."
+#     skills:
+#       allowed: [memory]
+#     memory:
+#       path: ./memory/support
+#     adapter:
+#       slack:
+#         bot_token: ${SUPPORT_SLACK_BOT_TOKEN}
+#         app_token: ${SUPPORT_SLACK_APP_TOKEN}
+#
+#   default_agent: devops
+
+ui:
+  host: 0.0.0.0
+  port: 8420
+  # Optional token for simple auth (empty = no auth)
+  auth_token: ${MITHAI_UI_TOKEN}
+
+state:
+  backend: filesystem
+  filesystem:
+    path: ./.mithai/state

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% set active = "sessions" %}
+
+{% block title %}Sessions{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Sessions</h1>
+    <p class="page-subtitle">Browse and search agent conversations</p>
+</div>
+
+<form class="search-bar" method="get" action="/sessions">
+    <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+    <input type="text" name="q" placeholder="Search sessions..." value="{{ query }}" id="session-search">
+    <span class="search-kbd">/</span>
+    <button type="submit">Search</button>
+</form>
+
+{% if query %}
+<p style="color: var(--text-muted); font-size: 13px; margin-bottom: 20px;">
+    {{ sessions|length }} result{{ "s" if sessions|length != 1 }} for "{{ query }}"
+    &mdash; <a href="/sessions">clear</a>
+</p>
+{% endif %}
+
+{% if sessions %}
+    {% for s in sessions %}
+    <a href="/sessions/{{ s.session_id }}" style="display: block; color: inherit;">
+        <div class="row-card">
+            {% set p = s.get("platform", "default") %}
+            <div class="row-card-icon platform-icon {{ p }}">
+                {{ p[:3] }}
+            </div>
+            <div class="row-card-body">
+                <div class="row-card-title">{{ s.session_id }}</div>
+                <div class="row-card-meta">
+                    {{ s.get("turn_count", "") }} turn{{ "s" if s.get("turn_count", 0) != 1 }}
+                    {% set ts = s.get("updated_at", s.get("timestamp", "")) %}
+                    {% if ts %} &middot; <span data-ts="{{ ts }}">{{ ts[:16] }}</span>{% endif %}
+                </div>
+            </div>
+            <div class="row-card-status" style="color: var(--text-muted); font-size: 13px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                {{ s.get("last_message", s.get("user_message", ""))[:60] }}
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+{% else %}
+    <div class="card">
+        <div class="empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <div>No sessions found{% if query %} for "{{ query }}"{% endif %}</div>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}

@@ -76,6 +76,12 @@ learning:
     #   region: us-east-1
     #   profile: ""
 
+ui:
+  host: 0.0.0.0
+  port: 8420
+  # Optional token for simple auth (empty = no auth)
+  auth_token: ${MITHAI_UI_TOKEN}
+
 state:
   backend: filesystem
   filesystem:

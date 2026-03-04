@@ -113,6 +113,20 @@ class SlackAdapter(Adapter):
                 pass
             say(text=chunk, thread_ts=thread_ts)
 
+    def _react(self, channel: str, ts: str, emoji: str) -> None:
+        """Add a reaction emoji to a message, ignoring errors (e.g. missing scope)."""
+        try:
+            self._app.client.reactions_add(channel=channel, timestamp=ts, name=emoji)
+        except Exception:
+            pass
+
+    def _unreact(self, channel: str, ts: str, emoji: str) -> None:
+        """Remove a reaction emoji from a message, ignoring errors."""
+        try:
+            self._app.client.reactions_remove(channel=channel, timestamp=ts, name=emoji)
+        except Exception:
+            pass
+
     def start(self, on_message: MessageHandler) -> None:
         import re
 
@@ -137,9 +151,14 @@ class SlackAdapter(Adapter):
                 thread_id=message.get("thread_ts"),
             )
 
-            self._current_thread_ts = message.get("ts")
-            response = on_message(incoming, self)
-            self._send_formatted(say, response, thread_ts=message.get("ts"))
+            ts = message.get("ts", "")
+            self._current_thread_ts = ts
+            self._react(channel, ts, "thinking_face")
+            try:
+                response = on_message(incoming, self)
+                self._send_formatted(say, response, thread_ts=ts)
+            finally:
+                self._unreact(channel, ts, "thinking_face")
 
         @self._app.event("app_mention")
         def handle_app_mention(event, say):
@@ -162,9 +181,20 @@ class SlackAdapter(Adapter):
                 thread_id=event.get("thread_ts"),
             )
 
-            self._current_thread_ts = event.get("ts")
-            response = on_message(incoming, self)
-            self._send_formatted(say, response, thread_ts=event.get("ts"))
+            ts = event.get("ts", "")
+            self._current_thread_ts = ts
+            self._react(channel, ts, "thinking_face")
+            try:
+                response = on_message(incoming, self)
+                self._send_formatted(say, response, thread_ts=ts)
+            finally:
+                self._unreact(channel, ts, "thinking_face")
+
+        @self._app.event("message")
+        def handle_message_subtype_events(body):
+            # Silently acknowledge message subtypes (channel_join, message_changed,
+            # bot_message, etc.) that @app.message("") does not match.
+            pass
 
         logger.info("Starting Slack adapter (Socket Mode)")
         self._handler.start()

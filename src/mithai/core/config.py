@@ -110,6 +110,11 @@ def get_skill_paths(config: dict) -> list[Path]:
     return [Path(p) for p in paths]
 
 
+def get_mcp_config(config: dict) -> dict:
+    """Get MCP server configurations. Returns empty dict if none configured."""
+    return config.get("mcp_servers", {})
+
+
 def get_human_config(config: dict) -> dict:
     """Get Human MCP configuration."""
     return config.get("human", {})

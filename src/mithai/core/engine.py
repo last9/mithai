@@ -15,7 +15,7 @@ from pathlib import Path
 import threading
 
 from mithai.adapters.base import Adapter, IncomingMessage
-from mithai.core.config import get_human_config, get_llm_config, get_skill_config, get_skill_paths
+from mithai.core.config import get_human_config, get_llm_config, get_mcp_config, get_skill_config, get_skill_paths
 from mithai.core.context import build_context
 from mithai.core.reflection import reflect
 from mithai.core.session import SessionManager
@@ -53,7 +53,24 @@ class Engine:
         # Load skills
         skill_paths = get_skill_paths(config)
         self._skills = load_skills(skill_paths)
-        self._router = ToolRouter(self._skills)
+
+        # MCP servers — start only the ones skills actually reference
+        self._mcp_manager = None
+        mcp_config = get_mcp_config(config)
+        if mcp_config:
+            from mithai.core.mcp_manager import MCPManager
+
+            self._mcp_manager = MCPManager(mcp_config)
+            needed = set()
+            for skill in self._skills.values():
+                for entry in skill.mcp_tools:
+                    server = entry.get("server")
+                    if server:
+                        needed.add(server)
+            if needed:
+                self._mcp_manager.start(needed)
+
+        self._router = ToolRouter(self._skills, mcp_manager=self._mcp_manager)
         self._human = HumanMCP(get_human_config(config))
 
         # Run startup hooks for skills that need background work (e.g. polling loops)
@@ -158,8 +175,9 @@ class Engine:
                     )
 
                     # Resolve dynamic human level — let the skill decide
+                    # MCP tools have static human levels from the skill's MCP_TOOLS declaration
                     effective_def = tool_def
-                    if tool_def.human == "dynamic":
+                    if tool_def.human == "dynamic" and not self._router.is_mcp_tool(prefixed_name):
                         skill = self._skills.get(skill_name)
                         if skill and skill.resolve_human:
                             resolved = skill.resolve_human(tool_def.name, tool_input, skill_ctx)
@@ -321,6 +339,11 @@ class Engine:
             if block.get("type") == "text":
                 parts.append(block["text"])
         return "\n".join(parts).strip() or "(no response)"
+
+    def stop(self) -> None:
+        """Clean up resources (MCP server connections, etc.)."""
+        if self._mcp_manager:
+            self._mcp_manager.stop()
 
     def _record_approval(self, prefixed_name: str, tool_input: dict, approved: bool) -> None:
         """Record an approval decision for learning."""

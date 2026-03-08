@@ -23,9 +23,29 @@ adapter:
 llm:
   provider: anthropic
   model: claude-sonnet-4-6
-  max_tokens: 4096
+  max_tokens: 16384
   anthropic:
     api_key: ${ANTHROPIC_API_KEY}
+
+# MCP servers — shared infrastructure for tool backends
+# Skills declare which MCP tools they need in their tools.py (MCP_TOOLS)
+mcp_servers:
+  linear:
+    transport: sse
+    url: https://mcp.linear.app/sse
+    headers:
+      Authorization: Bearer ${LINEAR_API_KEY}
+  last9:
+    transport: streamablehttp
+    url: https://mcp.example.com
+    headers:
+      X-API-TOKEN: Bearer ${EXAMPLE_API_TOKEN}
+  github:
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN}
 
 skills:
   paths:

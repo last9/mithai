@@ -72,6 +72,14 @@ class Engine:
 
         self._router = ToolRouter(self._skills, mcp_manager=self._mcp_manager)
         self._human = HumanMCP(get_human_config(config))
+
+        # Run startup hooks for skills that need background work (e.g. polling loops)
+        for skill_name, skill in self._skills.items():
+            if skill.startup:
+                try:
+                    skill.startup(get_skill_config(config, skill_name))
+                except Exception:
+                    logger.warning("Skill %s startup() failed", skill_name, exc_info=True)
         self._llm_config = get_llm_config(config)
 
         # Learning / memory
@@ -86,6 +94,20 @@ class Engine:
             max_turns=session_config.get("max_stored", 50),
         )
         self._max_history = session_config.get("max_history", 10)
+
+    def late_bind(self, adapters: list[tuple[str, "Adapter"]]) -> None:
+        """Give skills access to engine + adapter after full initialization.
+
+        Called from run_cmd after adapters are created but before they start.
+        Skills that export bind(engine, adapter) get called here.
+        """
+        primary_adapter = adapters[0][1] if adapters else None
+        for skill_name, skill in self._skills.items():
+            if skill.bind:
+                try:
+                    skill.bind(self, primary_adapter)
+                except Exception:
+                    logger.warning("Skill %s bind() failed", skill_name, exc_info=True)
 
     def handle(self, message: IncomingMessage, adapter: Adapter) -> str:
         """

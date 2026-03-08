@@ -33,6 +33,8 @@ class Skill:
     source_dir: Path = field(repr=False)
     resolve_human: Callable | None = field(default=None, repr=False)
     mcp_tools: list[dict] = field(default_factory=list, repr=False)
+    startup: Callable | None = field(default=None, repr=False)
+    bind: Callable | None = field(default=None, repr=False)
 
 
 def _load_skill(skill_dir: Path) -> Skill | None:
@@ -62,6 +64,8 @@ def _load_skill(skill_dir: Path) -> Skill | None:
     handle_fn = getattr(mod, "handle", None)
     resolve_human_fn = getattr(mod, "resolve_human", None)
     raw_mcp_tools = getattr(mod, "MCP_TOOLS", [])
+    startup_fn = getattr(mod, "startup", None)
+    bind_fn = getattr(mod, "bind", None)
 
     if raw_tools is None:
         logger.warning("Skill %s: missing TOOLS export", skill_dir.name)
@@ -88,6 +92,8 @@ def _load_skill(skill_dir: Path) -> Skill | None:
         source_dir=skill_dir,
         resolve_human=resolve_human_fn,
         mcp_tools=raw_mcp_tools if isinstance(raw_mcp_tools, list) else [],
+        startup=startup_fn,
+        bind=bind_fn,
     )
 
 

@@ -12,3 +12,4 @@ build/
 .pytest_cache/
 .ruff_cache/
 *.egg
+deploy/k8s/secret.yaml

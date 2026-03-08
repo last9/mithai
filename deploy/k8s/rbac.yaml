@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mithai
+  namespace: mithai
+  labels:
+    app.kubernetes.io/name: mithai
+
+---
+# Read-only view of all cluster resources mithai needs to diagnose/audit
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mithai-reader
+  labels:
+    app.kubernetes.io/name: mithai
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - nodes
+      - namespaces
+      - events
+      - services
+      - endpoints
+      - configmaps
+      - persistentvolumeclaims
+      - serviceaccounts
+      - resourcequotas
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+      - clusterroles
+      - clusterrolebindings
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - pods
+      - nodes
+    verbs: ["get", "list"]
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch"]
+
+---
+# Mutating operations — only used after human approval in the Slack flow
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mithai-operator
+  labels:
+    app.kubernetes.io/name: mithai
+rules:
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/scale
+      - statefulsets
+      - statefulsets/scale
+    verbs: ["patch", "update"]
+  # rollout restart triggers a new ReplicaSet
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+    verbs: ["delete"]
+  # drain evicts pods
+  - apiGroups: [""]
+    resources:
+      - pods/eviction
+    verbs: ["create"]
+  # cordon / uncordon patches node spec
+  - apiGroups: [""]
+    resources:
+      - nodes
+    verbs: ["patch", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mithai-reader
+  labels:
+    app.kubernetes.io/name: mithai
+subjects:
+  - kind: ServiceAccount
+    name: mithai
+    namespace: mithai
+roleRef:
+  kind: ClusterRole
+  name: mithai-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mithai-operator
+  labels:
+    app.kubernetes.io/name: mithai
+subjects:
+  - kind: ServiceAccount
+    name: mithai
+    namespace: mithai
+roleRef:
+  kind: ClusterRole
+  name: mithai-operator
+  apiGroup: rbac.authorization.k8s.io

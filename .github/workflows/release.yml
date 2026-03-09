@@ -30,8 +30,6 @@ jobs:
             platform: darwin-amd64
           - runner: ubuntu-latest     # Linux x86_64
             platform: linux-amd64
-          - runner: ubuntu-24.04-arm  # Linux ARM64
-            platform: linux-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -159,6 +157,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_NOTES: ${{ steps.notes.outputs.NOTES }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Determine if prerelease
           PRERELEASE_FLAG=""
@@ -173,5 +172,3 @@ jobs:
             release/mithai-* \
             release/checksums.txt \
             install.sh
-        env:
-          GH_TOKEN: ${{ github.token }}

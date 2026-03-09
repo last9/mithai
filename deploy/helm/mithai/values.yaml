@@ -1,0 +1,269 @@
+# -- Number of replicas (typically 1 for a single bot instance)
+replicaCount: 1
+
+image:
+  # -- Container image repository
+  repository: ghcr.io/example/mithai
+  # -- Image pull policy
+  pullPolicy: Always
+  # -- Overrides the image tag (default: appVersion from Chart.yaml)
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets:
+  - name: private-registry
+
+# -- Override the release name
+nameOverride: ""
+# -- Override the full release name
+fullnameOverride: ""
+
+# -----------------------------------------------------------------------------
+# Bot configuration
+# -----------------------------------------------------------------------------
+bot:
+  # -- Bot display name
+  name: mithai
+  # -- System prompt for the bot
+  systemPrompt: |
+    You are a helpful operations assistant.
+    You have access to skills that let you interact with infrastructure.
+    Be concise and precise. Explain before acting.
+
+# -----------------------------------------------------------------------------
+# LLM configuration
+# -----------------------------------------------------------------------------
+llm:
+  # -- LLM provider (anthropic)
+  provider: anthropic
+  # -- Model name
+  model: claude-sonnet-4-6
+  # -- Maximum tokens per response
+  maxTokens: 16384
+  # -- Anthropic API key (required). Stored in Secret and injected as env var.
+  apiKey: ""
+
+# -----------------------------------------------------------------------------
+# Adapter (chat platform) configuration
+# -----------------------------------------------------------------------------
+adapter:
+  # -- Adapter types to enable (slack, telegram)
+  types:
+    - slack
+
+  slack:
+    # -- Slack bot token (xoxb-...)
+    botToken: ""
+    # -- Slack app-level token (xapp-...)
+    appToken: ""
+    # -- Restrict to specific channel IDs (empty = all channels)
+    allowedChannels: []
+
+  telegram:
+    # -- Telegram bot token
+    botToken: ""
+    # -- Allowed Telegram chat IDs
+    allowedChatIds: []
+
+# -----------------------------------------------------------------------------
+# MCP servers (optional)
+# Each entry: name -> {transport, url, headers}
+# Headers referencing secrets should use ${ENV_VAR} syntax; add the env var
+# to extraSecrets below.
+# -----------------------------------------------------------------------------
+# mcpServers:
+#   linear:
+#     transport: sse
+#     url: https://mcp.linear.app/sse
+#     headers:
+#       Authorization: "Bearer ${LINEAR_API_KEY}"
+#   last9:
+#     transport: streamablehttp
+#     url: https://mcp.example.com
+#     headers:
+#       X-API-TOKEN: "Bearer ${EXAMPLE_API_TOKEN}"
+mcpServers: {}
+
+# -----------------------------------------------------------------------------
+# Skills
+# -----------------------------------------------------------------------------
+skills:
+  # -- Paths to skill directories inside the container
+  paths:
+    - /app/skills
+  # -- Skill-specific configuration (passed as-is into config.yaml skills.config)
+  config:
+    kubernetes:
+      default_namespace: default
+      context: ""
+      kubeconfig: ""
+      alert_channel: ""
+      poll_interval_minutes: 5
+      cooldown_minutes: 30
+      namespaces: []
+      auto_investigate: true
+      exclude_namespaces:
+        - kube-system
+        - kube-public
+        - kube-node-lease
+
+# -----------------------------------------------------------------------------
+# Learning / Memory
+# -----------------------------------------------------------------------------
+learning:
+  # -- Enable learning from interactions
+  enabled: true
+  # -- Enable reflection after actions
+  reflection: true
+  # -- Auto-promote after N approvals
+  approvalAutoPromote: 3
+  memory:
+    # -- Memory backend: filesystem, redis, or s3
+    backend: filesystem
+
+# -----------------------------------------------------------------------------
+# Multi-agent mode (optional)
+# When defined, each key under agents becomes a separate agent with its own
+# adapter credentials and skill set. Omit entirely for single-agent mode.
+# Agent adapter tokens should be added to extraSecrets.
+# -----------------------------------------------------------------------------
+# agents:
+#   devops:
+#     name: "DevOps Agent"
+#     system_prompt: "You are a DevOps assistant."
+#     skills:
+#       allowed: [shell, kubernetes, memory]
+#     memory:
+#       path: /app/memory/devops
+#     adapter:
+#       slack:
+#         bot_token: ${DEVOPS_SLACK_BOT_TOKEN}
+#         app_token: ${DEVOPS_SLACK_APP_TOKEN}
+#   default_agent: devops
+agents: {}
+
+# -----------------------------------------------------------------------------
+# Control Room UI
+# -----------------------------------------------------------------------------
+ui:
+  # -- Enable the Control Room web UI
+  enabled: false
+  # -- UI listen port
+  port: 8420
+  # -- Simple auth token (empty = no auth). Stored in Secret.
+  authToken: ""
+
+# -----------------------------------------------------------------------------
+# State persistence
+# -----------------------------------------------------------------------------
+state:
+  # -- State backend (filesystem)
+  backend: filesystem
+
+# -----------------------------------------------------------------------------
+# Persistence (PVC)
+# -----------------------------------------------------------------------------
+persistence:
+  state:
+    # -- Enable PVC for state directory (else emptyDir)
+    enabled: false
+    # -- PVC size
+    size: 1Gi
+    # -- Storage class (empty = cluster default)
+    storageClass: ""
+    # -- Access modes
+    accessModes:
+      - ReadWriteOnce
+  memory:
+    # -- Enable PVC for memory directory (else emptyDir)
+    enabled: false
+    # -- PVC size
+    size: 1Gi
+    # -- Storage class (empty = cluster default)
+    storageClass: ""
+    # -- Access modes
+    accessModes:
+      - ReadWriteOnce
+
+# -----------------------------------------------------------------------------
+# Resource limits
+# -----------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 2000m
+    memory: 512Mi
+
+# -----------------------------------------------------------------------------
+# RBAC
+# -----------------------------------------------------------------------------
+rbac:
+  # -- Create ClusterRole and ClusterRoleBinding
+  create: true
+  # -- Create the operator (mutating) ClusterRole in addition to reader
+  operator: true
+
+# -----------------------------------------------------------------------------
+# ServiceAccount
+# -----------------------------------------------------------------------------
+serviceAccount:
+  # -- Create a ServiceAccount
+  create: true
+  # -- ServiceAccount name (generated if empty)
+  name: ""
+  # -- Annotations for the ServiceAccount (e.g. for IRSA)
+  annotations: {}
+
+# -----------------------------------------------------------------------------
+# Service (for Control Room UI)
+# -----------------------------------------------------------------------------
+service:
+  # -- Create a Service (auto-enabled when ui.enabled is true)
+  enabled: false
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 8420
+
+# -----------------------------------------------------------------------------
+# Ingress (for Control Room UI)
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  #  - host: mithai.example.com
+  #    paths:
+  #      - path: /
+  #        pathType: Prefix
+  tls: []
+  #  - secretName: mithai-tls
+  #    hosts:
+  #      - mithai.example.com
+
+# -----------------------------------------------------------------------------
+# Namespace
+# -----------------------------------------------------------------------------
+# -- Create the namespace (useful for first-time installs)
+createNamespace: false
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules
+affinity: {}
+
+# -----------------------------------------------------------------------------
+# Extra secrets injected as env vars (for MCP headers, multi-agent tokens, etc.)
+# Keys become env var names; values are stored base64-encoded in the Secret.
+# -----------------------------------------------------------------------------
+# extraSecrets:
+#   LINEAR_API_KEY: ""
+#   EXAMPLE_API_TOKEN: ""
+extraSecrets: {}

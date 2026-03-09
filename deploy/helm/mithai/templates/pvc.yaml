@@ -1,0 +1,39 @@
+{{- if .Values.persistence.state.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mithai.fullname" . }}-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mithai.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.state.accessModes | nindent 4 }}
+  {{- if .Values.persistence.state.storageClass }}
+  storageClassName: {{ .Values.persistence.state.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.state.size }}
+{{- end }}
+{{- if and .Values.persistence.state.enabled .Values.persistence.memory.enabled }}
+---
+{{- end }}
+{{- if .Values.persistence.memory.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mithai.fullname" . }}-memory
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mithai.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.memory.accessModes | nindent 4 }}
+  {{- if .Values.persistence.memory.storageClass }}
+  storageClassName: {{ .Values.persistence.memory.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.memory.size }}
+{{- end }}

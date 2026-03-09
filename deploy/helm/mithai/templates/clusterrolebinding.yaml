@@ -1,0 +1,33 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mithai.fullname" . }}-reader
+  labels:
+    {{- include "mithai.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mithai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "mithai.fullname" . }}-reader
+  apiGroup: rbac.authorization.k8s.io
+{{- if .Values.rbac.operator }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "mithai.fullname" . }}-operator
+  labels:
+    {{- include "mithai.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "mithai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "mithai.fullname" . }}-operator
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+{{- end }}

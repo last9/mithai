@@ -2,7 +2,8 @@
 
 import click
 
-from mithai.cli.style import banner_small, console, kv, setup_logging
+from mithai.cli.style import banner, banner_small, console, kv, setup_logging
+from mithai import get_version_string
 from mithai.core.config import get_agents, get_default_agent_id, get_llm_config, load_config
 
 
@@ -72,6 +73,7 @@ def chat(config_path, agent_id, verbose):
             skills=agent_skills,
         )
 
+        banner(get_version_string())
         banner_small(f"chat · {agent_id}")
         agent_name = agent_def.get("name", agent_id)
         kv("Agent", f"{agent_name} [muted]({agent_id})[/]", indent=4)
@@ -79,6 +81,7 @@ def chat(config_path, agent_id, verbose):
         # Single-agent mode
         memory = _create_memory_backend(config)
         engine = Engine(config=config, llm=llm, state=state, memory=memory)
+        banner(get_version_string())
         banner_small("chat")
 
     llm_config = get_llm_config(config)
@@ -86,6 +89,7 @@ def chat(config_path, agent_id, verbose):
     kv("Skills", f"{len(engine._skills)} loaded", indent=4)
     console.print()
 
+    adapter.set_engine(engine)
     try:
         adapter.start(on_message=engine.handle)
     except KeyboardInterrupt:

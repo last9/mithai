@@ -1,0 +1,28 @@
+{{- if and .Values.rbac.create .Values.rbac.operator }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "mithai.fullname" . }}-operator
+  labels:
+    {{- include "mithai.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - deployments/scale
+      - statefulsets
+      - statefulsets/scale
+    verbs: ["patch", "update"]
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+    verbs: ["delete"]
+  - apiGroups: [""]
+    resources:
+      - pods/eviction
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources:
+      - nodes
+    verbs: ["patch", "update"]
+{{- end }}

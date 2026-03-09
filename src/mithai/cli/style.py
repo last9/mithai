@@ -34,28 +34,29 @@ BANNER = r"""[bright_magenta]
 
 BANNER_SMALL = "[bright_magenta bold]mithai[/]"
 
-# Indian sweets — a random one with ASCII art shown on each startup
+# Indian sweets — a random one shown on each startup
+# Using Unicode symbols to avoid Rich markup interpretation
 _SWEETS = [
-    ("gulab jamun",  r"  (@@)  "),
-    ("rasgulla",     r"  {~~}  "),
-    ("jalebi",       r"  ~@~   "),
-    ("barfi",        r"  [**]  "),
-    ("ladoo",        r"  (##)  "),
-    ("kaju katli",   r"  <◇>   "),
-    ("rasmalai",     r" (~@@~) "),
-    ("modak",        r"  /@@\  "),
-    ("kulfi",        r"  |▼|   "),
-    ("kheer",        r"  {:.}  "),
-    ("peda",         r"  (bg)  "),
-    ("sandesh",      r"  [~~]  "),
-    ("gajar halwa",  r"  {##}  "),
-    ("mysore pak",   r"  [##]  "),
-    ("kaju katli",   r"  <##>  "),
+    ("gulab jamun",  "●●"),
+    ("rasgulla",     "○○"),
+    ("jalebi",       "〰"),
+    ("barfi",        "◆◆"),
+    ("ladoo",        "◉◉"),
+    ("kaju katli",   "◇◇"),
+    ("rasmalai",     "◎◎"),
+    ("modak",        "▲▲"),
+    ("kulfi",        "▽▽"),
+    ("kheer",        "∴∴"),
+    ("peda",         "⊙⊙"),
+    ("sandesh",      "▣▣"),
+    ("gajar halwa",  "▓▓"),
+    ("mysore pak",   "▪▪"),
+    ("imarti",       "❀❀"),
 ]
 
 
 def _random_sweet() -> tuple[str, str]:
-    """Return a random Indian sweet (name, ascii art)."""
+    """Return a random Indian sweet (name, icon)."""
     import random
     return random.choice(_SWEETS)
 
@@ -63,10 +64,10 @@ def _random_sweet() -> tuple[str, str]:
 def banner(version: str = ""):
     """Print the mithai banner with a random sweet."""
     console.print(BANNER)
-    name, art = _random_sweet()
+    name, icon = _random_sweet()
     if version:
         console.print(f"  [muted]AI agent framework for organizations — v{version}[/]")
-    console.print(f"  [muted]today's mithai:[/] [bright_yellow]{art}[/] [muted]{name}[/]")
+    console.print(f"  [muted]today's mithai:[/] [bright_yellow]{icon}[/] [muted]{name}[/]")
     console.print()
 
 

@@ -1,7 +1,6 @@
 """Tests for the memory skill."""
 
 import json
-from pathlib import Path
 
 import pytest
 

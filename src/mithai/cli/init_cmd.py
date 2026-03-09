@@ -1,6 +1,5 @@
 """mithai init — interactive setup wizard."""
 
-import json
 import os
 import subprocess
 
@@ -24,7 +23,7 @@ def _validate_anthropic_key(api_key: str, model: str) -> tuple[bool, str]:
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
+        client.messages.create(
             model=model,
             max_tokens=1,
             messages=[{"role": "user", "content": "hi"}],

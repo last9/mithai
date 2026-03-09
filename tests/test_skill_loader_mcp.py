@@ -1,6 +1,5 @@
 """Tests for MCP_TOOLS loading and validation in skill_loader."""
 
-from pathlib import Path
 
 from mithai.core.skill_loader import load_skills, validate_skill
 

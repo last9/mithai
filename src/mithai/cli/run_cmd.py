@@ -58,6 +58,11 @@ def _run_single_agent(config: dict, adapter_override: str | None):
 
     engine.late_bind(adapters)
 
+    # Give CLI adapter engine ref for slash commands
+    for _, adapter in adapters:
+        if hasattr(adapter, "set_engine"):
+            adapter.set_engine(engine)
+
     # Show startup info
     banner_small("run")
     llm_config = get_llm_config(config)

@@ -65,7 +65,7 @@ def _run_single_agent(config: dict, adapter_override: str | None):
     kv("Skills", f"{len(engine._skills)} loaded ({', '.join(sorted(engine._skills.keys()))})", indent=4)
 
     if engine._mcp_manager:
-        servers = list(engine._mcp_manager._connections.keys()) if hasattr(engine._mcp_manager, '_connections') else []
+        servers = list(engine._mcp_manager._configs.keys())
         if servers:
             kv("MCP", ", ".join(servers), indent=4)
 

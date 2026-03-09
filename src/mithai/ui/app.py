@@ -1,5 +1,6 @@
 """Starlette app for the Control Room web UI."""
 
+import hmac
 import json
 import logging
 from pathlib import Path
@@ -43,7 +44,7 @@ def create_app(config: dict) -> Starlette:
             auth_header = request.headers.get("authorization", "")
             if auth_header.startswith("Bearer "):
                 token = auth_header[7:]
-        if token != auth_token:
+        if not hmac.compare_digest(token, auth_token):
             return HTMLResponse("<h1>401 Unauthorized</h1>", status_code=401)
         return None
 

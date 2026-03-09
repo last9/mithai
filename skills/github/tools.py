@@ -329,6 +329,8 @@ def handle(name: str, input: dict, ctx: dict) -> str:
         repo = input["repo"]
         number = str(input["number"])
         method = input.get("method", "merge")
+        if method not in ("merge", "squash", "rebase"):
+            return json.dumps({"error": f"Invalid merge method: {method}. Must be merge, squash, or rebase."})
         result = _gh(
             "pr", "merge", number,
             "--repo", repo,

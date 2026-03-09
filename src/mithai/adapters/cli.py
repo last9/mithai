@@ -1,8 +1,37 @@
 """CLI/terminal adapter for local development and testing."""
 
+import sys
+
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+
 from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import CLIFormatter
 from mithai.human.mcp import HumanRequest
+
+_console = Console()
+
+
+def _flush_stdin():
+    """Discard any buffered stdin input (keystrokes during LLM processing).
+
+    When the LLM takes seconds to respond, users may press Enter or type
+    while waiting.  Those keystrokes accumulate in the terminal buffer and
+    would be read as empty prompts (you> you> you> ...) or auto-deny
+    approval prompts.  Flushing clears that buffer.
+    """
+    try:
+        import termios
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except (ImportError, termios.error, ValueError, OSError):
+        # Windows or non-tty — best-effort: drain anything readable
+        try:
+            import select
+            while select.select([sys.stdin], [], [], 0)[0]:
+                sys.stdin.readline()
+        except Exception:
+            pass
 
 
 class CLIAdapter(Adapter):
@@ -18,13 +47,15 @@ class CLIAdapter(Adapter):
 
     def start(self, on_message: MessageHandler) -> None:
         self._running = True
-        print("mithai> ready (type 'quit' to exit)\n")
+        _console.print(
+            "\n  [bright_magenta bold]mithai[/] [muted]ready · type [white]quit[/white] to exit[/]\n"
+        )
 
         while self._running:
             try:
-                text = input("you> ").strip()
+                text = _console.input("[bright_cyan bold]you>[/] ").strip()
             except (EOFError, KeyboardInterrupt):
-                print()
+                _console.print()
                 break
 
             if not text:
@@ -40,45 +71,76 @@ class CLIAdapter(Adapter):
             )
 
             response = on_message(message, self)
+
+            # Flush any keystrokes buffered while the LLM was processing
+            _flush_stdin()
+
+            _console.print()
             for chunk in self._formatter.format(response):
-                print(f"\nmithai> {chunk}\n")
+                try:
+                    md = Markdown(chunk)
+                    _console.print(Panel(
+                        md,
+                        title="[bright_magenta]mithai[/]",
+                        border_style="bright_magenta",
+                        padding=(1, 2),
+                    ))
+                except Exception:
+                    _console.print(f"[bright_magenta]mithai>[/] {chunk}")
+            _console.print()
 
     def stop(self) -> None:
         self._running = False
 
     def send(self, message: OutgoingMessage) -> None:
         for chunk in self._formatter.format(message.text):
-            print(f"mithai> {chunk}")
+            try:
+                md = Markdown(chunk)
+                _console.print(Panel(
+                    md,
+                    title="[bright_magenta]mithai[/]",
+                    border_style="bright_magenta",
+                    padding=(1, 2),
+                ))
+            except Exception:
+                _console.print(f"[bright_magenta]mithai>[/] {chunk}")
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
-        print(f"\n{'=' * 50}")
-        print(f"HUMAN APPROVAL REQUIRED [{request.level.upper()}]")
-        print(f"{'=' * 50}")
-        print(request.description)
-        print(f"{'=' * 50}")
+        # Flush buffered keystrokes so stale Enter presses don't auto-deny
+        _flush_stdin()
+
+        _console.print()
+        level_color = "yellow" if request.level == "approve" else "red"
+        _console.print(Panel(
+            request.description,
+            title=f"[{level_color} bold]Human Approval Required [{request.level.upper()}][/]",
+            border_style=level_color,
+            padding=(1, 2),
+        ))
 
         if request.level == "confirm":
             confirm_text = _extract_confirm_token(request)
-            print(f"\nType '{confirm_text}' to confirm, or anything else to deny:")
+            _console.print(
+                f"  Type [bold]{confirm_text}[/] to confirm, or anything else to deny:"
+            )
             try:
-                answer = input("> ").strip()
+                answer = _console.input("  [yellow]>[/] ").strip()
             except (EOFError, KeyboardInterrupt):
-                print("\nDenied.")
+                _console.print("  [red]Denied.[/]")
                 return False
             approved = answer == confirm_text
         else:
-            print("\nApprove? [y/N]: ", end="")
             try:
-                answer = input().strip().lower()
+                answer = _console.input("  [yellow]Approve? [y/N]:[/] ").strip().lower()
             except (EOFError, KeyboardInterrupt):
-                print("\nDenied.")
+                _console.print("  [red]Denied.[/]")
                 return False
             approved = answer in ("y", "yes")
 
         if approved:
-            print("Approved.\n")
+            _console.print("  [green]Approved.[/]\n")
         else:
-            print("Denied.\n")
+            _console.print("  [red]Denied.[/]\n")
         return approved
 
 

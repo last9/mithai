@@ -6,8 +6,10 @@ import subprocess
 
 import click
 from pathlib import Path
+from rich.table import Table
 
 from mithai import get_bundled_path
+from mithai.cli.style import banner_small, console, fail, info, ok, section, warn
 from mithai.core.config import get_skill_paths, load_config
 from mithai.core.skill_loader import load_skills, validate_skill
 
@@ -135,11 +137,11 @@ def _check_deps(skill_name: str) -> list[dict]:
     return failed
 
 
-def _count_tools(skill_dir: Path) -> int:
+def _count_tools(skill_dir: Path) -> str:
     """Count native tools in a skill without fully loading it."""
     tools_file = skill_dir / "tools.py"
     if not tools_file.exists():
-        return 0
+        return "0"
     try:
         spec = importlib.util.spec_from_file_location(f"_count_{skill_dir.name}", tools_file)
         mod = importlib.util.module_from_spec(spec)
@@ -160,6 +162,17 @@ def _count_tools(skill_dir: Path) -> int:
         return label
     except Exception:
         return "?"
+
+
+def _human_summary(tools: list) -> str:
+    """Summarize human approval levels for a skill's tools."""
+    levels = set()
+    for t in tools:
+        if t.human:
+            levels.add(t.human)
+    if not levels:
+        return "[green]none[/]"
+    return ", ".join(f"[yellow]{level}[/]" for level in sorted(levels))
 
 
 @click.group()
@@ -191,7 +204,7 @@ def install(name, skills_dir):
         )
 
     if name in CORE_SKILLS:
-        click.echo(f"'{name}' is a core skill — already bundled and active.")
+        info(f"[bright_cyan]{name}[/] is a core skill — already bundled and active.")
         return
 
     source = available[name]
@@ -199,11 +212,11 @@ def install(name, skills_dir):
     # Check runtime dependencies
     failed_deps = _check_deps(name)
     if failed_deps:
-        click.echo(f"Dependency check for '{name}':")
+        warn(f"Dependency check for [bright_cyan]{name}[/]:")
         for dep in failed_deps:
-            click.echo(f"  ✗ {dep['label']} — not found")
-            click.echo(f"    {dep['install_hint']}")
-        if not click.confirm("\nInstall anyway (skill may not work without dependencies)?"):
+            fail(f"{dep['label']} — not found")
+            console.print(f"      [muted]{dep['install_hint']}[/]")
+        if not click.confirm("\n  Install anyway (skill may not work without dependencies)?"):
             raise click.Abort()
 
     # Copy skill files
@@ -216,14 +229,14 @@ def install(name, skills_dir):
 
     # Count tools for summary
     tool_label = _count_tools(target)
-    click.echo(f"✓ Installed skill '{name}' ({tool_label} tools)")
-    click.echo(f"  Location: {target}")
+    ok(f"Installed [bright_cyan]{name}[/] ({tool_label} tools)")
+    console.print(f"    [muted]Location: {target}[/]")
 
     # Show dep status if all passed
     deps = SKILL_DEPS.get(name, [])
     if deps and not failed_deps:
         for dep in deps:
-            click.echo(f"  ✓ {dep['label']}")
+            ok(dep["label"])
 
 
 @skill.command()
@@ -241,7 +254,7 @@ def remove(name, skills_dir):
         raise click.ClickException(f"Skill '{name}' is not installed at {target}.")
 
     shutil.rmtree(target)
-    click.echo(f"✓ Removed skill '{name}' from {target}")
+    ok(f"Removed [bright_cyan]{name}[/] from [muted]{target}[/]")
 
 
 @skill.command()
@@ -272,13 +285,15 @@ def upgrade(name, skills_dir):
     )
 
     tool_label = _count_tools(target)
-    click.echo(f"✓ Upgraded skill '{name}' ({tool_label} tools)")
+    ok(f"Upgraded [bright_cyan]{name}[/] ({tool_label} tools)")
 
 
 @skill.command("list")
 @click.option("--config", "config_path", default="config.yaml", help="Path to config.yaml")
 def list_skills(config_path):
     """List all skills — core (bundled), installed, and available."""
+    banner_small("skills")
+
     # Load active skills from config
     try:
         config = load_config(config_path)
@@ -293,17 +308,26 @@ def list_skills(config_path):
     available = _available_optional_skills()
     user_dir = _user_skills_dir()
 
-    # Core skills
-    click.echo("Core skills (bundled):")
+    # Core skills table
+    section("Core Skills (bundled)")
+    core_table = Table(
+        show_header=True, header_style="bold bright_white",
+        border_style="dim", padding=(0, 1), show_edge=False,
+    )
+    core_table.add_column("Skill", style="bright_cyan")
+    core_table.add_column("Tools", style="white")
+    core_table.add_column("Human Approval", style="yellow")
+
     for name in sorted(CORE_SKILLS):
         if name in loaded:
             sk = loaded[name]
-            click.echo(f"  {name}")
-            for t in sk.tools:
-                marker = f" [{t.human}]" if t.human else ""
-                click.echo(f"    - {t.name}{marker}")
+            tool_names = ", ".join(t.name for t in sk.tools)
+            human = _human_summary(sk.tools)
+            core_table.add_row(name, tool_names, human)
         else:
-            click.echo(f"  {name} (not loaded)")
+            core_table.add_row(name, "[muted]not loaded[/]", "")
+
+    console.print(core_table)
 
     # Installed optional skills
     installed = set()
@@ -314,17 +338,34 @@ def list_skills(config_path):
         }
 
     if installed:
-        click.echo("\nInstalled skills:")
+        section("Installed Skills")
+        inst_table = Table(
+            show_header=True, header_style="bold bright_white",
+            border_style="dim", padding=(0, 1), show_edge=False,
+        )
+        inst_table.add_column("Skill", style="bright_cyan")
+        inst_table.add_column("Tools", style="white")
+        inst_table.add_column("Human Approval", style="yellow")
+        inst_table.add_column("MCP", style="bright_magenta")
+
         for name in sorted(installed):
             sk = loaded.get(name)
             if sk:
-                tools = sk.tools
-                click.echo(f"  {name}")
-                for t in tools:
-                    marker = f" [{t.human}]" if t.human else ""
-                    click.echo(f"    - {t.name}{marker}")
+                tool_names = ", ".join(t.name for t in sk.tools) if sk.tools else ""
+                human = _human_summary(sk.tools)
+                mcp_label = ""
+                if sk.mcp_tools:
+                    servers = set()
+                    for entry in sk.mcp_tools:
+                        s = entry.get("server", "")
+                        if s:
+                            servers.add(s)
+                    mcp_label = ", ".join(sorted(servers))
+                inst_table.add_row(name, tool_names, human, mcp_label)
             else:
-                click.echo(f"  {name} (not loaded — check config)")
+                inst_table.add_row(name, "[muted]not loaded[/]", "", "")
+
+        console.print(inst_table)
 
     # Active optional skills loaded from config paths (e.g., ./skills/)
     active_from_config = {
@@ -332,22 +373,45 @@ def list_skills(config_path):
         if name not in CORE_SKILLS and name not in installed
     }
     if active_from_config:
-        click.echo("\nActive skills (from config paths):")
+        section("Active Skills (from config paths)")
+        active_table = Table(
+            show_header=True, header_style="bold bright_white",
+            border_style="dim", padding=(0, 1), show_edge=False,
+        )
+        active_table.add_column("Skill", style="bright_cyan")
+        active_table.add_column("Tools", style="white")
+        active_table.add_column("Human Approval", style="yellow")
+        active_table.add_column("MCP", style="bright_magenta")
+
         for name in sorted(active_from_config):
             sk = loaded[name]
-            click.echo(f"  {name}")
-            for t in sk.tools:
-                marker = f" [{t.human}]" if t.human else ""
-                click.echo(f"    - {t.name}{marker}")
+            tool_names = ", ".join(t.name for t in sk.tools) if sk.tools else ""
+            human = _human_summary(sk.tools)
+            mcp_label = ""
+            if sk.mcp_tools:
+                servers = set()
+                for entry in sk.mcp_tools:
+                    s = entry.get("server", "")
+                    if s:
+                        servers.add(s)
+                mcp_label = ", ".join(sorted(servers))
+            active_table.add_row(name, tool_names, human, mcp_label)
+
+        console.print(active_table)
 
     # Available for install (not yet installed or active)
     not_installed = set(available.keys()) - installed - CORE_SKILLS - active_from_config
 
     if not_installed:
-        click.echo("\nAvailable to install:")
+        section("Available to Install")
         for name in sorted(not_installed):
             tool_label = _count_tools(available[name])
-            click.echo(f"  {name} ({tool_label} tools) — `mithai skill install {name}`")
+            console.print(
+                f"    [bright_cyan]{name}[/] [muted]({tool_label} tools)[/] "
+                f"— [white]mithai skill install {name}[/]"
+            )
+
+    console.print()
 
 
 @skill.command()
@@ -363,9 +427,9 @@ def create(name, skills_dir):
     (skill_dir / "prompt.md").write_text(SKILL_PROMPT_TEMPLATE)
     (skill_dir / "tools.py").write_text(SKILL_TOOLS_TEMPLATE.format(name=name))
 
-    click.echo(f"Created skill '{name}' at {skill_dir}/")
-    click.echo(f"  Edit {skill_dir}/prompt.md — describe the skill")
-    click.echo(f"  Edit {skill_dir}/tools.py — define tools and handlers")
+    ok(f"Created skill [bright_cyan]{name}[/] at [muted]{skill_dir}/[/]")
+    console.print(f"    Edit [white]{skill_dir}/prompt.md[/] — describe the skill")
+    console.print(f"    Edit [white]{skill_dir}/tools.py[/] — define tools and handlers")
 
 
 @skill.command()
@@ -387,16 +451,17 @@ def validate(name, skills_dir):
         errors = validate_skill(skill_dir)
         if errors:
             all_valid = False
-            click.echo(f"  {skill_dir.name}: FAILED")
+            fail(f"[bright_cyan]{skill_dir.name}[/]: FAILED")
             for err in errors:
-                click.echo(f"    - {err}")
+                console.print(f"      [muted]- {err}[/]")
         else:
             from mithai.core.skill_loader import _load_skill
             sk = _load_skill(skill_dir)
             tool_count = len(sk.tools) if sk else 0
-            click.echo(f"  {skill_dir.name}: OK ({tool_count} tools)")
+            ok(f"[bright_cyan]{skill_dir.name}[/]: OK ({tool_count} tools)")
 
+    console.print()
     if all_valid:
-        click.echo("\nAll skills valid.")
+        ok("All skills valid.")
     else:
         raise click.ClickException("Some skills have errors.")

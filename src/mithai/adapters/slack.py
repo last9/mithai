@@ -44,14 +44,20 @@ class SlackAdapter(Adapter):
     def _register_action_handlers(self):
         """Register Slack action handlers for approve/deny buttons."""
 
-        @self._app.action({"action_id": "mithai_approve"})
+        @self._app.action("mithai_approve")
         def handle_approve(ack, body):
-            ack()
+            try:
+                ack()
+            except Exception:
+                logger.exception("ack() failed in handle_approve")
             self._handle_approval_action(body, approved=True)
 
-        @self._app.action({"action_id": "mithai_deny"})
+        @self._app.action("mithai_deny")
         def handle_deny(ack, body):
-            ack()
+            try:
+                ack()
+            except Exception:
+                logger.exception("ack() failed in handle_deny")
             self._handle_approval_action(body, approved=False)
 
     def _handle_approval_action(self, body: dict, approved: bool):

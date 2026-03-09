@@ -23,15 +23,20 @@ class ToolRouter:
     Tools are prefixed as skill_name__tool_name when sent to the LLM.
     Incoming tool calls are parsed and dispatched to the correct skill handler
     or to an MCP server for MCP-backed tools.
+
+    When allowed_tools is set, route() rejects any tool not in the set.
+    This is the hard boundary that prevents an agent from calling tools
+    outside its allowlist even if the LLM hallucinates the call.
     """
 
-    def __init__(self, skills: dict[str, Skill], mcp_manager: MCPManager | None = None):
+    def __init__(self, skills: dict[str, Skill], mcp_manager: MCPManager | None = None, *, allowed_tools: set[str] | None = None):
         self._skills = skills
         self._mcp = mcp_manager
         # skill tools: prefixed_name -> (skill_name, ToolDefinition)
         self._tool_index: dict[str, tuple[str, ToolDefinition]] = {}
         # MCP tools: prefixed_name -> (server_name, mcp_tool_name, ToolDefinition)
         self._mcp_index: dict[str, tuple[str, str, ToolDefinition]] = {}
+        self._allowed_tools = allowed_tools
         self._build_index()
 
     def _build_index(self):
@@ -145,7 +150,13 @@ class ToolRouter:
         Route a tool call to the correct handler (skill or MCP).
 
         Returns the handler's result as a string.
+        Rejects tools not in the allowed set (if configured).
         """
+        # Hard tool boundary — reject tools outside agent's allowlist
+        if self._allowed_tools is not None and prefixed_name not in self._allowed_tools:
+            logger.warning("Tool %s rejected — not in agent allowlist", prefixed_name)
+            return json.dumps({"error": f"Tool {prefixed_name} is not available to this agent."})
+
         # Try native skill tool first
         entry = self._tool_index.get(prefixed_name)
         if entry is not None:

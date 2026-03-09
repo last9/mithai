@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from mithai.core.reflection import reflect
+from mithai.memory.filesystem import FilesystemMemoryBackend
 
 
 def _make_llm_response(text):
@@ -23,17 +24,22 @@ def memory_dir(tmp_path):
 
 
 @pytest.fixture
+def memory_backend(memory_dir):
+    return FilesystemMemoryBackend(memory_dir)
+
+
+@pytest.fixture
 def mock_llm():
     return MagicMock()
 
 
 class TestReflect:
-    def test_skips_turns_without_tool_calls(self, mock_llm, memory_dir):
+    def test_skips_turns_without_tool_calls(self, mock_llm, memory_backend):
         turn = {"user_message": "hello", "tool_calls": [], "assistant_response": "hi"}
-        reflect(turn, mock_llm, memory_dir)
+        reflect(turn, mock_llm, memory_backend)
         mock_llm.create_message.assert_not_called()
 
-    def test_writes_learnings_to_daily_log(self, mock_llm, memory_dir):
+    def test_writes_learnings_to_daily_log(self, mock_llm, memory_backend):
         mock_llm.create_message.return_value = _make_llm_response(
             "- DaemonSets use `rollout restart`, not delete/recreate"
         )
@@ -44,15 +50,15 @@ class TestReflect:
             "timestamp": "12:00",
         }
 
-        reflect(turn, mock_llm, memory_dir)
+        reflect(turn, mock_llm, memory_backend)
 
-        daily = memory_dir / "daily" / f"{date.today()}.md"
-        assert daily.exists()
-        content = daily.read_text()
+        path = f"daily/{date.today()}.md"
+        content = memory_backend.read(path)
+        assert content is not None
         assert "DaemonSets" in content
         assert "12:00" in content
 
-    def test_skips_when_llm_returns_none(self, mock_llm, memory_dir):
+    def test_skips_when_llm_returns_none(self, mock_llm, memory_backend):
         mock_llm.create_message.return_value = _make_llm_response("none")
         turn = {
             "user_message": "check status",
@@ -60,12 +66,12 @@ class TestReflect:
             "assistant_response": "System is up",
         }
 
-        reflect(turn, mock_llm, memory_dir)
+        reflect(turn, mock_llm, memory_backend)
 
-        daily_dir = memory_dir / "daily"
-        assert not daily_dir.exists() or not list(daily_dir.iterdir())
+        path = f"daily/{date.today()}.md"
+        assert memory_backend.read(path) is None
 
-    def test_appends_multiple_reflections(self, mock_llm, memory_dir):
+    def test_appends_multiple_reflections(self, mock_llm, memory_backend):
         mock_llm.create_message.return_value = _make_llm_response("- learning 1")
         turn1 = {
             "user_message": "q1",
@@ -73,7 +79,7 @@ class TestReflect:
             "assistant_response": "a1",
             "timestamp": "10:00",
         }
-        reflect(turn1, mock_llm, memory_dir)
+        reflect(turn1, mock_llm, memory_backend)
 
         mock_llm.create_message.return_value = _make_llm_response("- learning 2")
         turn2 = {
@@ -82,14 +88,14 @@ class TestReflect:
             "assistant_response": "a2",
             "timestamp": "11:00",
         }
-        reflect(turn2, mock_llm, memory_dir)
+        reflect(turn2, mock_llm, memory_backend)
 
-        daily = memory_dir / "daily" / f"{date.today()}.md"
-        content = daily.read_text()
+        path = f"daily/{date.today()}.md"
+        content = memory_backend.read(path)
         assert "learning 1" in content
         assert "learning 2" in content
 
-    def test_handles_llm_error_gracefully(self, mock_llm, memory_dir):
+    def test_handles_llm_error_gracefully(self, mock_llm, memory_backend):
         mock_llm.create_message.side_effect = Exception("API error")
         turn = {
             "user_message": "test",
@@ -98,9 +104,9 @@ class TestReflect:
         }
 
         # Should not raise
-        reflect(turn, mock_llm, memory_dir)
+        reflect(turn, mock_llm, memory_backend)
 
-    def test_skips_empty_response(self, mock_llm, memory_dir):
+    def test_skips_empty_response(self, mock_llm, memory_backend):
         mock_llm.create_message.return_value = _make_llm_response("")
         turn = {
             "user_message": "test",
@@ -108,7 +114,7 @@ class TestReflect:
             "assistant_response": "resp",
         }
 
-        reflect(turn, mock_llm, memory_dir)
+        reflect(turn, mock_llm, memory_backend)
 
-        daily_dir = memory_dir / "daily"
-        assert not daily_dir.exists() or not list(daily_dir.iterdir())
+        path = f"daily/{date.today()}.md"
+        assert memory_backend.read(path) is None

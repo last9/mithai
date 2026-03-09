@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% set active = "dashboard" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Overview of your mithai agent activity</p>
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{ session_stats.total }}</div>
+        <div class="stat-label">Sessions</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ session_stats.total_turns }}</div>
+        <div class="stat-label">Total turns</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ skill_count }}</div>
+        <div class="stat-label">Skills loaded</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">
+            <span style="color: var(--green)">{{ approval_stats.total_approved }}</span>
+            <span style="color: var(--text-muted); font-size: 20px; font-weight: 400"> / </span>
+            <span style="color: var(--red)">{{ approval_stats.total_denied }}</span>
+        </div>
+        <div class="stat-label">Approved / Denied</div>
+    </div>
+</div>
+
+{% if session_stats.by_platform %}
+<div class="card">
+    <div class="card-header"><div class="card-title">Connected Platforms</div></div>
+    <div class="card-body">
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        {% for platform, count in session_stats.by_platform.items() %}
+            <div class="row-card" style="flex: 1; min-width: 180px; margin-bottom: 0;">
+                <div class="row-card-icon platform-icon {{ platform }}">
+                    {{ platform[:3] }}
+                </div>
+                <div class="row-card-body">
+                    <div class="row-card-title" style="text-transform: capitalize;">{{ platform }}</div>
+                    <div class="row-card-meta">{{ count }} session{{ "s" if count != 1 }}</div>
+                </div>
+                <div class="row-card-status">
+                    <span class="status-dot status-dot-green">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                    </span>
+                </div>
+            </div>
+        {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <div class="card-title">Recent Sessions</div>
+        <a href="/sessions" style="font-size: 13px; color: var(--text-muted);">View all &rarr;</a>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        {% if recent_sessions %}
+        <table>
+            <thead>
+                <tr><th>Session</th><th>Platform</th><th>Turns</th><th>Updated</th><th>Last message</th></tr>
+            </thead>
+            <tbody>
+            {% for s in recent_sessions %}
+            <tr>
+                <td><a href="/sessions/{{ s.session_id }}" style="font-weight: 500;">{{ s.session_id }}</a></td>
+                <td><span class="badge platform-badge {{ s.platform }}">{{ s.platform }}</span></td>
+                <td>{{ s.turn_count }}</td>
+                <td><span class="timestamp" data-ts="{{ s.updated_at }}">{{ s.updated_at[:16] }}</span></td>
+                <td style="color: var(--text-muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ s.last_message[:60] }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <div>No sessions yet. Start a conversation to see activity here.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if approval_stats.auto_promoted_count > 0 %}
+<div class="card">
+    <div class="card-header"><div class="card-title">Auto-promoted Commands</div></div>
+    <div class="card-body">
+        <span class="badge badge-green">{{ approval_stats.auto_promoted_count }} auto-promoted</span>
+        <span style="color: var(--text-muted); font-size: 13px; margin-left: 8px;">
+            Threshold: {{ approval_stats.threshold }}+ approvals with 0 denials
+        </span>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

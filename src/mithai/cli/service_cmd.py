@@ -7,6 +7,8 @@ from pathlib import Path
 
 import click
 
+from mithai.cli.style import banner_small, console, info, kv, ok, section, warn
+
 
 MITHAI_HOME = Path.home() / ".mithai"
 LABEL = "io.mithai.agent"
@@ -117,17 +119,17 @@ def _launchd_install(config_path: Path, env_path: Path):
     plist.parent.mkdir(parents=True, exist_ok=True)
     plist.write_text(_generate_plist(mithai_bin, config_path, env_path))
 
-    click.echo(f"  Plist: {plist}")
-    click.echo(f"  Binary: {mithai_bin}")
-    click.echo(f"  Config: {config_path}")
-    click.echo(f"  Logs: {log_dir}/")
+    kv("Plist", str(plist), indent=4)
+    kv("Binary", mithai_bin, indent=4)
+    kv("Config", str(config_path), indent=4)
+    kv("Logs", f"{log_dir}/", indent=4)
 
     # Load the agent
     rc, out, err = _launchctl("load", str(plist))
     if rc != 0:
-        click.echo(f"  Warning: launchctl load returned: {err.strip()}")
+        warn(f"launchctl load returned: {err.strip()}")
     else:
-        click.echo("  Service loaded and will start at login.")
+        ok("Service loaded and will start at login.")
 
 
 def _launchd_uninstall():
@@ -138,7 +140,7 @@ def _launchd_uninstall():
     # Unload first
     _launchctl("unload", str(plist))
     plist.unlink()
-    click.echo(f"  Removed {plist}")
+    ok(f"Removed [muted]{plist}[/]")
 
 
 def _launchd_start():
@@ -150,7 +152,7 @@ def _launchd_start():
     rc, out, err = _launchctl("load", str(plist))
     if rc != 0 and "already loaded" not in err.lower():
         raise click.ClickException(f"Failed to start: {err.strip()}")
-    click.echo("  Service started.")
+    ok("Service started.")
 
 
 def _launchd_stop():
@@ -160,13 +162,13 @@ def _launchd_stop():
     rc, out, err = _launchctl("unload", str(plist))
     if rc != 0:
         raise click.ClickException(f"Failed to stop: {err.strip()}")
-    click.echo("  Service stopped.")
+    ok("Service stopped.")
 
 
 def _launchd_status():
     plist = _plist_path()
     if not plist.exists():
-        click.echo("  Status: not installed")
+        info("Status: [yellow]not installed[/]")
         return
 
     result = subprocess.run(
@@ -182,34 +184,33 @@ def _launchd_status():
                 pid, last_exit, label = parts[0], parts[1], parts[2]
                 if label == LABEL:
                     if pid == "-":
-                        click.echo("  Status: installed but not running")
+                        info("Status: [yellow]installed but not running[/]")
                     else:
-                        click.echo(f"  Status: running (PID {pid})")
+                        ok(f"Status: [green]running[/] (PID {pid})")
                     if last_exit != "0":
-                        click.echo(f"  Last exit code: {last_exit}")
+                        warn(f"Last exit code: {last_exit}")
                     break
         else:
-            # Fallback: full output
-            click.echo(f"  {result.stdout.strip()}")
+            console.print(f"    {result.stdout.strip()}")
     else:
-        click.echo("  Status: installed but not loaded")
+        info("Status: [yellow]installed but not loaded[/]")
 
     # Show recent logs
     log_file = MITHAI_HOME / "logs" / "mithai.log"
     err_file = MITHAI_HOME / "logs" / "mithai.err"
 
     if log_file.exists():
-        click.echo(f"\n  Recent logs ({log_file}):")
+        section("Recent Logs")
         lines = log_file.read_text().splitlines()[-10:]
         for line in lines:
-            click.echo(f"    {line}")
+            console.print(f"    [muted]{line}[/]")
 
     if err_file.exists():
         err_lines = err_file.read_text().splitlines()[-5:]
         if err_lines:
-            click.echo(f"\n  Recent errors ({err_file}):")
+            section("Recent Errors")
             for line in err_lines:
-                click.echo(f"    {line}")
+                console.print(f"    [red]{line}[/]")
 
 
 # ─── systemd (Linux) ─────────────────────────────────────────────────────────
@@ -261,17 +262,17 @@ def _systemd_install(config_path: Path, env_path: Path):
     unit.parent.mkdir(parents=True, exist_ok=True)
     unit.write_text(_generate_unit(mithai_bin, config_path, env_path))
 
-    click.echo(f"  Unit: {unit}")
-    click.echo(f"  Binary: {mithai_bin}")
-    click.echo(f"  Config: {config_path}")
+    kv("Unit", str(unit), indent=4)
+    kv("Binary", mithai_bin, indent=4)
+    kv("Config", str(config_path), indent=4)
 
     # Reload and enable
     _systemctl("daemon-reload")
     rc, out, err = _systemctl("enable", "mithai.service")
     if rc != 0:
-        click.echo(f"  Warning: enable failed: {err.strip()}")
+        warn(f"enable failed: {err.strip()}")
     else:
-        click.echo("  Service enabled (will start on login).")
+        ok("Service enabled (will start on login).")
 
 
 def _systemd_uninstall():
@@ -283,7 +284,7 @@ def _systemd_uninstall():
     _systemctl("disable", "mithai.service")
     unit.unlink()
     _systemctl("daemon-reload")
-    click.echo(f"  Removed {unit}")
+    ok(f"Removed [muted]{unit}[/]")
 
 
 def _systemd_start():
@@ -295,7 +296,7 @@ def _systemd_start():
     rc, out, err = _systemctl("start", "mithai.service")
     if rc != 0:
         raise click.ClickException(f"Failed to start: {err.strip()}")
-    click.echo("  Service started.")
+    ok("Service started.")
 
 
 def _systemd_stop():
@@ -305,27 +306,27 @@ def _systemd_stop():
     rc, out, err = _systemctl("stop", "mithai.service")
     if rc != 0:
         raise click.ClickException(f"Failed to stop: {err.strip()}")
-    click.echo("  Service stopped.")
+    ok("Service stopped.")
 
 
 def _systemd_status():
     unit = _unit_path()
     if not unit.exists():
-        click.echo("  Status: not installed")
+        info("Status: [yellow]not installed[/]")
         return
 
     rc, out, err = _systemctl("status", "mithai.service")
     # systemctl status returns non-zero for inactive services
-    click.echo(f"  {out.strip()}")
+    console.print(f"    {out.strip()}")
 
     # Show recent journal logs
     rc2, logs, _ = _systemctl(
         "status", "mithai.service", "--no-pager", "-n", "10"
     )
     if rc2 == 0 and logs:
-        click.echo("\n  Recent logs:")
+        section("Recent Logs")
         for line in logs.strip().splitlines():
-            click.echo(f"    {line}")
+            console.print(f"    [muted]{line}[/]")
 
 
 # ─── CLI commands ─────────────────────────────────────────────────────────────
@@ -351,7 +352,9 @@ def install(config_path, env_path):
             f"Config not found at {config}. Run `mithai init` first."
         )
 
-    click.echo("Installing mithai service...")
+    banner_small("service install")
+    info("Installing mithai service...")
+    console.print()
 
     if _is_macos():
         _launchd_install(config, env)
@@ -363,7 +366,9 @@ def install(config_path, env_path):
             f"Only macOS (launchd) and Linux (systemd) are supported."
         )
 
-    click.echo("\n  Run `mithai service start` to start the service.")
+    console.print()
+    console.print("    Run [bright_cyan]mithai service start[/] to start the service.")
+    console.print()
 
 
 @service.command()

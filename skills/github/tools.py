@@ -1,470 +1,464 @@
-"""GitHub skill — uses `gh` CLI for all operations.
-
-Requires: gh CLI installed and authenticated (`gh auth login`).
-No Node.js or MCP server needed.
-"""
+"""Skill: GitHub operations via gh CLI."""
 
 import json
 import subprocess
 
 
-def _gh(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
-    """Run a gh command and return (returncode, stdout, stderr)."""
-    result = subprocess.run(
-        ["gh"] + args,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    return result.returncode, result.stdout, result.stderr
-
-
-def _gh_api(endpoint: str, method: str = "GET", body: dict | None = None,
-            timeout: int = 30) -> tuple[bool, str]:
-    """Call the GitHub API via `gh api` and return (ok, response_text)."""
-    args = ["api", endpoint, "--method", method]
-    if body:
-        for k, v in body.items():
-            args.extend(["-f", f"{k}={v}"])
-    code, stdout, stderr = _gh(args, timeout=timeout)
-    if code != 0:
-        return False, stderr.strip() or stdout.strip()
-    return True, stdout
-
-
 TOOLS = [
+    # --- Pull Requests ---
     {
-        "name": "get_file_contents",
-        "description": "Get the contents of a file from a GitHub repository.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "path": {"type": "string", "description": "File path in the repository"},
-                "ref": {"type": "string", "description": "Branch, tag, or commit SHA (default: default branch)"},
-            },
-            "required": ["owner", "repo", "path"],
-        },
-    },
-    {
-        "name": "search_code",
-        "description": "Search for code across GitHub repositories.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query (GitHub code search syntax)"},
-                "owner": {"type": "string", "description": "Limit search to this owner/org"},
-                "repo": {"type": "string", "description": "Limit search to this repo (owner/repo format)"},
-                "limit": {"type": "integer", "description": "Max results (default: 10)"},
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "list_commits",
-        "description": "List recent commits on a branch.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "branch": {"type": "string", "description": "Branch name (default: default branch)"},
-                "limit": {"type": "integer", "description": "Max commits to return (default: 10)"},
-            },
-            "required": ["owner", "repo"],
-        },
-    },
-    {
-        "name": "get_pull_request",
-        "description": "Get details of a pull request including status checks and reviews.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "number": {"type": "integer", "description": "PR number"},
-            },
-            "required": ["owner", "repo", "number"],
-        },
-    },
-    {
-        "name": "list_pull_requests",
+        "name": "gh_list_prs",
         "description": "List pull requests for a repository.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "state": {"type": "string", "description": "Filter by state: open, closed, merged, all (default: open)"},
-                "limit": {"type": "integer", "description": "Max PRs to return (default: 10)"},
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in owner/name format",
+                },
+                "state": {
+                    "type": "string",
+                    "description": "Filter by state: open, closed, merged, all (default: open)",
+                    "default": "open",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of PRs to return (default: 10)",
+                    "default": 10,
+                },
             },
-            "required": ["owner", "repo"],
+            "required": ["repo"],
         },
     },
     {
-        "name": "create_pull_request",
+        "name": "gh_get_pr",
+        "description": "Get details of a specific pull request.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "number": {"type": "integer", "description": "PR number"},
+            },
+            "required": ["repo", "number"],
+        },
+    },
+    {
+        "name": "gh_create_pr",
         "description": "Create a new pull request.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
                 "title": {"type": "string", "description": "PR title"},
-                "body": {"type": "string", "description": "PR description (markdown)"},
-                "head": {"type": "string", "description": "Branch containing changes"},
-                "base": {"type": "string", "description": "Branch to merge into (default: default branch)"},
+                "body": {"type": "string", "description": "PR description"},
+                "base": {"type": "string", "description": "Base branch (default: repo default branch)"},
+                "head": {"type": "string", "description": "Head branch containing changes"},
             },
-            "required": ["owner", "repo", "title", "head"],
+            "required": ["repo", "title", "head"],
         },
         "human": "approve",
     },
     {
-        "name": "create_branch",
-        "description": "Create a new branch in a repository.",
+        "name": "gh_merge_pr",
+        "description": "Merge a pull request.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "branch": {"type": "string", "description": "New branch name"},
-                "from_branch": {"type": "string", "description": "Source branch (default: default branch)"},
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "number": {"type": "integer", "description": "PR number to merge"},
+                "method": {
+                    "type": "string",
+                    "description": "Merge method: merge, squash, rebase (default: merge)",
+                    "default": "merge",
+                },
             },
-            "required": ["owner", "repo", "branch"],
+            "required": ["repo", "number"],
         },
         "human": "approve",
     },
+    # --- Issues ---
     {
-        "name": "create_or_update_file",
-        "description": "Create or update a file in a repository (commits directly).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "path": {"type": "string", "description": "File path"},
-                "content": {"type": "string", "description": "File content"},
-                "message": {"type": "string", "description": "Commit message"},
-                "branch": {"type": "string", "description": "Branch to commit to"},
-                "sha": {"type": "string", "description": "SHA of file being replaced (required for updates)"},
-            },
-            "required": ["owner", "repo", "path", "content", "message", "branch"],
-        },
-        "human": "approve",
-    },
-    {
-        "name": "list_issues",
+        "name": "gh_list_issues",
         "description": "List issues for a repository.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "state": {"type": "string", "description": "Filter: open, closed, all (default: open)"},
-                "labels": {"type": "string", "description": "Comma-separated label filter"},
-                "limit": {"type": "integer", "description": "Max issues (default: 10)"},
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in owner/name format",
+                },
+                "state": {
+                    "type": "string",
+                    "description": "Filter by state: open, closed, all (default: open)",
+                    "default": "open",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of issues to return (default: 10)",
+                    "default": 10,
+                },
             },
-            "required": ["owner", "repo"],
+            "required": ["repo"],
         },
     },
     {
-        "name": "get_issue",
-        "description": "Get details of a specific issue including comments.",
+        "name": "gh_get_issue",
+        "description": "Get details of a specific issue.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
                 "number": {"type": "integer", "description": "Issue number"},
             },
-            "required": ["owner", "repo", "number"],
+            "required": ["repo", "number"],
         },
     },
     {
-        "name": "list_releases",
+        "name": "gh_create_issue",
+        "description": "Create a new issue.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "title": {"type": "string", "description": "Issue title"},
+                "body": {"type": "string", "description": "Issue body/description"},
+            },
+            "required": ["repo", "title"],
+        },
+        "human": "approve",
+    },
+    {
+        "name": "gh_add_comment",
+        "description": "Add a comment to an issue or pull request.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "number": {"type": "integer", "description": "Issue or PR number"},
+                "body": {"type": "string", "description": "Comment text"},
+            },
+            "required": ["repo", "number", "body"],
+        },
+        "human": "approve",
+    },
+    # --- Actions ---
+    {
+        "name": "gh_list_runs",
+        "description": "List recent GitHub Actions workflow runs for a repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in owner/name format",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of runs to show (default: 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["repo"],
+        },
+    },
+    {
+        "name": "gh_get_run",
+        "description": "Get details of a specific workflow run including job status.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "run_id": {"type": "string", "description": "Workflow run ID"},
+            },
+            "required": ["repo", "run_id"],
+        },
+    },
+    {
+        "name": "gh_rerun_failed",
+        "description": "Re-run failed jobs in a workflow run.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "run_id": {"type": "string", "description": "Workflow run ID to re-run"},
+            },
+            "required": ["repo", "run_id"],
+        },
+        "human": "approve",
+    },
+    # --- Releases ---
+    {
+        "name": "gh_list_releases",
         "description": "List releases for a repository.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "limit": {"type": "integer", "description": "Max releases (default: 5)"},
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in owner/name format",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of releases to return (default: 10)",
+                    "default": 10,
+                },
             },
-            "required": ["owner", "repo"],
+            "required": ["repo"],
         },
     },
     {
-        "name": "get_workflow_runs",
-        "description": "List recent CI/CD workflow runs for a repository.",
+        "name": "gh_create_release",
+        "description": "Create a new release with a tag.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "owner": {"type": "string", "description": "Repository owner"},
-                "repo": {"type": "string", "description": "Repository name"},
-                "branch": {"type": "string", "description": "Filter by branch"},
-                "status": {"type": "string", "description": "Filter: completed, in_progress, queued"},
-                "limit": {"type": "integer", "description": "Max runs (default: 5)"},
+                "repo": {"type": "string", "description": "Repository (owner/name)"},
+                "tag": {"type": "string", "description": "Tag name for the release (e.g., v1.2.3)"},
+                "title": {"type": "string", "description": "Release title (defaults to tag name)"},
+                "notes": {"type": "string", "description": "Release notes body"},
+                "draft": {
+                    "type": "boolean",
+                    "description": "Create as draft release (default: false)",
+                    "default": False,
+                },
+                "prerelease": {
+                    "type": "boolean",
+                    "description": "Mark as prerelease (default: false)",
+                    "default": False,
+                },
             },
-            "required": ["owner", "repo"],
+            "required": ["repo", "tag"],
+        },
+        "human": "approve",
+    },
+    # --- Repository ---
+    {
+        "name": "gh_repo_info",
+        "description": "Get repository metadata (description, stars, forks, default branch, etc.).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in owner/name format",
+                },
+            },
+            "required": ["repo"],
+        },
+    },
+    {
+        "name": "gh_list_branches",
+        "description": "List branches for a repository.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in owner/name format",
+                },
+            },
+            "required": ["repo"],
         },
     },
 ]
 
 
-def _get_file_contents(inp: dict) -> str:
-    owner, repo, path = inp["owner"], inp["repo"], inp["path"]
-    ref = inp.get("ref", "")
-    endpoint = f"/repos/{owner}/{repo}/contents/{path}"
-    if ref:
-        endpoint += f"?ref={ref}"
-    ok, resp = _gh_api(endpoint)
-    if not ok:
-        return json.dumps({"error": resp})
+def _gh(*args, timeout=30) -> dict:
+    """Run a gh CLI command and return structured result."""
     try:
-        data = json.loads(resp)
-        if data.get("encoding") == "base64":
-            import base64
-            content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
-            return json.dumps({
-                "path": data.get("path", path),
-                "size": data.get("size", 0),
-                "sha": data.get("sha", ""),
-                "content": content,
-            })
-        return resp
-    except (json.JSONDecodeError, KeyError):
-        return resp
-
-
-def _search_code(inp: dict) -> str:
-    query = inp["query"]
-    if inp.get("repo"):
-        query += f" repo:{inp['repo']}"
-    elif inp.get("owner"):
-        query += f" org:{inp['owner']}"
-    limit = inp.get("limit", 10)
-
-    code, stdout, stderr = _gh(
-        ["search", "code", query, "--limit", str(limit), "--json",
-         "path,repository,textMatches"],
-        timeout=30,
-    )
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return stdout
-
-
-def _list_commits(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    limit = inp.get("limit", 10)
-    args = ["api", f"/repos/{owner}/{repo}/commits", "--method", "GET",
-            "-f", f"per_page={limit}"]
-    if inp.get("branch"):
-        args.extend(["-f", f"sha={inp['branch']}"])
-    code, stdout, stderr = _gh(args)
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    try:
-        commits = json.loads(stdout)
-        return json.dumps([{
-            "sha": c["sha"][:8],
-            "message": c["commit"]["message"].split("\n")[0],
-            "author": c["commit"]["author"]["name"],
-            "date": c["commit"]["author"]["date"],
-        } for c in commits])
-    except (json.JSONDecodeError, KeyError):
-        return stdout
-
-
-def _get_pull_request(inp: dict) -> str:
-    owner, repo, number = inp["owner"], inp["repo"], inp["number"]
-    code, stdout, stderr = _gh(
-        ["pr", "view", str(number), "--repo", f"{owner}/{repo}",
-         "--json", "number,title,state,body,headRefName,baseRefName,"
-                   "author,mergeable,reviewDecision,statusCheckRollup,"
-                   "additions,deletions,changedFiles"],
-    )
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return stdout
-
-
-def _list_pull_requests(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    state = inp.get("state", "open")
-    limit = inp.get("limit", 10)
-    code, stdout, stderr = _gh(
-        ["pr", "list", "--repo", f"{owner}/{repo}",
-         "--state", state, "--limit", str(limit),
-         "--json", "number,title,state,author,headRefName,updatedAt"],
-    )
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return stdout
-
-
-def _create_pull_request(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    args = ["pr", "create", "--repo", f"{owner}/{repo}",
-            "--title", inp["title"],
-            "--head", inp["head"]]
-    if inp.get("base"):
-        args.extend(["--base", inp["base"]])
-    if inp.get("body"):
-        args.extend(["--body", inp["body"]])
-    code, stdout, stderr = _gh(args, timeout=30)
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return json.dumps({"url": stdout.strip()})
-
-
-def _create_branch(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    branch = inp["branch"]
-    from_branch = inp.get("from_branch", "")
-
-    # Get the SHA of the source branch
-    source = from_branch or "HEAD"
-    ok, resp = _gh_api(f"/repos/{owner}/{repo}/git/ref/heads/{source if from_branch else ''}")
-    if not from_branch:
-        # Get default branch SHA
-        ok, resp = _gh_api(f"/repos/{owner}/{repo}")
-        if not ok:
-            return json.dumps({"error": resp})
+        result = subprocess.run(
+            ["gh", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr.strip()}
         try:
-            default_branch = json.loads(resp)["default_branch"]
-        except (json.JSONDecodeError, KeyError):
-            return json.dumps({"error": "Could not determine default branch"})
-        ok, resp = _gh_api(f"/repos/{owner}/{repo}/git/ref/heads/{default_branch}")
-
-    if not ok:
-        return json.dumps({"error": resp})
-    try:
-        sha = json.loads(resp)["object"]["sha"]
-    except (json.JSONDecodeError, KeyError):
-        return json.dumps({"error": "Could not get source branch SHA"})
-
-    # Create the new branch ref
-    code, stdout, stderr = _gh(
-        ["api", f"/repos/{owner}/{repo}/git/refs",
-         "--method", "POST",
-         "-f", f"ref=refs/heads/{branch}",
-         "-f", f"sha={sha}"],
-    )
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return json.dumps({"branch": branch, "sha": sha[:8]})
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return {"output": result.stdout.strip()}
+    except FileNotFoundError:
+        return {"error": "gh CLI not found. Install from https://cli.github.com/"}
+    except subprocess.TimeoutExpired:
+        return {"error": f"gh CLI timed out after {timeout}s"}
 
 
-def _create_or_update_file(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    path, content = inp["path"], inp["content"]
-    message, branch = inp["message"], inp["branch"]
+def handle(name: str, input: dict, ctx: dict) -> str:
+    # --- Pull Requests ---
+    if name == "gh_list_prs":
+        repo = input["repo"]
+        state = input.get("state", "open")
+        limit = str(input.get("limit", 10))
+        result = _gh(
+            "pr", "list",
+            "--repo", repo,
+            "--state", state,
+            "--limit", limit,
+            "--json", "number,title,state,author,headRefName,baseRefName,createdAt,updatedAt",
+        )
+        return json.dumps(result)
 
-    import base64
-    encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    if name == "gh_get_pr":
+        repo = input["repo"]
+        number = str(input["number"])
+        result = _gh(
+            "pr", "view", number,
+            "--repo", repo,
+            "--json", "number,title,state,body,author,headRefName,baseRefName,mergeable,reviewDecision,commits,files,createdAt,updatedAt",
+        )
+        return json.dumps(result)
 
-    args = ["api", f"/repos/{owner}/{repo}/contents/{path}",
-            "--method", "PUT",
-            "-f", f"message={message}",
-            "-f", f"content={encoded}",
-            "-f", f"branch={branch}"]
-    if inp.get("sha"):
-        args.extend(["-f", f"sha={inp['sha']}"])
+    if name == "gh_create_pr":
+        repo = input["repo"]
+        args = [
+            "pr", "create",
+            "--repo", repo,
+            "--title", input["title"],
+            "--head", input["head"],
+        ]
+        if input.get("body"):
+            args += ["--body", input["body"]]
+        if input.get("base"):
+            args += ["--base", input["base"]]
+        result = _gh(*args)
+        return json.dumps(result)
 
-    code, stdout, stderr = _gh(args, timeout=30)
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    try:
-        data = json.loads(stdout)
-        return json.dumps({
-            "path": data.get("content", {}).get("path", path),
-            "sha": data.get("content", {}).get("sha", "")[:8],
-            "commit_sha": data.get("commit", {}).get("sha", "")[:8],
-        })
-    except json.JSONDecodeError:
-        return stdout
+    if name == "gh_merge_pr":
+        repo = input["repo"]
+        number = str(input["number"])
+        method = input.get("method", "merge")
+        result = _gh(
+            "pr", "merge", number,
+            "--repo", repo,
+            f"--{method}",
+        )
+        return json.dumps(result)
 
+    # --- Issues ---
+    if name == "gh_list_issues":
+        repo = input["repo"]
+        state = input.get("state", "open")
+        limit = str(input.get("limit", 10))
+        result = _gh(
+            "issue", "list",
+            "--repo", repo,
+            "--state", state,
+            "--limit", limit,
+            "--json", "number,title,state,author,labels,createdAt,updatedAt",
+        )
+        return json.dumps(result)
 
-def _list_issues(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    state = inp.get("state", "open")
-    limit = inp.get("limit", 10)
-    args = ["issue", "list", "--repo", f"{owner}/{repo}",
-            "--state", state, "--limit", str(limit),
-            "--json", "number,title,state,author,labels,updatedAt"]
-    if inp.get("labels"):
-        args.extend(["--label", inp["labels"]])
-    code, stdout, stderr = _gh(args)
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return stdout
+    if name == "gh_get_issue":
+        repo = input["repo"]
+        number = str(input["number"])
+        result = _gh(
+            "issue", "view", number,
+            "--repo", repo,
+            "--json", "number,title,state,body,author,labels,comments,createdAt,updatedAt",
+        )
+        return json.dumps(result)
 
+    if name == "gh_create_issue":
+        repo = input["repo"]
+        args = [
+            "issue", "create",
+            "--repo", repo,
+            "--title", input["title"],
+        ]
+        if input.get("body"):
+            args += ["--body", input["body"]]
+        result = _gh(*args)
+        return json.dumps(result)
 
-def _get_issue(inp: dict) -> str:
-    owner, repo, number = inp["owner"], inp["repo"], inp["number"]
-    code, stdout, stderr = _gh(
-        ["issue", "view", str(number), "--repo", f"{owner}/{repo}",
-         "--json", "number,title,state,body,author,labels,comments,assignees"],
-    )
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return stdout
+    if name == "gh_add_comment":
+        repo = input["repo"]
+        number = str(input["number"])
+        result = _gh(
+            "issue", "comment", number,
+            "--repo", repo,
+            "--body", input["body"],
+        )
+        return json.dumps(result)
 
+    # --- Actions ---
+    if name == "gh_list_runs":
+        repo = input["repo"]
+        limit = str(input.get("limit", 5))
+        result = _gh(
+            "run", "list",
+            "--repo", repo,
+            "--limit", limit,
+            "--json", "databaseId,displayTitle,status,conclusion,headBranch,createdAt",
+        )
+        return json.dumps(result)
 
-def _list_releases(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    limit = inp.get("limit", 5)
-    code, stdout, stderr = _gh(
-        ["release", "list", "--repo", f"{owner}/{repo}",
-         "--limit", str(limit)],
-    )
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return stdout
+    if name == "gh_get_run":
+        repo = input["repo"]
+        run_id = input["run_id"]
+        result = _gh(
+            "run", "view", run_id,
+            "--repo", repo,
+            "--json", "databaseId,displayTitle,status,conclusion,jobs,headBranch,createdAt,updatedAt",
+        )
+        return json.dumps(result)
 
+    if name == "gh_rerun_failed":
+        repo = input["repo"]
+        run_id = input["run_id"]
+        result = _gh(
+            "run", "rerun", run_id,
+            "--repo", repo,
+            "--failed",
+        )
+        return json.dumps(result)
 
-def _get_workflow_runs(inp: dict) -> str:
-    owner, repo = inp["owner"], inp["repo"]
-    limit = inp.get("limit", 5)
-    args = ["run", "list", "--repo", f"{owner}/{repo}",
-            "--limit", str(limit),
-            "--json", "databaseId,name,status,conclusion,headBranch,createdAt,url"]
-    if inp.get("branch"):
-        args.extend(["--branch", inp["branch"]])
-    if inp.get("status"):
-        args.extend(["--status", inp["status"]])
-    code, stdout, stderr = _gh(args)
-    if code != 0:
-        return json.dumps({"error": stderr.strip()})
-    return stdout
+    # --- Releases ---
+    if name == "gh_list_releases":
+        repo = input["repo"]
+        limit = str(input.get("limit", 10))
+        result = _gh(
+            "release", "list",
+            "--repo", repo,
+            "--limit", limit,
+        )
+        return json.dumps(result)
 
+    if name == "gh_create_release":
+        repo = input["repo"]
+        tag = input["tag"]
+        args = [
+            "release", "create", tag,
+            "--repo", repo,
+        ]
+        if input.get("title"):
+            args += ["--title", input["title"]]
+        if input.get("notes"):
+            args += ["--notes", input["notes"]]
+        if input.get("draft"):
+            args += ["--draft"]
+        if input.get("prerelease"):
+            args += ["--prerelease"]
+        result = _gh(*args)
+        return json.dumps(result)
 
-_HANDLERS = {
-    "get_file_contents": _get_file_contents,
-    "search_code": _search_code,
-    "list_commits": _list_commits,
-    "get_pull_request": _get_pull_request,
-    "list_pull_requests": _list_pull_requests,
-    "create_pull_request": _create_pull_request,
-    "create_branch": _create_branch,
-    "create_or_update_file": _create_or_update_file,
-    "list_issues": _list_issues,
-    "get_issue": _get_issue,
-    "list_releases": _list_releases,
-    "get_workflow_runs": _get_workflow_runs,
-}
+    # --- Repository ---
+    if name == "gh_repo_info":
+        repo = input["repo"]
+        result = _gh(
+            "repo", "view", repo,
+            "--json", "name,owner,description,defaultBranchRef,stargazerCount,forkCount,isPrivate,url,createdAt,updatedAt",
+        )
+        return json.dumps(result)
 
+    if name == "gh_list_branches":
+        repo = input["repo"]
+        # gh api is more reliable for branch listing
+        result = _gh(
+            "api", f"repos/{repo}/branches",
+            "--paginate",
+        )
+        return json.dumps(result)
 
-def handle(name: str, inp: dict, ctx: dict) -> str:
-    handler = _HANDLERS.get(name)
-    if handler:
-        try:
-            return handler(inp)
-        except subprocess.TimeoutExpired:
-            return json.dumps({"error": f"Command timed out: {name}"})
-        except FileNotFoundError:
-            return json.dumps({"error": "gh CLI not found. Install: https://cli.github.com/"})
-        except Exception as e:
-            return json.dumps({"error": str(e)})
     return json.dumps({"error": f"Unknown tool: {name}"})

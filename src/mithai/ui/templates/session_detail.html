@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% set active = "sessions" %}
+{% set avatar_colors = ["avatar-purple", "avatar-blue", "avatar-green", "avatar-yellow"] %}
+
+{% block title %}Session {{ session.session_id }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ session.session_id }}</h1>
+    <p class="page-subtitle">
+        {% set p = session.get("platform", "?") %}
+        <span class="badge platform-badge {{ p }}" style="vertical-align: middle;">{{ p }}</span>
+        &middot; {{ session.get("turns", [])|length }} turn{{ "s" if session.get("turns", [])|length != 1 }}
+        &middot; created <span data-ts="{{ session.get('created_at', '') }}">{{ session.get("created_at", "")[:16] }}</span>
+    </p>
+</div>
+
+<div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));">
+    <div class="stat-card">
+        <div class="stat-value" style="font-size: 20px; text-transform: capitalize;">{{ session.get("platform", "?") }}</div>
+        <div class="stat-label">Platform</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="font-size: 28px;">{{ session.get("turns", [])|length }}</div>
+        <div class="stat-label">Turns</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="font-size: 14px; font-weight: 500;"><span data-ts="{{ session.get('created_at', '') }}">{{ session.get("created_at", "")[:16] }}</span></div>
+        <div class="stat-label">Created</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="font-size: 14px; font-weight: 500;"><span data-ts="{{ session.get('updated_at', '') }}">{{ session.get("updated_at", "")[:16] }}</span></div>
+        <div class="stat-label">Last updated</div>
+    </div>
+</div>
+
+{% for turn in session.get("turns", []) %}
+<div class="turn">
+    <div class="turn-header">
+        {% set uid = turn.get("user_id", "?") %}
+        <div class="avatar {{ avatar_colors[loop.index0 % 4] }}">{{ uid[:2] }}</div>
+        <div>
+            <div style="font-weight: 600; font-size: 14px;">{{ uid }}</div>
+            <div class="turn-meta">
+                Turn {{ loop.index }}
+                {% if turn.get("timestamp") %} &middot; <span data-ts="{{ turn.timestamp }}">{{ turn.timestamp[:16] }}</span>{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="turn-user">{{ turn.get("user_message", "") }}</div>
+
+    {% for tc in turn.get("tool_calls", []) %}
+    <div class="tool-call">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            {% if tc.get("approved", true) %}
+                <span class="badge badge-green">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                    approved
+                </span>
+            {% else %}
+                <span class="badge badge-red">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    denied
+                </span>
+            {% endif %}
+            <span class="tool-name">{{ tc.get("tool", "?") }}</span>
+        </div>
+
+        {% if tc.get("input") %}
+        <pre><code>{{ tc.input | tojson }}</code></pre>
+        {% endif %}
+
+        {% if tc.get("result_summary") %}
+        <details style="margin-top: 8px;">
+            <summary style="font-size: 12px; color: var(--text-muted); cursor: pointer; padding: 4px 0;">Show result</summary>
+            <pre style="margin-top: 6px;"><code>{{ tc.result_summary }}</code></pre>
+        </details>
+        {% endif %}
+
+        {% if tc.get("error") %}
+        <pre style="color: var(--red); margin-top: 8px;"><code>Error: {{ tc.error }}</code></pre>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if turn.get("assistant_response") %}
+    <div class="turn-response">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <div class="avatar" style="background: var(--bg); border: 1px solid var(--border); width: 24px; height: 24px; font-size: 10px; color: var(--text-muted);">AI</div>
+            <span style="font-size: 12px; font-weight: 600; color: var(--text-muted);">Assistant</span>
+        </div>
+        {{ turn.assistant_response }}
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% if not session.get("turns") %}
+<div class="card">
+    <div class="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <div>No turns in this session</div>
+    </div>
+</div>
+{% endif %}
+
+<a href="/sessions" class="back-link">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    Back to sessions
+</a>
+{% endblock %}

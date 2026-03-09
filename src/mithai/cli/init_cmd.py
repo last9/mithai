@@ -6,6 +6,11 @@ import subprocess
 import click
 import yaml
 from pathlib import Path
+from rich.prompt import Prompt, Confirm, IntPrompt
+
+from mithai.cli.style import (
+    banner, console, fail, info, ok, step_header, summary_panel, warn,
+)
 
 
 MITHAI_HOME = Path.home() / ".mithai"
@@ -98,18 +103,6 @@ def _validate_k8s_context(kubeconfig: str, context: str) -> tuple[bool, str]:
         return False, "kubectl not found"
 
 
-def _step_header(step: int, total: int, title: str):
-    """Print a step header."""
-    click.echo(f"\nStep {step}/{total}: {title}")
-    click.echo("-" * 40)
-
-
-def _result(ok: bool, msg: str):
-    """Print a validation result."""
-    marker = click.style("✓", fg="green") if ok else click.style("✗", fg="red")
-    click.echo(f"  {marker} {msg}")
-
-
 @click.command()
 @click.option("--dir", "target_dir", default=None, help="Directory for config files (default: ~/.mithai/)")
 def init(target_dir):
@@ -118,31 +111,34 @@ def init(target_dir):
     config_path = target / "config.yaml"
     env_path = target / "env"
 
-    click.echo()
-    click.echo(click.style("Mithai Setup Wizard", bold=True))
-    click.echo("=" * 40)
+    from mithai import get_version_string
+    banner(get_version_string())
+    console.print("  [header]Setup Wizard[/]")
+    console.print()
 
     # Handle existing config
     existing_config = None
     if config_path.exists():
-        click.echo(f"\nExisting configuration found at {config_path}")
-        choice = click.prompt(
-            "  1. Start fresh (backup existing)\n"
-            "  2. Update existing (keep current values)\n"
-            "  3. Abort\n"
-            "Choose",
-            type=click.IntRange(1, 3),
+        warn(f"Existing configuration found at [white]{config_path}[/]")
+        console.print()
+        choice = IntPrompt.ask(
+            "    [bright_cyan]1.[/] Start fresh (backup existing)\n"
+            "    [bright_cyan]2.[/] Update existing (keep current values)\n"
+            "    [bright_cyan]3.[/] Abort\n\n"
+            "  Choose",
+            choices=["1", "2", "3"],
             default=1,
+            console=console,
         )
         if choice == 3:
-            click.echo("Aborted.")
+            console.print("  [muted]Aborted.[/]")
             return
         if choice == 2:
             existing_config = yaml.safe_load(config_path.read_text()) or {}
         elif choice == 1:
             backup = config_path.with_suffix(".yaml.bak")
             config_path.rename(backup)
-            click.echo(f"  Backed up to {backup}")
+            info(f"Backed up to [muted]{backup}[/]")
 
     # Calculate total steps dynamically
     total_steps = 4  # LLM, Adapter, Skills, Write
@@ -156,23 +152,25 @@ def init(target_dir):
 
     # ─── Step 1: LLM Provider ────────────────────────────────────────
     step += 1
-    _step_header(step, total_steps, "LLM Provider")
+    step_header(step, total_steps, "LLM Provider")
 
     existing_llm = config.get("llm", {})
-    provider = click.prompt(
-        "  Provider",
+    provider = Prompt.ask(
+        "    Provider",
         default=existing_llm.get("provider", "anthropic"),
+        console=console,
     )
 
-    model = click.prompt(
-        "  Model",
+    model = Prompt.ask(
+        "    Model",
         default=existing_llm.get("model", "claude-sonnet-4-6"),
+        console=console,
     )
 
-    max_tokens = click.prompt(
-        "  Max tokens",
+    max_tokens = IntPrompt.ask(
+        "    Max tokens",
         default=existing_llm.get("max_tokens", 16384),
-        type=int,
+        console=console,
     )
 
     # Get API key
@@ -183,20 +181,22 @@ def init(target_dir):
         existing_key = os.environ.get(env_var, "")
 
     if existing_key:
-        click.echo(f"  API key: {_mask(existing_key)} (from env)")
+        console.print(f"    API key: [muted]{_mask(existing_key)} (from env)[/]")
         api_key = existing_key
         use_env_ref = True
     else:
-        api_key = click.prompt("  Anthropic API key", hide_input=True)
+        api_key = Prompt.ask("    Anthropic API key", password=True, console=console)
         use_env_ref = False
 
     # Validate
-    click.echo("  Validating...")
-    ok, msg = _validate_anthropic_key(api_key, model)
-    _result(ok, msg)
-    if not ok:
-        if not click.confirm("  Continue anyway?", default=False):
-            click.echo("Aborted.")
+    info("Validating LLM connection...")
+    validated_ok, msg = _validate_anthropic_key(api_key, model)
+    if validated_ok:
+        ok(msg)
+    else:
+        fail(msg)
+        if not Confirm.ask("    Continue anyway?", default=False, console=console):
+            console.print("  [muted]Aborted.[/]")
             return
 
     config["llm"] = {
@@ -208,7 +208,7 @@ def init(target_dir):
 
     # ─── Step 2: Adapters ────────────────────────────────────────────
     step += 1
-    _step_header(step, total_steps, "Adapters")
+    step_header(step, total_steps, "Adapters")
 
     existing_adapters = config.get("adapter", {})
     existing_types = existing_adapters.get("types", [existing_adapters.get("type", "cli")])
@@ -216,30 +216,39 @@ def init(target_dir):
     adapter_choices = []
     for adapter_type in ["slack", "telegram", "cli"]:
         default = adapter_type in existing_types
-        if click.confirm(f"  Enable {adapter_type}?", default=default):
+        icon = {"slack": "#", "telegram": "@", "cli": ">"}[adapter_type]
+        if Confirm.ask(
+            f"    [{icon}] Enable [bright_cyan]{adapter_type}[/]?",
+            default=default,
+            console=console,
+        ):
             adapter_choices.append(adapter_type)
 
     if not adapter_choices:
         adapter_choices = ["cli"]
-        click.echo("  No adapters selected — defaulting to cli")
+        warn("No adapters selected — defaulting to cli")
 
     config["adapter"] = {"types": adapter_choices}
 
     # Slack config
     if "slack" in adapter_choices:
         existing_slack = existing_adapters.get("slack", {})
-        bot_token = click.prompt(
-            "  Slack Bot Token",
+        console.print()
+        console.print("    [header]Slack Configuration[/]")
+        bot_token = Prompt.ask(
+            "    Bot Token",
             default="(existing)" if existing_slack.get("bot_token") else "",
-            hide_input=True,
+            password=True,
+            console=console,
         )
         if bot_token == "(existing)":
             bot_token = ""
 
-        app_token = click.prompt(
-            "  Slack App Token",
+        app_token = Prompt.ask(
+            "    App Token",
             default="(existing)" if existing_slack.get("app_token") else "",
-            hide_input=True,
+            password=True,
+            console=console,
         )
         if app_token == "(existing)":
             app_token = ""
@@ -258,19 +267,25 @@ def init(target_dir):
         actual_bot = bot_token or os.environ.get("SLACK_BOT_TOKEN", "")
         if actual_bot:
             actual_app = app_token or os.environ.get("SLACK_APP_TOKEN", "")
-            click.echo("  Validating Slack...")
-            ok, msg = _validate_slack_tokens(actual_bot, actual_app)
-            _result(ok, msg)
+            info("Validating Slack...")
+            validated_ok, msg = _validate_slack_tokens(actual_bot, actual_app)
+            if validated_ok:
+                ok(msg)
+            else:
+                fail(msg)
         else:
-            click.echo("  Skipping Slack validation (no token provided)")
+            console.print("    [muted]Skipping Slack validation (no token provided)[/]")
 
     # Telegram config
     if "telegram" in adapter_choices:
         existing_tg = existing_adapters.get("telegram", {})
-        tg_token = click.prompt(
-            "  Telegram Bot Token",
+        console.print()
+        console.print("    [header]Telegram Configuration[/]")
+        tg_token = Prompt.ask(
+            "    Bot Token",
             default="(existing)" if existing_tg.get("bot_token") else "",
-            hide_input=True,
+            password=True,
+            console=console,
         )
         if tg_token == "(existing)":
             tg_token = ""
@@ -285,13 +300,16 @@ def init(target_dir):
 
         actual_tg = tg_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if actual_tg:
-            click.echo("  Validating Telegram...")
-            ok, msg = _validate_telegram_token(actual_tg)
-            _result(ok, msg)
+            info("Validating Telegram...")
+            validated_ok, msg = _validate_telegram_token(actual_tg)
+            if validated_ok:
+                ok(msg)
+            else:
+                fail(msg)
 
     # ─── Step 3: Skills & Infrastructure ─────────────────────────────
     step += 1
-    _step_header(step, total_steps, "Skills & Infrastructure")
+    step_header(step, total_steps, "Skills & Infrastructure")
 
     from mithai.cli.skill_cmd import (
         CORE_SKILLS, SKILL_DEPS, _available_optional_skills,
@@ -302,8 +320,11 @@ def init(target_dir):
     user_skills = _user_skills_dir()
     available = _available_optional_skills()
 
-    click.echo(f"  Core skills (always active): {', '.join(sorted(CORE_SKILLS))}")
-    click.echo()
+    console.print(
+        f"    Core skills (always active): "
+        f"[bright_cyan]{', '.join(sorted(CORE_SKILLS))}[/]"
+    )
+    console.print()
 
     skills_config = config.get("skills", {}).get("config", {})
     installed_skills = []
@@ -315,14 +336,22 @@ def init(target_dir):
         already_installed = (user_skills / skill_name).exists()
         default = already_installed
 
-        if click.confirm(f"  Install {skill_name}?", default=default):
+        if Confirm.ask(
+            f"    Install [bright_cyan]{skill_name}[/]?",
+            default=default,
+            console=console,
+        ):
             # Check deps
             failed = _check_deps(skill_name)
             if failed:
                 for dep in failed:
-                    _result(False, f"{dep['label']} — not found")
-                    click.echo(f"    {dep['install_hint']}")
-                if not click.confirm(f"  Install {skill_name} anyway?", default=False):
+                    fail(f"{dep['label']} — not found")
+                    console.print(f"      [muted]{dep['install_hint']}[/]")
+                if not Confirm.ask(
+                    f"    Install {skill_name} anyway?",
+                    default=False,
+                    console=console,
+                ):
                     continue
 
             # Install (or skip if already installed)
@@ -341,7 +370,7 @@ def init(target_dir):
             if not failed:
                 deps = SKILL_DEPS.get(skill_name, [])
                 for dep in deps:
-                    _result(True, dep["label"])
+                    ok(dep["label"])
 
             # Skill-specific config prompts
             if skill_name == "kubernetes":
@@ -353,12 +382,15 @@ def init(target_dir):
     k8s_config = skills_config.get("kubernetes", {})
     kubeconfig = k8s_config.get("kubeconfig", "")
     if kubeconfig and "kubernetes" in installed_skills:
-        click.echo()
-        click.echo("  Validating Kubernetes clusters...")
+        console.print()
+        info("Validating Kubernetes clusters...")
         contexts = _discover_k8s_contexts(kubeconfig)
         for ctx_name in contexts:
-            ok, msg = _validate_k8s_context(kubeconfig, ctx_name)
-            _result(ok, f"{ctx_name}: {msg}")
+            validated_ok, msg = _validate_k8s_context(kubeconfig, ctx_name)
+            if validated_ok:
+                ok(f"{ctx_name}: {msg}")
+            else:
+                fail(f"{ctx_name}: {msg}")
 
     # MCP server config
     if any(s in installed_skills for s in ("last9", "github", "exception_fixer")):
@@ -366,7 +398,7 @@ def init(target_dir):
 
     # ─── Step 4: Write Files ─────────────────────────────────────────
     step += 1
-    _step_header(step, total_steps, "Write Configuration")
+    step_header(step, total_steps, "Write Configuration")
 
     # Ensure config has required sections
     config.setdefault("bot", {
@@ -391,7 +423,7 @@ def init(target_dir):
     # Write config
     target.mkdir(parents=True, exist_ok=True)
     config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
-    _result(True, f"Config written to {config_path}")
+    ok(f"Config written to [white]{config_path}[/]")
 
     # Write env file — merge new secrets with existing
     if not use_env_ref and api_key:
@@ -413,7 +445,7 @@ def init(target_dir):
 
     env_path.write_text(env_content)
     env_path.chmod(0o600)
-    _result(True, f"Env file written to {env_path} (permissions: 0600)")
+    ok(f"Env file written to [white]{env_path}[/] [muted](permissions: 0600)[/]")
 
     # Create memory and state dirs
     memory_dir = Path(config.get("learning", {}).get("memory_dir", target / "memory"))
@@ -421,34 +453,44 @@ def init(target_dir):
 
     state_dir = Path(config.get("state", {}).get("filesystem", {}).get("path", target / "state"))
     state_dir.mkdir(parents=True, exist_ok=True)
-    _result(True, f"Memory dir: {memory_dir}")
-    _result(True, f"State dir: {state_dir}")
+    ok(f"Memory dir: [muted]{memory_dir}[/]")
+    ok(f"State dir: [muted]{state_dir}[/]")
 
     # Summary
-    click.echo()
-    click.echo(click.style("Setup complete!", bold=True))
-    click.echo()
-    click.echo(f"  Config:  {config_path}")
-    click.echo(f"  Secrets: {env_path}")
-    click.echo(f"  Skills:  {', '.join(sorted(CORE_SKILLS | set(installed_skills)))}")
-    click.echo()
-    click.echo("  Run:  mithai run")
-    click.echo("  Chat: mithai chat")
-    click.echo("  Diag: mithai doctor")
+    all_skills = sorted(CORE_SKILLS | set(installed_skills))
+    summary_content = (
+        f"[key]Config:[/]   {config_path}\n"
+        f"[key]Secrets:[/]  {env_path}\n"
+        f"[key]Skills:[/]   {', '.join(all_skills)}\n"
+        f"[key]Adapters:[/] {', '.join(adapter_choices)}\n"
+        f"\n"
+        f"[bright_cyan]mithai run[/]     Start the agent\n"
+        f"[bright_cyan]mithai chat[/]    Interactive CLI chat\n"
+        f"[bright_cyan]mithai doctor[/]  Run diagnostics\n"
+        f"[bright_cyan]mithai ui[/]      Start Control Room"
+    )
+    console.print()
+    summary_panel("Setup Complete", summary_content)
+    console.print()
 
 
 def _configure_kubernetes(config: dict, skills_config: dict):
     """Prompt for Kubernetes-specific configuration."""
     existing = skills_config.get("kubernetes", {})
 
-    kubeconfig = click.prompt(
-        "    KUBECONFIG paths (colon-separated)",
+    console.print()
+    console.print("      [header]Kubernetes Configuration[/]")
+
+    kubeconfig = Prompt.ask(
+        "      KUBECONFIG paths (colon-separated)",
         default=existing.get("kubeconfig", str(Path.home() / ".kube" / "config")),
+        console=console,
     )
 
-    default_ns = click.prompt(
-        "    Default namespace",
+    default_ns = Prompt.ask(
+        "      Default namespace",
         default=existing.get("default_namespace", "default"),
+        console=console,
     )
 
     skills_config["kubernetes"] = {
@@ -468,18 +510,24 @@ def _configure_kubernetes(config: dict, skills_config: dict):
 
 def _configure_mcp_servers(config: dict, installed_skills: list, new_secrets: dict):
     """Prompt for MCP server configuration."""
-    click.echo()
-    click.echo("  MCP Server Configuration")
+    console.print()
+    console.print("    [header]MCP Server Configuration[/]")
+    console.print()
 
     mcp_servers = config.get("mcp_servers", {})
 
     if "last9" in installed_skills or "exception_fixer" in installed_skills:
-        if click.confirm("    Configure Last9 MCP?", default=True):
+        if Confirm.ask(
+            "    Configure [bright_cyan]Last9[/] MCP?",
+            default=True,
+            console=console,
+        ):
             existing_last9 = mcp_servers.get("last9", {})
-            last9_token = click.prompt(
+            last9_token = Prompt.ask(
                 "    Last9 API Token",
                 default="(existing)" if existing_last9 else "",
-                hide_input=True,
+                password=True,
+                console=console,
             )
             mcp_servers["last9"] = {
                 "transport": "streamablehttp",

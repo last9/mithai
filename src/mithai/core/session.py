@@ -23,7 +23,9 @@ class SessionManager:
         self._max_turns = max_turns
 
     @staticmethod
-    def session_key(platform: str, channel_id: str) -> str:
+    def session_key(platform: str, channel_id: str, *, agent_id: str | None = None) -> str:
+        if agent_id:
+            return f"{platform}:{channel_id}:{agent_id}"
         return f"{platform}:{channel_id}"
 
     def load(self, key: str) -> dict:

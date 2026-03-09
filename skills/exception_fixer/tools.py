@@ -1,4 +1,4 @@
-"""Exception fixer skill — orchestrates Last9 + GitHub MCP tools."""
+"""Exception fixer skill — orchestrates Last9 MCP + GitHub native tools."""
 
 import json
 from urllib.parse import quote
@@ -8,7 +8,8 @@ TOOLS = [
         "name": "format_pr_body",
         "description": (
             "Build a formatted PR body for an exception fix. "
-            "Call this to generate the PR description, then pass the result as the body to create_pull_request."
+            "Call this to generate the PR description, then pass the result "
+            "as the body to github__create_pull_request."
         ),
         "input_schema": {
             "type": "object",
@@ -63,6 +64,7 @@ TOOLS = [
     },
 ]
 
+# Only Last9 tools come via MCP. GitHub tools are native (from github skill).
 MCP_TOOLS = [
     {
         "server": "last9",
@@ -73,26 +75,6 @@ MCP_TOOLS = [
             "get_logs",
         ],
         "human": None,
-    },
-    {
-        "server": "github",
-        "tools": [
-            "get_file_contents",
-            "search_code",
-            "list_commits",
-            "get_pull_request_status",
-            "create_branch",
-            "push_files",
-            "create_or_update_file",
-            "create_pull_request",
-        ],
-        "human": None,
-        "human_overrides": {
-            "create_branch": "approve",
-            "push_files": "approve",
-            "create_or_update_file": "approve",
-            "create_pull_request": "approve",
-        },
     },
 ]
 

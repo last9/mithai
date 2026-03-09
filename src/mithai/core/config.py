@@ -105,9 +105,35 @@ def get_skill_config(config: dict, skill_name: str) -> dict:
 
 
 def get_skill_paths(config: dict) -> list[Path]:
-    """Get list of directories to scan for skills."""
-    paths = config.get("skills", {}).get("paths", ["./skills"])
-    return [Path(p) for p in paths]
+    """Get list of directories to scan for skills.
+
+    Resolution order (later overrides earlier):
+    1. Bundled skills inside the PyInstaller binary (lowest priority)
+    2. Config-specified paths (e.g., ./skills)
+    3. User-installed skills at ~/.mithai/skills/ (highest priority)
+    """
+    from mithai import get_bundled_path
+
+    result = []
+
+    # 1. Bundled skills (inside PyInstaller binary or repo root)
+    bundled = get_bundled_path() / "skills"
+    if bundled.exists():
+        result.append(bundled)
+
+    # 2. Config-specified paths
+    config_paths = config.get("skills", {}).get("paths", ["./skills"])
+    for p in config_paths:
+        path = Path(p)
+        if path.resolve() != bundled.resolve():
+            result.append(path)
+
+    # 3. User-installed skills (~/.mithai/skills/)
+    user_skills = Path.home() / ".mithai" / "skills"
+    if user_skills.exists():
+        result.append(user_skills)
+
+    return result
 
 
 def get_mcp_config(config: dict) -> dict:

@@ -15,7 +15,8 @@ def test_skill_loads():
     assert skill.name == "exception_fixer"
     assert len(skill.tools) == 1
     assert skill.tools[0].name == "format_pr_body"
-    assert len(skill.mcp_tools) == 2
+    # Only Last9 MCP tools remain; GitHub uses native gh CLI tools
+    assert len(skill.mcp_tools) == 1
 
 
 def test_last9_mcp_entry():
@@ -26,24 +27,6 @@ def test_last9_mcp_entry():
     assert last9["human"] is None
     assert "get_exceptions" in last9["tools"]
     assert "get_service_traces" in last9["tools"]
-
-
-def test_github_mcp_entry():
-    """GitHub read tools auto-execute, write tools require approval."""
-    skill = _load_skill(SKILL_DIR)
-    github = skill.mcp_tools[1]
-    assert github["server"] == "github"
-    assert github["human"] is None
-
-    overrides = github["human_overrides"]
-    assert overrides["create_branch"] == "approve"
-    assert overrides["push_files"] == "approve"
-    assert overrides["create_or_update_file"] == "approve"
-    assert overrides["create_pull_request"] == "approve"
-
-    assert "get_file_contents" not in overrides
-    assert "search_code" not in overrides
-    assert "get_pull_request_status" not in overrides
 
 
 def test_prompt_contains_workflow():

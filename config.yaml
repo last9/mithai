@@ -40,12 +40,6 @@ mcp_servers:
     url: https://app.last9.io/api/v4/organizations/last9/mcp
     headers:
       X-LAST9-API-TOKEN: Bearer ${LAST9_API_TOKEN}
-  github:
-    transport: stdio
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN}
 
 skills:
   paths:

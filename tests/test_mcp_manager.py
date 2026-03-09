@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mithai.core.mcp_manager import MCPManager, MCPServerConfig
+from mithai.core.mcp_manager import MCPManager
 
 
 @pytest.fixture

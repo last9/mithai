@@ -19,7 +19,7 @@ from mithai.core.config import get_human_config, get_llm_config, get_mcp_config,
 from mithai.core.context import build_context
 from mithai.core.reflection import reflect
 from mithai.core.session import SessionManager
-from mithai.core.skill_loader import Skill, load_skills
+from mithai.core.skill_loader import load_skills
 from mithai.core.tool_router import ToolRouter
 from mithai.human.mcp import HumanMCP
 from mithai.llm.base import LLMProvider
@@ -322,7 +322,7 @@ class Engine:
         if daily_file.exists():
             content = daily_file.read_text().strip()
             if content:
-                parts.append(f"\n---\n\n## Today's Observations\n")
+                parts.append("\n---\n\n## Today's Observations\n")
                 parts.append(content)
 
         parts.append("\n---\n\n## Your Skills\n")

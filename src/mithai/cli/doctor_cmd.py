@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 
 import click
-import yaml
 
 from mithai import get_version_string
 from mithai.core.config import load_config, get_skill_paths

@@ -4,7 +4,7 @@ import json
 import logging
 from unittest.mock import MagicMock
 
-from mithai.core.skill_loader import Skill, ToolDefinition, load_skills
+from mithai.core.skill_loader import Skill, ToolDefinition
 from mithai.core.tool_router import ToolRouter
 
 

@@ -10,7 +10,6 @@ Run with:
   ANTHROPIC_API_KEY=sk-... uv run python tests/test_k8s_skill_e2e.py
 """
 
-import sys
 from pathlib import Path
 
 from mithai.core.config import load_config

@@ -1,6 +1,5 @@
 """mithai service — system service management (launchd on macOS, systemd on Linux)."""
 
-import os
 import platform
 import shutil
 import subprocess
@@ -324,7 +323,7 @@ def _systemd_status():
         "status", "mithai.service", "--no-pager", "-n", "10"
     )
     if rc2 == 0 and logs:
-        click.echo(f"\n  Recent logs:")
+        click.echo("\n  Recent logs:")
         for line in logs.strip().splitlines():
             click.echo(f"    {line}")
 

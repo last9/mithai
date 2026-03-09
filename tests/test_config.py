@@ -1,9 +1,8 @@
 """Tests for config loading."""
 
-import os
 import yaml
 
-from mithai.core.config import load_config, get_skill_paths, get_llm_config
+from mithai.core.config import load_config, get_skill_paths
 
 
 def test_load_config(tmp_path):

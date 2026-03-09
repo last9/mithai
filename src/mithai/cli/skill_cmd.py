@@ -1,7 +1,6 @@
 """mithai skill — manage skills (create, list, install, remove, validate)."""
 
 import importlib.util
-import json
 import shutil
 import subprocess
 

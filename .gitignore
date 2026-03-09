@@ -1,4 +1,5 @@
 .env
+.claude/
 .mithai/
 .venv/
 /memory/

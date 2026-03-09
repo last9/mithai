@@ -26,10 +26,10 @@ jobs:
         include:
           - runner: macos-14          # Apple Silicon
             platform: darwin-arm64
-          - runner: macos-13          # Intel Mac
-            platform: darwin-amd64
           - runner: ubuntu-latest     # Linux x86_64
             platform: linux-amd64
+          # darwin-amd64: GitHub retired Intel Mac runners (macos-13).
+          # Add back when self-hosted Intel runner is available.
 
     steps:
       - uses: actions/checkout@v4

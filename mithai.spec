@@ -29,7 +29,6 @@ for skill in CORE_SKILLS:
 # All optional skills are bundled as installable archives
 OPTIONAL_SKILLS = [
     'aws',
-    'cicd',
     'code_review',
     'exception_fixer',
     'github',

@@ -7,16 +7,12 @@ from pathlib import Path
 import click
 
 from mithai import get_version_string
+from mithai.cli.style import banner_small, console, fail, kv, ok, section
 from mithai.core.config import load_config, get_skill_paths
 from mithai.core.skill_loader import load_skills
 
 
 MITHAI_HOME = Path.home() / ".mithai"
-
-
-def _result(ok: bool, msg: str):
-    marker = click.style("✓", fg="green") if ok else click.style("✗", fg="red")
-    click.echo(f"  {marker} {msg}")
 
 
 def _check_llm(config: dict) -> bool:
@@ -33,7 +29,7 @@ def _check_llm(config: dict) -> bool:
             api_key = os.environ.get(env_var, "")
 
         if not api_key:
-            _result(False, f"LLM ({provider} {model}): API key not set")
+            fail(f"LLM ({provider} {model}): API key not set")
             return False
 
         try:
@@ -43,13 +39,13 @@ def _check_llm(config: dict) -> bool:
                 model=model, max_tokens=1,
                 messages=[{"role": "user", "content": "hi"}],
             )
-            _result(True, f"LLM ({provider} {model}): connected")
+            ok(f"LLM [bright_cyan]{provider}[/] / [white]{model}[/]: connected")
             return True
         except Exception as e:
-            _result(False, f"LLM ({provider} {model}): {e}")
+            fail(f"LLM ({provider} {model}): {e}")
             return False
     else:
-        _result(False, f"LLM ({provider}): unsupported provider for health check")
+        fail(f"LLM ({provider}): unsupported provider for health check")
         return False
 
 
@@ -71,12 +67,12 @@ def _check_adapters(config: dict) -> int:
                 client = WebClient(token=bot_token)
                 result = client.auth_test()
                 team = result.get("team", "unknown")
-                _result(True, f"Slack adapter: connected (workspace: {team})")
+                ok(f"Slack: connected (workspace: [white]{team}[/])")
             except Exception as e:
-                _result(False, f"Slack adapter: {e}")
+                fail(f"Slack: {e}")
                 failures += 1
         else:
-            _result(False, "Slack adapter: token not set")
+            fail("Slack: token not set")
             failures += 1
 
     if "telegram" in types:
@@ -93,19 +89,19 @@ def _check_adapters(config: dict) -> int:
                 )
                 data = resp.json()
                 if data.get("ok"):
-                    _result(True, f"Telegram adapter: connected (@{data['result'].get('username', '?')})")
+                    ok(f"Telegram: connected (@{data['result'].get('username', '?')})")
                 else:
-                    _result(False, f"Telegram adapter: {data.get('description', 'error')}")
+                    fail(f"Telegram: {data.get('description', 'error')}")
                     failures += 1
             except Exception as e:
-                _result(False, f"Telegram adapter: {e}")
+                fail(f"Telegram: {e}")
                 failures += 1
         else:
-            _result(False, "Telegram adapter: token not set")
+            fail("Telegram: token not set")
             failures += 1
 
     if "cli" in types:
-        _result(True, "CLI adapter: available")
+        ok("CLI adapter: available")
 
     return failures
 
@@ -128,13 +124,13 @@ def _check_kubectl(config: dict) -> int:
             import json
             ver = json.loads(result.stdout)
             version = ver.get("clientVersion", {}).get("gitVersion", "unknown")
-            _result(True, f"kubectl: {version}")
+            ok(f"kubectl: [white]{version}[/]")
         else:
-            _result(False, "kubectl: not working")
+            fail("kubectl: not working")
             failures += 1
             return failures
     except FileNotFoundError:
-        _result(False, "kubectl: not found")
+        fail("kubectl: not found")
         return 1
 
     # Check clusters
@@ -157,16 +153,16 @@ def _check_kubectl(config: dict) -> int:
                         capture_output=True, text=True, timeout=15, env=env,
                     )
                     if cr.returncode == 0:
-                        _result(True, f"Cluster {ctx}: reachable")
+                        ok(f"Cluster [white]{ctx}[/]: reachable")
                     else:
                         err = cr.stderr.strip()[:80]
-                        _result(False, f"Cluster {ctx}: {err}")
+                        fail(f"Cluster {ctx}: {err}")
                         failures += 1
                 except subprocess.TimeoutExpired:
-                    _result(False, f"Cluster {ctx}: timeout")
+                    fail(f"Cluster {ctx}: timeout")
                     failures += 1
         except Exception as e:
-            _result(False, f"kubectl contexts: {e}")
+            fail(f"kubectl contexts: {e}")
             failures += 1
 
     return failures
@@ -180,25 +176,25 @@ def _check_gh_cli() -> bool:
         )
         if result.returncode == 0:
             version = result.stdout.strip().splitlines()[0]
-            _result(True, f"GitHub CLI: {version}")
+            ok(f"GitHub CLI: [white]{version}[/]")
             return True
     except FileNotFoundError:
         pass
-    _result(False, "GitHub CLI (gh): not found")
+    fail("GitHub CLI (gh): not found")
     return False
 
 
-def _check_skills(config: dict, config_path: str) -> int:
+def _check_skills(config: dict) -> int:
     """Check loaded skills. Returns number of failures."""
     try:
         skill_paths = get_skill_paths(config)
         loaded = load_skills(skill_paths)
         core = sum(1 for s in loaded.values() if s.name in {"shell", "memory", "sessions", "http_checker"})
         optional = len(loaded) - core
-        _result(True, f"Skills loaded: {len(loaded)} ({core} core + {optional} optional)")
+        ok(f"Skills: [white]{len(loaded)}[/] loaded ({core} core + {optional} optional)")
         return 0
     except Exception as e:
-        _result(False, f"Skills: {e}")
+        fail(f"Skills: {e}")
         return 1
 
 
@@ -210,13 +206,30 @@ def _check_directories() -> int:
         ("State dir", MITHAI_HOME / "state"),
     ]:
         if path.exists() and os.access(path, os.W_OK):
-            _result(True, f"{name}: {path} (writable)")
+            ok(f"{name}: [muted]{path}[/]")
         elif path.exists():
-            _result(False, f"{name}: {path} (not writable)")
+            fail(f"{name}: {path} (not writable)")
             failures += 1
         else:
-            _result(False, f"{name}: {path} (does not exist)")
+            fail(f"{name}: {path} (does not exist)")
             failures += 1
+    return failures
+
+
+def _check_mcp(config: dict) -> int:
+    """Check MCP server configuration."""
+    mcp_servers = config.get("mcp_servers", {})
+    if not mcp_servers:
+        return 0
+
+    failures = 0
+    for name, server_cfg in mcp_servers.items():
+        transport = server_cfg.get("transport", "stdio")
+        url = server_cfg.get("url", "")
+        if url:
+            ok(f"MCP [white]{name}[/]: configured ({transport} → {url[:50]})")
+        else:
+            ok(f"MCP [white]{name}[/]: configured ({transport})")
     return failures
 
 
@@ -227,16 +240,14 @@ def doctor(config_path):
     """Run diagnostics — check config, connections, and dependencies."""
     config_file = Path(config_path) if config_path else MITHAI_HOME / "config.yaml"
 
-    click.echo()
-    click.echo(click.style("Mithai Doctor", bold=True))
-    click.echo("=" * 40)
-    click.echo(f"  Version:  {get_version_string()}")
-    click.echo(f"  Config:   {config_file}")
-    click.echo()
+    banner_small("doctor")
+    kv("Version", get_version_string(), indent=4)
+    kv("Config", str(config_file), indent=4)
+    console.print()
 
     if not config_file.exists():
-        click.echo(click.style("  Config file not found.", fg="red"))
-        click.echo("  Run `mithai init` to create one.")
+        fail("Config file not found.")
+        console.print("    Run [bright_cyan]mithai init[/] to create one.")
         raise SystemExit(1)
 
     # Load env file
@@ -250,36 +261,50 @@ def doctor(config_path):
 
     config = load_config(str(config_file))
 
-    click.echo("Checks:")
     issues = 0
 
     # LLM
+    section("LLM")
     if not _check_llm(config):
         issues += 1
 
     # Adapters
+    section("Adapters")
     issues += _check_adapters(config)
 
+    # MCP
+    mcp_servers = config.get("mcp_servers", {})
+    if mcp_servers:
+        section("MCP Servers")
+        issues += _check_mcp(config)
+
     # kubectl
-    issues += _check_kubectl(config)
+    k8s = config.get("skills", {}).get("config", {}).get("kubernetes", {})
+    if k8s:
+        section("Kubernetes")
+        issues += _check_kubectl(config)
 
     # gh CLI (check if github skill is used)
     skill_paths = get_skill_paths(config)
     loaded = load_skills(skill_paths)
     if "github" in loaded or "exception_fixer" in loaded:
+        section("GitHub")
         if not _check_gh_cli():
             issues += 1
 
     # Skills
-    issues += _check_skills(config, str(config_file))
+    section("Skills")
+    issues += _check_skills(config)
 
     # Directories
+    section("Filesystem")
     issues += _check_directories()
 
-    click.echo()
+    console.print()
     if issues == 0:
-        click.echo(click.style("All checks passed.", fg="green", bold=True))
+        console.print("  [green bold]All checks passed.[/]")
     else:
-        click.echo(click.style(f"{issues} issue(s) found.", fg="yellow", bold=True))
+        console.print(f"  [yellow bold]{issues} issue(s) found.[/]")
 
+    console.print()
     raise SystemExit(1 if issues > 0 else 0)

@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+{% set active = "approvals" %}
+
+{% block title %}Approvals{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Approvals</h1>
+    <p class="page-subtitle">Audit trail for tool execution approvals and auto-promotion</p>
+</div>
+
+<div class="stat-grid">
+    <a href="#auto-promoted" class="stat-card" style="cursor: pointer; color: inherit; text-decoration: none;">
+        <div class="stat-value" style="color: var(--green);">{{ stats.total_approved }}</div>
+        <div class="stat-label">Total approved</div>
+    </a>
+    <a href="#denied" class="stat-card" style="cursor: pointer; color: inherit; text-decoration: none;">
+        <div class="stat-value" style="color: var(--red);">{{ stats.total_denied }}</div>
+        <div class="stat-label">Total denied</div>
+    </a>
+    <a href="#auto-promoted" class="stat-card" style="cursor: pointer; color: inherit; text-decoration: none;">
+        <div class="stat-value">{{ stats.auto_promoted_count }}</div>
+        <div class="stat-label">Auto-promoted</div>
+    </a>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.threshold }}</div>
+        <div class="stat-label">Promotion threshold</div>
+    </div>
+</div>
+
+{% if approvals %}
+
+{# ── Filter tabs ── #}
+<div style="display: flex; gap: 8px; margin-bottom: 24px;">
+    <button class="filter-btn active" data-filter="all" onclick="filterApprovals('all', this)">
+        All
+        <span class="filter-count">{{ approvals.values() | map('length') | sum }}</span>
+    </button>
+    <button class="filter-btn" data-filter="promoted" onclick="filterApprovals('promoted', this)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+        Auto-promoted
+        <span class="filter-count">{{ stats.auto_promoted_count }}</span>
+    </button>
+    <button class="filter-btn" data-filter="denied" onclick="filterApprovals('denied', this)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+        Denied
+    </button>
+    <button class="filter-btn" data-filter="pending" onclick="filterApprovals('pending', this)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        Pending
+    </button>
+</div>
+
+{# ── Auto-promoted section ── #}
+<div id="auto-promoted" class="approval-section" data-section="promoted">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" style="vertical-align: -3px; margin-right: 4px;"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                Auto-promoted Commands
+            </div>
+            <span style="font-size: 12px; color: var(--text-muted);">{{ stats.threshold }}+ approvals, 0 denials</span>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            {% set ns = namespace(has_promoted=false) %}
+            {% for tool_name, commands in approvals.items() %}
+                {% for input_key, counts in commands.items() %}
+                    {% set a = counts.get("approved", 0) %}
+                    {% set d = counts.get("denied", 0) %}
+                    {% if a >= stats.threshold and d == 0 %}
+                        {% set ns.has_promoted = true %}
+                    {% endif %}
+                {% endfor %}
+            {% endfor %}
+
+            {% if ns.has_promoted %}
+            <table>
+                <thead><tr><th>Tool</th><th>Command / Input</th><th>Times approved</th><th>Status</th></tr></thead>
+                <tbody>
+                {% for tool_name, commands in approvals.items() %}
+                    {% for input_key, counts in commands.items() %}
+                        {% set a = counts.get("approved", 0) %}
+                        {% set d = counts.get("denied", 0) %}
+                        {% if a >= stats.threshold and d == 0 %}
+                        <tr>
+                            <td><code>{{ tool_name }}</code></td>
+                            <td><code style="font-size: 12px;">{{ input_key }}</code></td>
+                            <td style="font-weight: 600; color: var(--green);">{{ a }}</td>
+                            <td><span class="badge badge-green">auto-executes</span></td>
+                        </tr>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state" style="padding: 32px;">No commands have been auto-promoted yet</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{# ── Denied section ── #}
+<div id="denied" class="approval-section" data-section="denied" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" style="vertical-align: -3px; margin-right: 4px;"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+                Denied Commands
+            </div>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            {% set ns2 = namespace(has_denied=false) %}
+            {% for tool_name, commands in approvals.items() %}
+                {% for input_key, counts in commands.items() %}
+                    {% if counts.get("denied", 0) > 0 %}
+                        {% set ns2.has_denied = true %}
+                    {% endif %}
+                {% endfor %}
+            {% endfor %}
+
+            {% if ns2.has_denied %}
+            <table>
+                <thead><tr><th>Tool</th><th>Command / Input</th><th>Approved</th><th>Denied</th></tr></thead>
+                <tbody>
+                {% for tool_name, commands in approvals.items() %}
+                    {% for input_key, counts in commands.items() %}
+                        {% if counts.get("denied", 0) > 0 %}
+                        <tr>
+                            <td><code>{{ tool_name }}</code></td>
+                            <td><code style="font-size: 12px;">{{ input_key }}</code></td>
+                            <td>{{ counts.get("approved", 0) }}</td>
+                            <td style="font-weight: 600; color: var(--red);">{{ counts.get("denied", 0) }}</td>
+                        </tr>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state" style="padding: 32px;">No commands have been denied</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{# ── Pending section ── #}
+<div class="approval-section" data-section="pending" style="display: none;">
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" style="vertical-align: -3px; margin-right: 4px;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                Pending Promotion
+            </div>
+            <span style="font-size: 12px; color: var(--text-muted);">Need {{ stats.threshold }} approvals to auto-promote</span>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            {% set ns3 = namespace(has_pending=false) %}
+            {% for tool_name, commands in approvals.items() %}
+                {% for input_key, counts in commands.items() %}
+                    {% set a = counts.get("approved", 0) %}
+                    {% set d = counts.get("denied", 0) %}
+                    {% if a < stats.threshold and d == 0 and a > 0 %}
+                        {% set ns3.has_pending = true %}
+                    {% endif %}
+                {% endfor %}
+            {% endfor %}
+
+            {% if ns3.has_pending %}
+            <table>
+                <thead><tr><th>Tool</th><th>Command / Input</th><th>Progress</th><th>Remaining</th></tr></thead>
+                <tbody>
+                {% for tool_name, commands in approvals.items() %}
+                    {% for input_key, counts in commands.items() %}
+                        {% set a = counts.get("approved", 0) %}
+                        {% set d = counts.get("denied", 0) %}
+                        {% if a < stats.threshold and d == 0 and a > 0 %}
+                        <tr>
+                            <td><code>{{ tool_name }}</code></td>
+                            <td><code style="font-size: 12px;">{{ input_key }}</code></td>
+                            <td>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <div style="flex: 1; max-width: 120px; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden;">
+                                        <div style="height: 100%; width: {{ (a / stats.threshold * 100) | int }}%; background: var(--yellow); border-radius: 3px;"></div>
+                                    </div>
+                                    <span style="font-size: 12px; color: var(--text-muted);">{{ a }}/{{ stats.threshold }}</span>
+                                </div>
+                            </td>
+                            <td style="color: var(--text-muted);">{{ stats.threshold - a }} more</td>
+                        </tr>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state" style="padding: 32px;">No commands pending promotion</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{# ── All section ── #}
+<div class="approval-section" data-section="all" style="display: none;">
+    <div class="card">
+        <div class="card-header"><div class="card-title">All Approval Records</div></div>
+        <div class="card-body" style="padding: 0;">
+            <table>
+                <thead>
+                    <tr><th>Tool</th><th>Input</th><th>Approved</th><th>Denied</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                {% for tool_name, commands in approvals.items() %}
+                    {% for input_key, counts in commands.items() %}
+                    <tr>
+                        <td><code>{{ tool_name }}</code></td>
+                        <td><code style="font-size: 12px;">{{ input_key[:60] }}{% if input_key|length > 60 %}...{% endif %}</code></td>
+                        <td style="font-weight: 600; color: var(--green);">{{ counts.get("approved", 0) }}</td>
+                        <td style="font-weight: 600; color: var(--red);">{{ counts.get("denied", 0) }}</td>
+                        <td>
+                            {% set a = counts.get("approved", 0) %}
+                            {% set d = counts.get("denied", 0) %}
+                            {% if a >= stats.threshold and d == 0 %}
+                                <span class="badge badge-green">auto-promoted</span>
+                            {% elif d > 0 and a == 0 %}
+                                <span class="badge badge-red">blocked</span>
+                            {% elif d > 0 %}
+                                <span class="badge badge-yellow">mixed</span>
+                            {% else %}
+                                <span class="badge badge-muted">{{ a }}/{{ stats.threshold }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <div>No approval data yet. Approval tracking starts when tools with human review are executed.</div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+    .filter-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        background: var(--bg-card);
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 500;
+        font-family: var(--font);
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .filter-btn:hover {
+        border-color: #d0cac0;
+        box-shadow: var(--shadow-sm);
+    }
+    .filter-btn.active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+    }
+    .filter-btn.active svg { stroke: #fff; }
+    .filter-count {
+        background: rgba(0,0,0,0.08);
+        padding: 1px 7px;
+        border-radius: 10px;
+        font-size: 11px;
+    }
+    .filter-btn.active .filter-count {
+        background: rgba(255,255,255,0.2);
+    }
+</style>
+
+<script>
+function filterApprovals(filter, btn) {
+    // Update active button
+    document.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+
+    // Show matching section, hide others
+    var sections = document.querySelectorAll('.approval-section');
+    if (filter === 'all') {
+        sections.forEach(function(s) {
+            s.style.display = s.getAttribute('data-section') === 'all' ? 'block' : 'none';
+        });
+    } else if (filter === 'promoted') {
+        sections.forEach(function(s) {
+            s.style.display = s.getAttribute('data-section') === 'promoted' ? 'block' : 'none';
+        });
+    } else if (filter === 'denied') {
+        sections.forEach(function(s) {
+            s.style.display = s.getAttribute('data-section') === 'denied' ? 'block' : 'none';
+        });
+    } else if (filter === 'pending') {
+        sections.forEach(function(s) {
+            s.style.display = s.getAttribute('data-section') === 'pending' ? 'block' : 'none';
+        });
+    }
+}
+
+// Handle anchor links from stat cards
+window.addEventListener('load', function() {
+    var hash = window.location.hash;
+    if (hash === '#auto-promoted') {
+        var btn = document.querySelector('[data-filter="promoted"]');
+        if (btn) filterApprovals('promoted', btn);
+    } else if (hash === '#denied') {
+        var btn = document.querySelector('[data-filter="denied"]');
+        if (btn) filterApprovals('denied', btn);
+    } else {
+        // Default: show promoted view
+        var btn = document.querySelector('[data-filter="promoted"]');
+        if (btn) filterApprovals('promoted', btn);
+    }
+});
+</script>
+{% endblock %}

@@ -134,6 +134,20 @@ def load_skills(skill_paths: list[Path]) -> dict[str, Skill]:
     return skills
 
 
+def filter_skills(skills: dict[str, Skill], allowed: list[str]) -> dict[str, Skill]:
+    """
+    Return only skills whose names are in the allowed list.
+
+    Used by multi-agent mode to give each agent a subset of skills.
+    """
+    allowed_set = set(allowed)
+    filtered = {name: skill for name, skill in skills.items() if name in allowed_set}
+    missing = allowed_set - set(filtered.keys())
+    if missing:
+        logger.warning("Agent allowlist references unknown skills: %s", missing)
+    return filtered
+
+
 def validate_skill(skill_dir: Path) -> list[str]:
     """
     Validate a skill directory. Returns list of errors (empty = valid).

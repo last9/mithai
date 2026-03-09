@@ -144,3 +144,41 @@ def get_mcp_config(config: dict) -> dict:
 def get_human_config(config: dict) -> dict:
     """Get Human MCP configuration."""
     return config.get("human", {})
+
+
+def get_agents(config: dict) -> dict[str, dict] | None:
+    """Get the agents section from config, or None for single-agent mode."""
+    agents = config.get("agents")
+    if not agents:
+        return None
+    # Strip the default_agent meta-key — callers use get_default_agent_id()
+    return {k: v for k, v in agents.items() if k != "default_agent"}
+
+
+def get_default_agent_id(config: dict) -> str | None:
+    """Get the default agent ID, or None for single-agent mode."""
+    agents = config.get("agents")
+    if not agents:
+        return None
+    return agents.get("default_agent")
+
+
+def get_agent_config(config: dict, agent_id: str) -> dict:
+    """
+    Get config for a specific agent.
+
+    Merges agent-level overrides on top of global config so agents
+    inherit llm, skills.paths, state, learning, etc. by default.
+    """
+    agents = get_agents(config)
+    if not agents or agent_id not in agents:
+        return config
+
+    agent = agents[agent_id]
+
+    # Agent-level system_prompt overrides global bot.system_prompt
+    merged = dict(config)
+    if "system_prompt" in agent:
+        merged = {**merged, "bot": {**merged.get("bot", {}), "system_prompt": agent["system_prompt"]}}
+
+    return merged

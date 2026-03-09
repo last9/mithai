@@ -30,6 +30,7 @@ for skill in CORE_SKILLS:
 OPTIONAL_SKILLS = [
     'aws',
     'cicd',
+    'code_review',
     'exception_fixer',
     'github',
     'kubernetes',
@@ -37,6 +38,10 @@ OPTIONAL_SKILLS = [
 ]
 for skill in OPTIONAL_SKILLS:
     datas.append((f'skills/{skill}', f'_optional_skills/{skill}'))
+
+# Bundle UI templates and static assets
+datas.append(('src/mithai/ui/templates', 'mithai/ui/templates'))
+datas.append(('src/mithai/ui/static', 'mithai/ui/static'))
 
 a = Analysis(
     ['src/mithai/__main__.py'],
@@ -70,6 +75,20 @@ a = Analysis(
         'mithai.cli.skill_cmd',
         'mithai.cli.service_cmd',
         'mithai.cli.doctor_cmd',
+        'mithai.cli.ui_cmd',
+        'mithai.cli.agent_cmd',
+        'mithai.cli.style',
+
+        # Memory backends
+        'mithai.memory.base',
+        'mithai.memory.filesystem',
+        'mithai.memory.redis',
+        'mithai.memory.s3',
+
+        # Control Room UI
+        'mithai.ui',
+        'mithai.ui.app',
+        'mithai.ui.data',
 
         # Third-party: always needed
         'anthropic',
@@ -78,6 +97,13 @@ a = Analysis(
         'dotenv',
         'jinja2',
         'requests',
+        'rich',
+        'rich.console',
+        'rich.panel',
+        'rich.table',
+        'rich.markdown',
+        'rich.theme',
+        'rich.prompt',
 
         # Third-party: optional adapters
         'slack_bolt',
@@ -91,6 +117,14 @@ a = Analysis(
         'mcp.client.stdio',
         'mcp.client.sse',
         'mcp.client.streamable_http',
+
+        # Third-party: UI (Control Room)
+        'starlette',
+        'starlette.applications',
+        'starlette.routing',
+        'starlette.responses',
+        'starlette.staticfiles',
+        'uvicorn',
 
         # Transitive deps that PyInstaller may miss
         'anyio',

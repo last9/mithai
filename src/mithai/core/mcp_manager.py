@@ -54,8 +54,31 @@ class MCPManager:
         self._parse_config(mcp_config)
 
     def _parse_config(self, mcp_config: dict) -> None:
-        """Parse the mcp_servers config section."""
+        """Parse the mcp_servers config section, resolving env vars in headers."""
+        import os
+        import re
+
         for name, conf in mcp_config.items():
+            # Resolve ${VAR} references in headers
+            raw_headers = conf.get("headers", {})
+            headers = {}
+            for k, v in raw_headers.items():
+                if isinstance(v, str):
+                    def _resolve(m):
+                        return os.environ.get(m.group(1), m.group(0))
+                    headers[k] = re.sub(r"\$\{([^}]+)\}", _resolve, v)
+                else:
+                    headers[k] = v
+
+            # Warn about unresolved env vars (likely missing tokens)
+            for k, v in headers.items():
+                if isinstance(v, str) and "${" in v:
+                    logger.warning(
+                        "MCP server '%s': header '%s' contains unresolved env var: %s "
+                        "— set the environment variable or add it to ~/.mithai/env",
+                        name, k, v,
+                    )
+
             self._configs[name] = MCPServerConfig(
                 name=name,
                 transport=conf.get("transport", "stdio"),
@@ -63,7 +86,7 @@ class MCPManager:
                 args=conf.get("args", []) + conf.get("args_extra", []),
                 env=conf.get("env", {}),
                 url=conf.get("url"),
-                headers=conf.get("headers", {}),
+                headers=headers,
             )
 
     def _ensure_loop(self) -> None:
@@ -96,8 +119,32 @@ class MCPManager:
                 self._run_async(self._connect_server(name, config), timeout=30.0)
                 tool_count = len(self._server_tools.get(name, []))
                 logger.info("Connected to MCP server: %s (%d tools)", name, tool_count)
-            except Exception:
-                logger.exception("Failed to connect to MCP server: %s", name)
+            except ImportError as e:
+                logger.warning(
+                    "MCP server '%s' requires the 'mcp' package: %s. "
+                    "Install with: pip install mithai[mcp]",
+                    name, e,
+                )
+            except Exception as e:
+                # Clean warning instead of stack trace — the most common causes
+                # are missing tokens, network issues, or wrong URLs
+                msg = str(e)
+                if "401" in msg or "403" in msg or "unauthorized" in msg.lower():
+                    logger.warning(
+                        "MCP server '%s': authentication failed — check your API token",
+                        name,
+                    )
+                elif "timeout" in msg.lower() or "connect" in msg.lower():
+                    logger.warning(
+                        "MCP server '%s': connection failed — %s",
+                        name, msg,
+                    )
+                else:
+                    logger.warning(
+                        "MCP server '%s': failed to connect — %s",
+                        name, msg,
+                    )
+                logger.debug("MCP server '%s' connection error details:", name, exc_info=True)
 
     async def _connect_server(self, name: str, config: MCPServerConfig) -> None:
         """Connect to a single MCP server and discover its tools.

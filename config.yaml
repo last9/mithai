@@ -40,12 +40,6 @@ mcp_servers:
     url: https://mcp.example.com
     headers:
       X-API-TOKEN: Bearer ${EXAMPLE_API_TOKEN}
-  github:
-    transport: stdio
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN}
 
 skills:
   paths:

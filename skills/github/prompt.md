@@ -1,6 +1,7 @@
 # GitHub
 
-You have access to GitHub via MCP tools.
-Use these to search repositories, manage issues and pull requests, review code, and browse file contents.
+You have access to GitHub via the `gh` CLI.
+Use these tools to search repositories, read files, manage issues and pull requests, and check CI status.
 
-When working with PRs, check the status checks and review comments before suggesting merges.
+When working with PRs, check status checks and review decisions before suggesting merges.
+For code changes, use `create_branch` → `create_or_update_file` → `create_pull_request` workflow.

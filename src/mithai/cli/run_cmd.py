@@ -22,7 +22,7 @@ from mithai.core.config import (
 @click.option(
     "--adapter",
     "adapter_override",
-    type=click.Choice(["cli", "slack", "telegram"]),
+    type=click.Choice(["cli", "slack", "slack_http", "telegram"]),
     default=None,
     help="Run only this adapter (overrides config, single-agent mode only)",
 )

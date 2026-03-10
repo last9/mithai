@@ -1,7 +1,7 @@
 """Tests for SlackHTTPAdapter and SlackAdapterBase refactor."""
 
 import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -417,8 +417,10 @@ def test_thread_ts_is_per_thread():
 
     t1 = threading.Thread(target=thread_a)
     t2 = threading.Thread(target=thread_b)
-    t1.start(); t2.start()
-    t1.join(); t2.join()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
 
     # Each thread must see only its own ts
     assert results["a"] == "ts-A"

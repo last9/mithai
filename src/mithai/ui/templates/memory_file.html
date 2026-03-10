@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set active = "memory" %}
+
+{% block title %}{{ path }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">
+        {% if path.endswith('.md') %}
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="1.5" style="vertical-align: -3px; margin-right: 4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        {% elif path.endswith('.json') %}
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" style="vertical-align: -3px; margin-right: 4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        {% endif %}
+        {{ path }}
+    </h1>
+    <p class="page-subtitle">Memory file contents</p>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <pre><code>{{ content }}</code></pre>
+    </div>
+</div>
+
+<a href="/memory" class="back-link">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    Back to memory
+</a>
+{% endblock %}

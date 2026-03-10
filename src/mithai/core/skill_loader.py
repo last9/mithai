@@ -32,6 +32,9 @@ class Skill:
     handle: Callable
     source_dir: Path = field(repr=False)
     resolve_human: Callable | None = field(default=None, repr=False)
+    mcp_tools: list[dict] = field(default_factory=list, repr=False)
+    startup: Callable | None = field(default=None, repr=False)
+    bind: Callable | None = field(default=None, repr=False)
 
 
 def _load_skill(skill_dir: Path) -> Skill | None:
@@ -60,6 +63,9 @@ def _load_skill(skill_dir: Path) -> Skill | None:
     raw_tools = getattr(mod, "TOOLS", None)
     handle_fn = getattr(mod, "handle", None)
     resolve_human_fn = getattr(mod, "resolve_human", None)
+    raw_mcp_tools = getattr(mod, "MCP_TOOLS", [])
+    startup_fn = getattr(mod, "startup", None)
+    bind_fn = getattr(mod, "bind", None)
 
     if raw_tools is None:
         logger.warning("Skill %s: missing TOOLS export", skill_dir.name)
@@ -85,6 +91,9 @@ def _load_skill(skill_dir: Path) -> Skill | None:
         handle=handle_fn,
         source_dir=skill_dir,
         resolve_human=resolve_human_fn,
+        mcp_tools=raw_mcp_tools if isinstance(raw_mcp_tools, list) else [],
+        startup=startup_fn,
+        bind=bind_fn,
     )
 
 
@@ -123,6 +132,20 @@ def load_skills(skill_paths: list[Path]) -> dict[str, Skill]:
                 )
 
     return skills
+
+
+def filter_skills(skills: dict[str, Skill], allowed: list[str]) -> dict[str, Skill]:
+    """
+    Return only skills whose names are in the allowed list.
+
+    Used by multi-agent mode to give each agent a subset of skills.
+    """
+    allowed_set = set(allowed)
+    filtered = {name: skill for name, skill in skills.items() if name in allowed_set}
+    missing = allowed_set - set(filtered.keys())
+    if missing:
+        logger.warning("Agent allowlist references unknown skills: %s", missing)
+    return filtered
 
 
 def validate_skill(skill_dir: Path) -> list[str]:
@@ -175,5 +198,25 @@ def validate_skill(skill_dir: Path) -> list[str]:
         errors.append("tools.py does not export handle() function")
     elif not callable(mod.handle):
         errors.append("handle is not callable")
+
+    # Validate MCP_TOOLS if present
+    raw_mcp = getattr(mod, "MCP_TOOLS", None)
+    if raw_mcp is not None:
+        if not isinstance(raw_mcp, list):
+            errors.append("MCP_TOOLS must be a list")
+        else:
+            for i, entry in enumerate(raw_mcp):
+                if not isinstance(entry, dict):
+                    errors.append(f"MCP_TOOLS[{i}]: must be a dict")
+                    continue
+                if "server" not in entry:
+                    errors.append(f"MCP_TOOLS[{i}]: missing 'server'")
+                if "tools" not in entry:
+                    errors.append(f"MCP_TOOLS[{i}]: missing 'tools'")
+                elif not isinstance(entry["tools"], list) and entry["tools"] != "*":
+                    errors.append(f"MCP_TOOLS[{i}]: 'tools' must be a list or '*'")
+                human = entry.get("human")
+                if human is not None and human not in ("approve", "confirm"):
+                    errors.append(f"MCP_TOOLS[{i}]: invalid human level '{human}'")
 
     return errors

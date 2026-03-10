@@ -1,10 +1,11 @@
 """Slack adapter using Socket Mode."""
 
+import json
 import logging
 import threading
 
 from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
-from mithai.adapters.formatters import SlackFormatter
+from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
 from mithai.human.mcp import HumanRequest
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class SlackAdapter(Adapter):
         self._bot_token = bot_token
         self._approval_timeout = approval_timeout
 
-        self._formatter = SlackFormatter()
+        self._formatter = SlackBlockFormatter()
         self._current_thread_ts: str | None = None
 
         # Pending approval requests: request_id -> threading.Event + result
@@ -43,14 +44,20 @@ class SlackAdapter(Adapter):
     def _register_action_handlers(self):
         """Register Slack action handlers for approve/deny buttons."""
 
-        @self._app.action({"action_id": "mithai_approve"})
+        @self._app.action("mithai_approve")
         def handle_approve(ack, body):
-            ack()
+            try:
+                ack()
+            except Exception:
+                logger.exception("ack() failed in handle_approve")
             self._handle_approval_action(body, approved=True)
 
-        @self._app.action({"action_id": "mithai_deny"})
+        @self._app.action("mithai_deny")
         def handle_deny(ack, body):
-            ack()
+            try:
+                ack()
+            except Exception:
+                logger.exception("ack() failed in handle_deny")
             self._handle_approval_action(body, approved=False)
 
     def _handle_approval_action(self, body: dict, approved: bool):
@@ -85,6 +92,9 @@ class SlackAdapter(Adapter):
                     original_text = block.get("text", {}).get("text", "")
                     break
 
+            updated_text = f"{original_text}\n\n*{action_text}* by {user_mention}"
+            if len(updated_text) > 3000:
+                updated_text = updated_text[:2950] + f"\n...\n\n*{action_text}* by {user_mention}"
             self._app.client.chat_update(
                 channel=channel,
                 ts=ts,
@@ -94,11 +104,37 @@ class SlackAdapter(Adapter):
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": f"{original_text}\n\n*{action_text}* by {user_mention}",
+                            "text": updated_text,
                         },
                     },
                 ],
             )
+
+    def _send_formatted(self, say, response: str, thread_ts: str | None) -> None:
+        """Format a response and send via say(), using Block Kit when available."""
+        for chunk in self._formatter.format(response):
+            try:
+                blocks = json.loads(chunk)
+                if isinstance(blocks, list) and blocks:
+                    say(blocks=blocks, text=_blocks_fallback(blocks), thread_ts=thread_ts)
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+            say(text=chunk, thread_ts=thread_ts)
+
+    def _react(self, channel: str, ts: str, emoji: str) -> None:
+        """Add a reaction emoji to a message, ignoring errors (e.g. missing scope)."""
+        try:
+            self._app.client.reactions_add(channel=channel, timestamp=ts, name=emoji)
+        except Exception:
+            pass
+
+    def _unreact(self, channel: str, ts: str, emoji: str) -> None:
+        """Remove a reaction emoji from a message, ignoring errors."""
+        try:
+            self._app.client.reactions_remove(channel=channel, timestamp=ts, name=emoji)
+        except Exception:
+            pass
 
     def start(self, on_message: MessageHandler) -> None:
         import re
@@ -124,10 +160,14 @@ class SlackAdapter(Adapter):
                 thread_id=message.get("thread_ts"),
             )
 
-            self._current_thread_ts = message.get("ts")
-            response = on_message(incoming, self)
-            for chunk in self._formatter.format(response):
-                say(text=chunk, thread_ts=message.get("ts"))
+            ts = message.get("ts", "")
+            self._current_thread_ts = ts
+            self._react(channel, ts, "thinking_face")
+            try:
+                response = on_message(incoming, self)
+                self._send_formatted(say, response, thread_ts=ts)
+            finally:
+                self._unreact(channel, ts, "thinking_face")
 
         @self._app.event("app_mention")
         def handle_app_mention(event, say):
@@ -150,10 +190,20 @@ class SlackAdapter(Adapter):
                 thread_id=event.get("thread_ts"),
             )
 
-            self._current_thread_ts = event.get("ts")
-            response = on_message(incoming, self)
-            for chunk in self._formatter.format(response):
-                say(text=chunk, thread_ts=event.get("ts"))
+            ts = event.get("ts", "")
+            self._current_thread_ts = ts
+            self._react(channel, ts, "thinking_face")
+            try:
+                response = on_message(incoming, self)
+                self._send_formatted(say, response, thread_ts=ts)
+            finally:
+                self._unreact(channel, ts, "thinking_face")
+
+        @self._app.event("message")
+        def handle_message_subtype_events(body):
+            # Silently acknowledge message subtypes (channel_join, message_changed,
+            # bot_message, etc.) that @app.message("") does not match.
+            pass
 
         logger.info("Starting Slack adapter (Socket Mode)")
         self._handler.start()
@@ -163,10 +213,18 @@ class SlackAdapter(Adapter):
 
     def send(self, message: OutgoingMessage) -> None:
         for chunk in self._formatter.format(message.text):
-            self._app.client.chat_postMessage(
-                channel=message.channel_id,
-                text=chunk,
-            )
+            try:
+                blocks = json.loads(chunk)
+                if isinstance(blocks, list) and blocks:
+                    self._app.client.chat_postMessage(
+                        channel=message.channel_id,
+                        blocks=blocks,
+                        text=_blocks_fallback(blocks),
+                    )
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+            self._app.client.chat_postMessage(channel=message.channel_id, text=chunk)
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
         """

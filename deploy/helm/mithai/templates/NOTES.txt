@@ -1,0 +1,35 @@
+
+mithai has been deployed to namespace {{ .Release.Namespace }}.
+
+1. Bot status:
+   kubectl get pods -n {{ .Release.Namespace }} -l "{{ include "mithai.selectorLabels" . | replace "\n" "," }}"
+
+2. View logs:
+   kubectl logs -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "mithai.name" . }}" -f
+
+3. Adapters enabled: {{ join ", " .Values.adapter.types }}
+{{- if has "slack" .Values.adapter.types }}
+   The bot is connected to Slack. Mention it in an allowed channel to interact.
+{{- end }}
+{{- if has "telegram" .Values.adapter.types }}
+   The bot is connected to Telegram. Send a message in an allowed chat to interact.
+{{- end }}
+
+{{- if .Values.ui.enabled }}
+
+4. Control Room UI:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+   https://{{ .host }}
+{{- end }}
+{{- else }}
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "mithai.fullname" . }} {{ .Values.ui.port }}:{{ .Values.service.port }}
+   Then open http://localhost:{{ .Values.ui.port }}
+{{- end }}
+{{- end }}
+
+{{- if not .Values.llm.apiKey }}
+
+WARNING: llm.apiKey is not set. The bot will not be able to generate responses.
+Set it with: --set llm.apiKey=sk-ant-...
+{{- end }}

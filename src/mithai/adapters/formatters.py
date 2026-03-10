@@ -1,6 +1,7 @@
 """Response formatters — translate LLM markdown to platform-native markup."""
 
 import html as html_module
+import json
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -55,6 +56,96 @@ class Formatter(ABC):
         return chunks
 
 
+_MD_FORMATTING = re.compile(r"\*\*|(?<!\*)\*(?!\*)|`|\[")
+_LONG_CELL_THRESHOLD = 40
+
+
+def _convert_md_tables(text: str) -> str:
+    """Convert markdown tables to either aligned code blocks (short/plain cells)
+    or mrkdwn bullet lists (long or markdown-formatted cells)."""
+    table_pattern = re.compile(r"((?:^\|.+\|\s*\n)+)", re.MULTILINE)
+
+    def render_table(match: re.Match) -> str:
+        raw = match.group(1).strip()
+        rows = [
+            [cell.strip() for cell in line.strip().strip("|").split("|")]
+            for line in raw.splitlines()
+            if not re.match(r"^\|[-:| ]+\|$", line.strip())  # skip separator row
+        ]
+        if not rows:
+            return match.group(0)
+
+        max_cols = max(len(r) for r in rows)
+        rows = [r + [""] * (max_cols - len(r)) for r in rows]
+
+        # Detect whether any data cell is long or contains markdown formatting
+        data_rows = rows[1:] if len(rows) > 1 else rows
+        rich = any(
+            len(cell) > _LONG_CELL_THRESHOLD or bool(_MD_FORMATTING.search(cell))
+            for row in data_rows
+            for cell in row
+        )
+
+        if rich:
+            return _render_table_as_mrkdwn(rows)
+        else:
+            return _render_table_as_code_block(rows)
+
+    return table_pattern.sub(render_table, text)
+
+
+def _render_table_as_code_block(rows: list[list[str]]) -> str:
+    """Render a table as an aligned monospace code block (good for numeric/short data)."""
+    max_cols = max(len(r) for r in rows)
+    rows = [r + [""] * (max_cols - len(r)) for r in rows]
+    widths = [max(len(r[i]) for r in rows) for i in range(max_cols)]
+
+    lines = []
+    for idx, row in enumerate(rows):
+        lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
+        if idx == 0:
+            lines.append("  ".join("─" * widths[i] for i in range(max_cols)))
+
+    return "```\n" + "\n".join(lines) + "\n```\n"
+
+
+def _render_table_as_mrkdwn(rows: list[list[str]]) -> str:
+    """Render a table as a mrkdwn list (good for long/formatted content).
+
+    For 2-column tables: *col1* — col2
+    For N-column tables: *col1* | col2 | col3
+    """
+    if not rows:
+        return ""
+
+    header, data_rows = rows[0], rows[1:]
+    two_col = len(header) == 2
+
+    lines = []
+
+    # Header as bold labels
+    if two_col:
+        lines.append(f"*{header[0]}* — *{header[1]}*")
+    else:
+        lines.append("  |  ".join(f"*{h}*" for h in header))
+    lines.append("")  # blank line after header
+
+    # Data rows — pre-apply mrkdwn to cells so bold/links render correctly
+    # and _apply_mrkdwn in flush() won't double-convert them
+    for row in data_rows:
+        if not any(cell.strip() for cell in row):
+            continue
+        converted = [_apply_mrkdwn(cell) for cell in row]
+        if two_col:
+            col1, col2 = converted[0], converted[1] if len(converted) > 1 else ""
+            # Don't wrap col1 in *...* — it may already contain *bold* markers
+            lines.append(f"• {col1} — {col2}" if col2 else f"• {col1}")
+        else:
+            lines.append("• " + "  |  ".join(converted))
+
+    return "\n".join(lines) + "\n\n"
+
+
 def _stash_code_blocks(text: str) -> tuple[str, dict[str, str]]:
     """Replace code blocks and inline code with placeholders."""
     stash: dict[str, str] = {}
@@ -90,10 +181,19 @@ class SlackFormatter(Formatter):
         return self._split_by_limit(converted, self.MAX_LENGTH)
 
     def _markdown_to_mrkdwn(self, text: str) -> str:
-        result, stash = _stash_code_blocks(text)
+        # Convert markdown tables to aligned code blocks before stashing
+        result = self._convert_tables(text)
 
-        # Headings → bold (Slack has no heading syntax)
-        result = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", result, flags=re.MULTILINE)
+        result, stash = _stash_code_blocks(result)
+
+        # H1 → bold with divider line beneath for visual weight
+        result = re.sub(r"^#\s+(.+)$", r"*\1*\n────────────────────────", result, flags=re.MULTILINE)
+
+        # H2/H3 → bold
+        result = re.sub(r"^#{2,6}\s+(.+)$", r"*\1*", result, flags=re.MULTILINE)
+
+        # Horizontal rule → unicode divider
+        result = re.sub(r"^---+$", "────────────────────────", result, flags=re.MULTILINE)
 
         # Bold: **text** → *text*
         result = re.sub(r"\*\*(.+?)\*\*", r"*\1*", result)
@@ -102,12 +202,18 @@ class SlackFormatter(Formatter):
         result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", result)
 
         # Bullets: - item → • item
-        result = re.sub(r"^(\s*)[-*+]\s+", "\\1\u2022 ", result, flags=re.MULTILINE)
+        result = re.sub(r"^(\s*)[-*+]\s+", "\\1• ", result, flags=re.MULTILINE)
 
         # Strikethrough: ~~text~~ → ~text~
         result = re.sub(r"~~(.+?)~~", r"~\1~", result)
 
+        # Collapse 3+ blank lines to 2
+        result = re.sub(r"\n{3,}", "\n\n", result)
+
         return _restore_stash(result, stash)
+
+    def _convert_tables(self, text: str) -> str:
+        return _convert_md_tables(text)
 
 
 class CLIFormatter(Formatter):
@@ -185,3 +291,146 @@ class TelegramFormatter(Formatter):
             result = result.replace(key, original)
 
         return result
+
+
+def _apply_mrkdwn(text: str) -> str:
+    """Apply markdown → Slack mrkdwn conversions for use inside Block Kit sections."""
+    # Numbered list items: strip ** wrapping FIRST — Slack won't bold "N." patterns
+    # e.g. **1. prometheus-pod** → 1. prometheus-pod (before the main bold pass)
+    text = re.sub(r"\*\*(\d+\..+?)\*\*", r"\1", text)
+    # Bold: **text** → *text*  (loop handles adjacent spans like **a** — **b**)
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    # Strip any unmatched ** left over from malformed LLM output
+    text = re.sub(r"\*\*", "", text)
+    # Links: [text](url) → <url|text>
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", text)
+    # Bullets: - item → • item
+    text = re.sub(r"^(\s*)[-*+]\s+", r"\1• ", text, flags=re.MULTILINE)
+    # Strikethrough: ~~text~~ → ~text~
+    text = re.sub(r"~~(.+?)~~", r"~\1~", text)
+    # Collapse 3+ blank lines to 2
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
+class SlackBlockFormatter(Formatter):
+    """
+    Convert markdown to Slack Block Kit JSON.
+
+    format() returns JSON-encoded block arrays (one string per message).
+    The SlackAdapter detects the JSON and calls say(blocks=...) instead of say(text=...).
+
+    Block mapping:
+      # H1         → header block  (plain_text, max 150 chars)
+      ## H2–H6     → section block (*bold* mrkdwn)
+      ---          → divider block
+      ```...```    → section block with fenced mrkdwn
+      table        → converted to aligned code block first
+      body text    → section block (mrkdwn, max 3000 chars)
+    """
+
+    MAX_SECTION_LENGTH = 3000  # Slack section text element limit
+    MAX_HEADER_LENGTH = 150    # Slack header block plain_text limit
+    MAX_BLOCKS_PER_MESSAGE = 50
+
+    def format(self, text: str) -> list[str]:
+        all_blocks = self._markdown_to_blocks(text)
+        if not all_blocks:
+            return [json.dumps([])]
+        messages = []
+        for i in range(0, len(all_blocks), self.MAX_BLOCKS_PER_MESSAGE):
+            messages.append(json.dumps(all_blocks[i : i + self.MAX_BLOCKS_PER_MESSAGE]))
+        return messages
+
+    def _markdown_to_blocks(self, text: str) -> list[dict]:
+        # Tables → aligned code blocks before line-by-line parsing
+        text = _convert_md_tables(text)
+
+        blocks: list[dict] = []
+        pending: list[str] = []
+
+        def flush():
+            if not pending:
+                return
+            section_text = "\n".join(pending).strip()
+            pending.clear()
+            if not section_text:
+                return
+            section_text = _apply_mrkdwn(section_text)
+            # Split sections that exceed the character limit
+            while len(section_text) > self.MAX_SECTION_LENGTH:
+                split_at = section_text.rfind("\n", 0, self.MAX_SECTION_LENGTH)
+                if split_at == -1:
+                    split_at = self.MAX_SECTION_LENGTH
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": section_text[:split_at].rstrip()}})
+                section_text = section_text[split_at:].lstrip()
+            if section_text:
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": section_text}})
+
+        lines = text.split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # H1 → header block
+            m = re.match(r"^# (.+)$", line)
+            if m:
+                flush()
+                blocks.append({
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": m.group(1).strip()[: self.MAX_HEADER_LENGTH], "emoji": True},
+                })
+                i += 1
+                continue
+
+            # H2–H6 → bold section
+            m = re.match(r"^#{2,6} (.+)$", line)
+            if m:
+                flush()
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{m.group(1).strip()}*"}})
+                i += 1
+                continue
+
+            # Horizontal rule → divider
+            if re.match(r"^---+$", line):
+                flush()
+                blocks.append({"type": "divider"})
+                i += 1
+                continue
+
+            # Fenced code block
+            if line.startswith("```"):
+                flush()
+                code_lines: list[str] = []
+                i += 1
+                while i < len(lines) and not lines[i].startswith("```"):
+                    code_lines.append(lines[i])
+                    i += 1
+                code = "\n".join(code_lines)
+                code_text = f"```{code}```"
+                if len(code_text) > self.MAX_SECTION_LENGTH:
+                    code_text = code_text[: self.MAX_SECTION_LENGTH - 4] + "\n```"
+                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": code_text}})
+                i += 1  # skip closing ```
+                continue
+
+            pending.append(line)
+            i += 1
+
+        flush()
+        return blocks
+
+
+def _blocks_fallback(blocks: list[dict]) -> str:
+    """Extract a short plain-text summary from Block Kit blocks for notification fallback."""
+    parts = []
+    for block in blocks:
+        btype = block.get("type")
+        if btype in ("header", "section"):
+            parts.append(block.get("text", {}).get("text", ""))
+        if len(" ".join(parts)) >= 300:
+            break
+    return " ".join(parts)[:300] or "New message from Mithai"

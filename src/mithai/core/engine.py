@@ -10,12 +10,11 @@ import logging
 import re
 from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
 
 import threading
 
 from mithai.adapters.base import Adapter, IncomingMessage
-from mithai.core.config import get_human_config, get_llm_config, get_skill_config, get_skill_paths
+from mithai.core.config import get_human_config, get_llm_config, get_mcp_config, get_skill_config, get_skill_paths
 from mithai.core.context import build_context
 from mithai.core.reflection import reflect
 from mithai.core.session import SessionManager
@@ -23,6 +22,7 @@ from mithai.core.skill_loader import Skill, load_skills
 from mithai.core.tool_router import ToolRouter
 from mithai.human.mcp import HumanMCP
 from mithai.llm.base import LLMProvider
+from mithai.memory.base import MemoryBackend
 from mithai.state.base import StateBackend
 
 logger = logging.getLogger(__name__)
@@ -45,22 +45,66 @@ class Engine:
         config: dict,
         llm: LLMProvider,
         state: StateBackend,
+        memory: MemoryBackend | None = None,
+        *,
+        agent_id: str | None = None,
+        skills: dict[str, Skill] | None = None,
     ):
         self._config = config
         self._llm = llm
         self._state = state
+        self._memory = memory
+        self._agent_id = agent_id
 
-        # Load skills
-        skill_paths = get_skill_paths(config)
-        self._skills = load_skills(skill_paths)
-        self._router = ToolRouter(self._skills)
+        # Load skills — accept pre-filtered skills for multi-agent, otherwise load all
+        if skills is not None:
+            self._skills = skills
+        else:
+            skill_paths = get_skill_paths(config)
+            self._skills = load_skills(skill_paths)
+
+        # MCP servers — start only the ones skills actually reference
+        self._mcp_manager = None
+        mcp_config = get_mcp_config(config)
+        if mcp_config:
+            from mithai.core.mcp_manager import MCPManager
+
+            self._mcp_manager = MCPManager(mcp_config)
+            needed = set()
+            for skill in self._skills.values():
+                for entry in skill.mcp_tools:
+                    server = entry.get("server")
+                    if server:
+                        needed.add(server)
+            if needed:
+                self._mcp_manager.start(needed)
+
+        # Build allowed tools set from native + MCP tools for hard rejection
+        allowed_tools = {f"{sname}__{t.name}" for sname, s in self._skills.items() for t in s.tools}
+        # Include MCP tools discovered from servers so they aren't rejected
+        if self._mcp_manager:
+            for sname, s in self._skills.items():
+                for entry in s.mcp_tools:
+                    server = entry.get("server")
+                    if not server:
+                        continue
+                    for mcp_tool in self._mcp_manager.discover_tools(server):
+                        allowed_tools.add(f"{sname}__{mcp_tool.name}")
+        self._router = ToolRouter(self._skills, mcp_manager=self._mcp_manager, allowed_tools=allowed_tools)
         self._human = HumanMCP(get_human_config(config))
+
+        # Run startup hooks for skills that need background work (e.g. polling loops)
+        for skill_name, skill in self._skills.items():
+            if skill.startup:
+                try:
+                    skill.startup(get_skill_config(config, skill_name))
+                except Exception:
+                    logger.warning("Skill %s startup() failed", skill_name, exc_info=True)
         self._llm_config = get_llm_config(config)
 
         # Learning / memory
         learning_config = config.get("learning", {})
         self._learning_config = learning_config
-        self._memory_dir = Path(learning_config.get("memory_dir", "./memory")).resolve()
 
         # Session memory
         session_config = config.get("sessions", {})
@@ -69,6 +113,20 @@ class Engine:
             max_turns=session_config.get("max_stored", 50),
         )
         self._max_history = session_config.get("max_history", 10)
+
+    def late_bind(self, adapters: list[tuple[str, "Adapter"]]) -> None:
+        """Give skills access to engine + adapter after full initialization.
+
+        Called from run_cmd after adapters are created but before they start.
+        Skills that export bind(engine, adapter) get called here.
+        """
+        primary_adapter = adapters[0][1] if adapters else None
+        for skill_name, skill in self._skills.items():
+            if skill.bind:
+                try:
+                    skill.bind(self, primary_adapter)
+                except Exception:
+                    logger.warning("Skill %s bind() failed", skill_name, exc_info=True)
 
     def handle(self, message: IncomingMessage, adapter: Adapter) -> str:
         """
@@ -83,7 +141,7 @@ class Engine:
         # Load session and build conversation history
         # Use thread_id for Slack threads, fall back to channel_id
         scope = message.thread_id or message.channel_id
-        session_key = SessionManager.session_key(message.platform, scope)
+        session_key = SessionManager.session_key(message.platform, scope, agent_id=self._agent_id)
         session = self._sessions.load(session_key)
         history = self._build_history(session)
 
@@ -133,11 +191,13 @@ class Engine:
                         channel_id=message.channel_id,
                         user_id=message.user_id,
                         skill_config=get_skill_config(self._config, skill_name),
+                        memory=self._memory,
                     )
 
                     # Resolve dynamic human level — let the skill decide
+                    # MCP tools have static human levels from the skill's MCP_TOOLS declaration
                     effective_def = tool_def
-                    if tool_def.human == "dynamic":
+                    if tool_def.human == "dynamic" and not self._router.is_mcp_tool(prefixed_name):
                         skill = self._skills.get(skill_name)
                         if skill and skill.resolve_human:
                             resolved = skill.resolve_human(tool_def.name, tool_input, skill_ctx)
@@ -198,10 +258,10 @@ class Engine:
         self._sessions.append_turn(session_key, turn)
 
         # Post-turn reflection — extract learnings in background
-        if self._learning_config.get("reflection") and turn_tool_calls:
+        if self._learning_config.get("reflection") and turn_tool_calls and self._memory:
             threading.Thread(
                 target=reflect,
-                args=(turn, self._llm, self._memory_dir),
+                args=(turn, self._llm, self._memory),
                 daemon=True,
             ).start()
 
@@ -270,20 +330,17 @@ class Engine:
         )
 
         # Inject persistent memory
-        memory_file = self._memory_dir / "MEMORY.md"
-        if memory_file.exists():
-            content = memory_file.read_text().strip()
-            if content:
+        if self._memory:
+            content = self._memory.read("MEMORY.md")
+            if content and content.strip():
                 parts.append("\n---\n\n## Your Memory\n")
-                parts.append(content)
+                parts.append(content.strip())
 
-        today = datetime.now().strftime("%Y-%m-%d")
-        daily_file = self._memory_dir / "daily" / f"{today}.md"
-        if daily_file.exists():
-            content = daily_file.read_text().strip()
-            if content:
-                parts.append(f"\n---\n\n## Today's Observations\n")
-                parts.append(content)
+            today = datetime.now().strftime("%Y-%m-%d")
+            content = self._memory.read(f"daily/{today}.md")
+            if content and content.strip():
+                parts.append("\n---\n\n## Today's Observations\n")
+                parts.append(content.strip())
 
         parts.append("\n---\n\n## Your Skills\n")
         for name, skill in self._skills.items():
@@ -300,14 +357,17 @@ class Engine:
                 parts.append(block["text"])
         return "\n".join(parts).strip() or "(no response)"
 
+    def stop(self) -> None:
+        """Clean up resources (MCP server connections, etc.)."""
+        if self._mcp_manager:
+            self._mcp_manager.stop()
+
     def _record_approval(self, prefixed_name: str, tool_input: dict, approved: bool) -> None:
         """Record an approval decision for learning."""
-        approvals_file = self._memory_dir / "approvals.json"
+        if not self._memory:
+            return
         try:
-            if approvals_file.exists():
-                data = json.loads(approvals_file.read_text())
-            else:
-                data = {}
+            data = self._memory.read_json("approvals.json") or {}
 
             # Key by tool name, sub-key by a normalized input string
             if prefixed_name not in data:
@@ -327,7 +387,6 @@ class Engine:
             else:
                 data[prefixed_name][input_key]["denied"] += 1
 
-            approvals_file.parent.mkdir(parents=True, exist_ok=True)
-            approvals_file.write_text(json.dumps(data, indent=2))
+            self._memory.write_json("approvals.json", data)
         except Exception:
             logger.debug("Failed to record approval", exc_info=True)

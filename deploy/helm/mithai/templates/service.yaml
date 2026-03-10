@@ -1,0 +1,18 @@
+{{- if or .Values.service.enabled .Values.ui.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mithai.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mithai.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http-ui
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "mithai.selectorLabels" . | nindent 4 }}
+{{- end }}

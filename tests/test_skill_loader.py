@@ -1,6 +1,5 @@
 """Tests for skill loader."""
 
-from pathlib import Path
 
 from mithai.core.skill_loader import load_skills, validate_skill
 

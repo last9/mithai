@@ -103,11 +103,18 @@ class HumanMCP:
     def _describe_action(
         self, prefixed_name: str, tool_input: dict, tool_def: ToolDefinition
     ) -> str:
-        """Generate human-readable description of the action."""
+        """Generate human-readable description of the action.
+
+        Truncates to stay within Slack's 3000-char block limit
+        (leaving room for the wrapper text added by the adapter).
+        """
         parts = [
             f"Tool: {prefixed_name}",
             f"Action: {tool_def.description}",
         ]
         if tool_input:
-            parts.append(f"Input: {json.dumps(tool_input, indent=2)}")
+            input_str = json.dumps(tool_input, indent=2)
+            if len(input_str) > 2500:
+                input_str = input_str[:2500] + "\n... (truncated)"
+            parts.append(f"Input: {input_str}")
         return "\n".join(parts)

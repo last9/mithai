@@ -105,11 +105,80 @@ def get_skill_config(config: dict, skill_name: str) -> dict:
 
 
 def get_skill_paths(config: dict) -> list[Path]:
-    """Get list of directories to scan for skills."""
-    paths = config.get("skills", {}).get("paths", ["./skills"])
-    return [Path(p) for p in paths]
+    """Get list of directories to scan for skills.
+
+    Resolution order (later overrides earlier):
+    1. Bundled skills inside the PyInstaller binary (lowest priority)
+    2. Config-specified paths (e.g., ./skills)
+    3. User-installed skills at ~/.mithai/skills/ (highest priority)
+    """
+    from mithai import get_bundled_path
+
+    result = []
+
+    # 1. Bundled skills (inside PyInstaller binary or repo root)
+    bundled = get_bundled_path() / "skills"
+    if bundled.exists():
+        result.append(bundled)
+
+    # 2. Config-specified paths
+    config_paths = config.get("skills", {}).get("paths", ["./skills"])
+    for p in config_paths:
+        path = Path(p)
+        if path.resolve() != bundled.resolve():
+            result.append(path)
+
+    # 3. User-installed skills (~/.mithai/skills/)
+    user_skills = Path.home() / ".mithai" / "skills"
+    if user_skills.exists():
+        result.append(user_skills)
+
+    return result
+
+
+def get_mcp_config(config: dict) -> dict:
+    """Get MCP server configurations. Returns empty dict if none configured."""
+    return config.get("mcp_servers", {})
 
 
 def get_human_config(config: dict) -> dict:
     """Get Human MCP configuration."""
     return config.get("human", {})
+
+
+def get_agents(config: dict) -> dict[str, dict] | None:
+    """Get the agents section from config, or None for single-agent mode."""
+    agents = config.get("agents")
+    if not agents:
+        return None
+    # Strip the default_agent meta-key — callers use get_default_agent_id()
+    return {k: v for k, v in agents.items() if k != "default_agent"}
+
+
+def get_default_agent_id(config: dict) -> str | None:
+    """Get the default agent ID, or None for single-agent mode."""
+    agents = config.get("agents")
+    if not agents:
+        return None
+    return agents.get("default_agent")
+
+
+def get_agent_config(config: dict, agent_id: str) -> dict:
+    """
+    Get config for a specific agent.
+
+    Merges agent-level overrides on top of global config so agents
+    inherit llm, skills.paths, state, learning, etc. by default.
+    """
+    agents = get_agents(config)
+    if not agents or agent_id not in agents:
+        return config
+
+    agent = agents[agent_id]
+
+    # Agent-level system_prompt overrides global bot.system_prompt
+    merged = dict(config)
+    if "system_prompt" in agent:
+        merged = {**merged, "bot": {**merged.get("bot", {}), "system_prompt": agent["system_prompt"]}}
+
+    return merged

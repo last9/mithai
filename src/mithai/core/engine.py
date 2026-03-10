@@ -107,9 +107,6 @@ class Engine:
         learning_config = config.get("learning", {})
         self._learning_config = learning_config
 
-        # Injected by Slack adapter so handle_channel_join can fetch history
-        self._fetch_channel_history_fn = None
-
         # Session memory
         session_config = config.get("sessions", {})
         self._sessions = SessionManager(
@@ -300,38 +297,11 @@ class Engine:
         session_key = SessionManager.session_key("slack", f"onboard:{channel_id}", agent_id=self._agent_id)
         self._sessions.delete(session_key)
 
-        history_lines: list[str] = []
-        user_map: dict[str, str] = {}
-
-        # Ask the Slack adapter to fetch history — injected via _fetch_channel_history_fn
-        if self._fetch_channel_history_fn:
-            limit = onboarding_config.get("history_messages", 100)
-            history_lines, user_map = self._fetch_channel_history_fn(channel_id, limit)
-
-        # Build the synthetic onboarding prompt
-        history_section = ""
-        if history_lines and onboarding_config.get("history_scan", True):
-            history_section = "\n\nRecent channel messages (oldest first):\n" + "\n".join(history_lines)
-
-        user_map_section = ""
-        if user_map:
-            lines = [f"- {name} (Slack ID: {uid})" for uid, name in sorted(user_map.items(), key=lambda x: x[1])]
-            user_map_section = "\n\nKnown Slack users in this channel:\n" + "\n".join(lines)
-
         synthetic_text = (
             f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n"
-            f"Your job right now is to onboard yourself to this channel so you can be effective immediately.\n"
-            f"\n"
-            f"Steps:\n"
-            f"1. Review the channel history below and save what's useful to memory using memory_write "
-            f"(channel context, team members and what they own, recurring topics, terminology).\n"
-            f"2. Save the Slack user map to memory/team/slack_users.md (overwrite) so you can @mention "
-            f"people correctly in future.\n"
-            f"3. Write a short intro message (3-5 sentences, no bullet points, no emojis) to post in the channel. "
-            f"Reference something specific you learned from the history to show you've been paying attention.\n"
+            f"Use your available tools to learn about this channel, save what's useful to memory, "
+            f"and write a short intro message (3-5 sentences, no bullet points, no emojis).\n"
             f"Respond with only the intro message text — nothing else."
-            f"{user_map_section}"
-            f"{history_section}"
         )
 
         fake_message = IncomingMessage(
@@ -365,10 +335,6 @@ class Engine:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         line = f"{ts} | {message.user_id} | {message.text}\n"
         self._memory.write(f"channel_context/{message.channel_id}.md", line, append=True)
-
-    def set_fetch_channel_history_fn(self, fn) -> None:
-        """Inject the adapter's history-fetch function after construction."""
-        self._fetch_channel_history_fn = fn
 
     def _build_history(self, session: dict) -> list[dict]:
         """Convert recent session turns into LLM message pairs.

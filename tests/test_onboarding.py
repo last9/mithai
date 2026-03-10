@@ -103,11 +103,9 @@ class TestHandleChannelJoin:
         assert "ops-team" in text
         assert "C999" in text
 
-    def test_synthetic_prompt_includes_history_section(self):
-        """History lines injected by fetch_fn appear in the LLM prompt."""
-        config = _base_config(
-            onboarding={"enabled": True, "history_scan": True, "history_messages": 10}
-        )
+    def test_synthetic_prompt_instructs_tool_use(self):
+        """Prompt tells the bot to use its tools — no pre-fetched history injected."""
+        config = _base_config(onboarding={"enabled": True})
 
         captured = {}
         llm = MagicMock()
@@ -115,62 +113,23 @@ class TestHandleChannelJoin:
         def _capture(**kwargs):
             captured["messages"] = kwargs.get("messages", [])
             resp = MagicMock()
-            resp.content = [{"type": "text", "text": "Intro text."}]
+            resp.content = [{"type": "text", "text": "Hi!"}]
             resp.stop_reason = "end_turn"
             return resp
 
         llm.create_message.side_effect = _capture
-
         engine = _make_engine(config, llm=llm)
-        engine.set_fetch_channel_history_fn(
-            lambda channel_id, limit: (
-                ["alice: hello world", "bob: how's the deploy going?"],
-                {"U001": "alice", "U002": "bob"},
-            )
-        )
-
         engine.handle_channel_join("C100", "deploys")
 
-        first_user = next(
-            m for m in captured["messages"] if m.get("role") == "user"
-        )
-        content = first_user["content"]
-        text = content if isinstance(content, str) else content[0].get("text", "")
-        assert "alice: hello world" in text
-        assert "bob: how's the deploy going?" in text
-
-    def test_synthetic_prompt_includes_user_map(self):
-        """User map appears in the LLM prompt."""
-        config = _base_config(
-            onboarding={"enabled": True, "history_scan": True, "history_messages": 5}
-        )
-
-        captured = {}
-        llm = MagicMock()
-
-        def _capture(**kwargs):
-            captured["messages"] = kwargs.get("messages", [])
-            resp = MagicMock()
-            resp.content = [{"type": "text", "text": "Done."}]
-            resp.stop_reason = "end_turn"
-            return resp
-
-        llm.create_message.side_effect = _capture
-
-        engine = _make_engine(config, llm=llm)
-        engine.set_fetch_channel_history_fn(
-            lambda cid, lim: ([], {"U42": "carol"})
-        )
-
-        engine.handle_channel_join("C200", "team")
-
-        first_user = next(
-            m for m in captured["messages"] if m.get("role") == "user"
-        )
-        content = first_user["content"]
-        text = content if isinstance(content, str) else content[0].get("text", "")
-        assert "carol" in text
-        assert "U42" in text
+        first_user = next(m for m in captured["messages"] if m.get("role") == "user")
+        text = first_user["content"]
+        if not isinstance(text, str):
+            text = text[0].get("text", "")
+        # Prompt should tell bot to use tools — not dump raw history
+        assert "tools" in text.lower()
+        # No pre-fetched history or user map injected by the framework
+        assert "Recent channel messages" not in text
+        assert "Known Slack users" not in text
 
     def test_isolated_session_key(self):
         """Onboarding uses onboard:<channel_id> session — not the channel session."""
@@ -391,6 +350,32 @@ class TestAgentConfigOnboardingMerge:
         }
         merged = get_agent_config(config, "bot3")
         assert merged["onboarding"]["enabled"] is False
+
+    def test_prompt_has_no_hardcoded_memory_paths(self):
+        """Framework onboarding prompt must never dictate specific memory paths."""
+        config = _base_config(onboarding={"enabled": True})
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            captured["messages"] = kwargs.get("messages", [])
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        engine = _make_engine(config, llm=llm)
+        engine.handle_channel_join("C2", "ops")
+
+        first_user = next(m for m in captured["messages"] if m.get("role") == "user")
+        text = first_user["content"]
+        if not isinstance(text, str):
+            text = text[0].get("text", "")
+        assert "team/slack_users.md" not in text
+        assert "team/members" not in text
+        assert "team/dependencies" not in text
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,6 @@ Config (config.yaml):
 
 import logging
 import threading
-import time
 
 from mithai.adapters.base import Adapter, IncomingMessage
 

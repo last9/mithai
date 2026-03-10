@@ -147,7 +147,7 @@ def _run_multi_agent(config: dict, agents_config: dict):
     for agent_id, engine in engines.items():
         agent_adapters = [(t, a) for aid, t, a, _ in all_adapters if aid == agent_id]
         engine.late_bind(agent_adapters)
-        hb = _start_heartbeat(config, engine)
+        hb = _start_heartbeat(get_agent_config(config, agent_id), engine)
         if hb:
             heartbeats.append(hb)
 

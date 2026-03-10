@@ -357,6 +357,15 @@ class Engine:
 
         return self.handle(fake_message, _NoOpAdapter())
 
+    def observe(self, message: IncomingMessage) -> None:
+        """Silently record an observed message to channel memory. No LLM call."""
+        if self._memory is None:
+            return
+        from datetime import timezone
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        line = f"{ts} | {message.user_id} | {message.text}\n"
+        self._memory.write(f"channel_context/{message.channel_id}.md", line, append=True)
+
     def set_fetch_channel_history_fn(self, fn) -> None:
         """Inject the adapter's history-fetch function after construction."""
         self._fetch_channel_history_fn = fn

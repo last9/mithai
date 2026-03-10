@@ -16,6 +16,9 @@ MessageHandler = Callable[["IncomingMessage", "Adapter"], str]
 # Callback type: (channel_id, channel_name) -> response text to post (or None)
 ChannelJoinHandler = Callable[[str, str], Optional[str]]
 
+# Callback type: (message,) -> None  — called for observed messages (no reply)
+ChannelObserveHandler = Callable[["IncomingMessage"], None]
+
 
 @dataclass
 class IncomingMessage:
@@ -47,7 +50,8 @@ class Adapter(ABC):
     """
 
     @abstractmethod
-    def start(self, on_message: MessageHandler, on_channel_join: "ChannelJoinHandler | None" = None) -> None:
+    def start(self, on_message: MessageHandler, on_channel_join: "ChannelJoinHandler | None" = None,
+              on_observe: "ChannelObserveHandler | None" = None) -> None:
         """
         Start listening for messages.
 

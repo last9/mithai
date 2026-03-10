@@ -53,7 +53,9 @@ def _run_single_agent(config: dict, adapter_override: str | None):
 
     adapters = []
     for adapter_type in adapter_types:
-        adapter = _create_adapter(config, adapter_type)
+        adapter_config = get_adapter_config(config, adapter_type)
+        respond = adapter_config.get("respond", "all")
+        adapter = _create_adapter(config, adapter_type, respond=respond)
         adapters.append((adapter_type, adapter))
 
     engine.late_bind(adapters)
@@ -91,8 +93,9 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         ok(f"Starting with [bright_cyan]{name}[/] adapter")
         console.print()
         on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
+        on_observe = engine.observe if getattr(adapter, "_respond", "all") == "mentions" else None
         try:
-            adapter.start(on_message=engine.handle, on_channel_join=on_join)
+            adapter.start(on_message=engine.handle, on_channel_join=on_join, on_observe=on_observe)
         except KeyboardInterrupt:
             console.print("\n  [muted]Shutting down...[/]")
         finally:
@@ -104,9 +107,10 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         threads = []
         for name, adapter in adapters:
             on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
+            on_observe = engine.observe if getattr(adapter, "_respond", "all") == "mentions" else None
             t = threading.Thread(
                 target=_run_adapter,
-                args=(name, adapter, engine.handle, on_join),
+                args=(name, adapter, engine.handle, on_join, on_observe),
                 daemon=True,
             )
             t.start()
@@ -131,7 +135,8 @@ def _run_multi_agent(config: dict, agents_config: dict):
         engine = engines[agent_id]
         agent_adapter_cfg = agent_def.get("adapter", {})
         for adapter_type, type_cfg in agent_adapter_cfg.items():
-            adapter = _create_adapter(config, adapter_type, adapter_config=type_cfg)
+            respond = agent_def.get("respond") or type_cfg.get("respond", "all")
+            adapter = _create_adapter(config, adapter_type, adapter_config=type_cfg, respond=respond)
             all_adapters.append((agent_id, adapter_type, adapter, engine))
 
     if not all_adapters:
@@ -172,9 +177,10 @@ def _run_multi_agent(config: dict, agents_config: dict):
         label = f"{agent_id}/{adapter_type}"
         info(f"Starting [bright_cyan]{label}[/]")
         on_join = engine.handle_channel_join if adapter_type in ("slack", "slack_http") else None
+        on_observe = engine.observe if getattr(adapter, "_respond", "all") == "mentions" else None
         t = threading.Thread(
             target=_run_adapter,
-            args=(label, adapter, engine.handle, on_join),
+            args=(label, adapter, engine.handle, on_join, on_observe),
             daemon=True,
         )
         t.start()
@@ -191,12 +197,12 @@ def _run_multi_agent(config: dict, agents_config: dict):
             adapter.stop()
 
 
-def _run_adapter(name: str, adapter, on_message, on_channel_join=None):
+def _run_adapter(name: str, adapter, on_message, on_channel_join=None, on_observe=None):
     """Run a single adapter in a thread."""
     logger = logging.getLogger(f"mithai.adapter.{name}")
     try:
         logger.info("Starting %s adapter", name)
-        adapter.start(on_message=on_message, on_channel_join=on_channel_join)
+        adapter.start(on_message=on_message, on_channel_join=on_channel_join, on_observe=on_observe)
     except Exception:
         logger.exception("Adapter %s crashed", name)
     finally:
@@ -259,7 +265,8 @@ def _create_engines_multi(config: dict, agents_config: dict) -> dict:
     return engines
 
 
-def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None = None):
+def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None = None,
+                    respond: str = "all"):
     """Create an adapter instance.
 
     If adapter_config is provided (per-agent mode), use it directly.
@@ -279,6 +286,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             app_token=adapter_config["app_token"],
             allowed_channels=adapter_config.get("allowed_channels"),
             approval_timeout=adapter_config.get("approval_timeout", 300),
+            respond=respond,
         )
 
     elif adapter_type == "telegram":
@@ -297,6 +305,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             port=adapter_config.get("port", 3000),
             allowed_channels=adapter_config.get("allowed_channels"),
             approval_timeout=adapter_config.get("approval_timeout", 300),
+            respond=respond,
         )
 
     else:

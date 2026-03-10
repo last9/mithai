@@ -384,17 +384,19 @@ class TestAgentConfigOnboardingMerge:
 
 class TestResolveUserIds:
     def _make_adapter(self):
-        """Create a SlackAdapter with a mocked Slack Bolt App."""
+        """Create a SlackAdapter with mocked Slack Bolt App and SlackClient."""
+        from unittest.mock import MagicMock
         from mithai.adapters.slack import SlackAdapter
         with patch("slack_bolt.App") as MockApp, \
              patch("slack_bolt.adapter.socket_mode.SocketModeHandler"):
             adapter = SlackAdapter(bot_token="xoxb-test", app_token="xapp-test")
             adapter._app = MockApp.return_value
+            adapter._slack_client._client = MagicMock()
             return adapter
 
     def test_returns_display_name(self):
         adapter = self._make_adapter()
-        adapter._app.client.users_info.return_value = {
+        adapter._slack_client._client.users_info.return_value = {
             "user": {
                 "name": "alice_login",
                 "profile": {"display_name": "Alice", "real_name": "Alice Smith"},
@@ -405,7 +407,7 @@ class TestResolveUserIds:
 
     def test_falls_back_to_real_name_when_display_empty(self):
         adapter = self._make_adapter()
-        adapter._app.client.users_info.return_value = {
+        adapter._slack_client._client.users_info.return_value = {
             "user": {
                 "name": "bob_login",
                 "profile": {"display_name": "", "real_name": "Bob Jones"},
@@ -416,7 +418,7 @@ class TestResolveUserIds:
 
     def test_falls_back_to_raw_uid_on_api_error(self):
         adapter = self._make_adapter()
-        adapter._app.client.users_info.side_effect = Exception("API error")
+        adapter._slack_client._client.users_info.side_effect = Exception("API error")
         result = adapter._resolve_user_ids({"UERR"})
         assert result == {"UERR": "UERR"}
 
@@ -430,7 +432,7 @@ class TestResolveUserIds:
                 return {"user": {"name": "bob", "profile": {"display_name": "", "real_name": "Bob"}}}
             raise Exception("unknown")
 
-        adapter._app.client.users_info.side_effect = _users_info
+        adapter._slack_client._client.users_info.side_effect = _users_info
         result = adapter._resolve_user_ids({"U001", "U002"})
         assert result["U001"] == "Alice"
         assert result["U002"] == "Bob"
@@ -442,21 +444,23 @@ class TestResolveUserIds:
 
 class TestFetchChannelHistory:
     def _make_adapter(self):
+        from unittest.mock import MagicMock
         from mithai.adapters.slack import SlackAdapter
         with patch("slack_bolt.App") as MockApp, \
              patch("slack_bolt.adapter.socket_mode.SocketModeHandler"):
             adapter = SlackAdapter(bot_token="xoxb-test", app_token="xapp-test")
             adapter._app = MockApp.return_value
+            adapter._slack_client._client = MagicMock()
             return adapter
 
     def _mock_history(self, adapter, messages: list[dict]):
-        adapter._app.client.conversations_history.return_value = {"ok": True, "messages": messages}
+        adapter._slack_client._client.conversations_history.return_value = {"ok": True, "messages": messages}
 
     def _mock_users(self, adapter, user_map: dict):
         def _info(user):
             name = user_map.get(user, user)
             return {"user": {"name": name, "profile": {"display_name": name, "real_name": name}}}
-        adapter._app.client.users_info.side_effect = _info
+        adapter._slack_client._client.users_info.side_effect = _info
 
     def test_returns_oldest_first(self):
         adapter = self._make_adapter()
@@ -492,14 +496,14 @@ class TestFetchChannelHistory:
 
     def test_empty_on_api_error(self):
         adapter = self._make_adapter()
-        adapter._app.client.conversations_history.side_effect = Exception("fail")
+        adapter._slack_client._client.conversations_history.side_effect = Exception("fail")
         msgs, user_map = adapter._fetch_channel_history("C1", 10)
         assert msgs == []
         assert user_map == {}
 
     def test_empty_on_ok_false(self):
         adapter = self._make_adapter()
-        adapter._app.client.conversations_history.return_value = {
+        adapter._slack_client._client.conversations_history.return_value = {
             "ok": False,
             "error": "not_in_channel",
         }

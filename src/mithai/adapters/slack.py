@@ -7,6 +7,7 @@ import threading
 from mithai.adapters.base import Adapter, ChannelJoinHandler, ChannelObserveHandler, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
 from mithai.human.mcp import HumanRequest
+from mithai.integrations.slack import SlackClient
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class SlackAdapterBase(Adapter):
 
         self._respond = respond
         self._formatter = SlackBlockFormatter()
+        self._slack_client = SlackClient(bot_token)
         # Per-thread storage for the current message ts — prevents concurrent
         # messages from overwriting each other's thread context.
         self._local = threading.local()
@@ -238,69 +240,16 @@ class SlackAdapterBase(Adapter):
             # bot_message, etc.) that @app.message("") does not match.
             pass
 
+    @property
+    def slack_client(self) -> SlackClient:
+        """SlackClient instance for use by skills."""
+        return self._slack_client
+
     def _resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
-        """Return a map of user_id -> display_name for the given set of IDs."""
-        result = {}
-        for uid in user_ids:
-            try:
-                resp = self._app.client.users_info(user=uid)
-                profile = resp["user"].get("profile", {})
-                name = (
-                    profile.get("display_name")
-                    or profile.get("real_name")
-                    or resp["user"].get("name")
-                    or uid
-                )
-                result[uid] = name
-            except Exception:
-                result[uid] = uid
-        return result
+        return self._slack_client.resolve_user_ids(user_ids)
 
     def _fetch_channel_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
-        """
-        Fetch recent messages from a channel.
-
-        Returns (formatted_messages, user_id_to_name_map).
-        User IDs in messages are replaced with real display names.
-        """
-        import re
-
-        try:
-            resp = self._app.client.conversations_history(channel=channel_id, limit=limit)
-        except Exception:
-            logger.warning("Failed to fetch history for channel %s", channel_id, exc_info=True)
-            return [], {}
-
-        if not resp.get("ok"):
-            logger.warning("conversations_history error for %s: %s", channel_id, resp.get("error"))
-            return [], {}
-        raw_messages = resp.get("messages", [])
-
-        all_user_ids: set[str] = set()
-        for msg in raw_messages:
-            if uid := msg.get("user"):
-                all_user_ids.add(uid)
-            for mentioned in re.findall(r"<@([A-Z0-9]+)>", msg.get("text", "")):
-                all_user_ids.add(mentioned)
-
-        user_map = self._resolve_user_ids(all_user_ids)
-
-        def _replace_mentions(text: str) -> str:
-            return re.sub(
-                r"<@([A-Z0-9]+)>",
-                lambda m: f"@{user_map.get(m.group(1), m.group(1))}",
-                text,
-            )
-
-        formatted = []
-        for msg in reversed(raw_messages):  # oldest first
-            uid = msg.get("user", "unknown")
-            name = user_map.get(uid, uid)
-            text = _replace_mentions(msg.get("text", "")).strip()
-            if text:
-                formatted.append(f"{name}: {text}")
-
-        return formatted, user_map
+        return self._slack_client.get_history(channel_id, limit)
 
     def _send_formatted(self, say, response: str, thread_ts: str | None) -> None:
         """Format a response and send via say(), using Block Kit when available."""

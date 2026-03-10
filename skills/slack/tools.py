@@ -1,9 +1,9 @@
-"""Skill: Slack-specific tools — history fetch, user lookup."""
+"""Skill: Slack-specific tools — history fetch, send message."""
 
 import json
 
-# Injected at startup via bind() — None when not running on a Slack adapter
-_adapter = None
+# SlackClient injected at startup via bind() — None when not running on a Slack adapter
+_client = None
 
 
 TOOLS = [
@@ -29,23 +29,45 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "slack_send_message",
+        "description": (
+            "Post a message to a Slack channel or thread. "
+            "Use for proactive notifications, summaries, or pinging teammates."
+        ),
+        "human": "approve",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "channel_id": {
+                    "type": "string",
+                    "description": "Slack channel ID. Defaults to current channel.",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Message text (Slack mrkdwn supported).",
+                },
+                "thread_ts": {
+                    "type": "string",
+                    "description": "Reply in a thread. Optional.",
+                },
+            },
+            "required": ["text"],
+        },
+    },
 ]
 
 
 def bind(engine, adapter):
-    """Store the Slack adapter so tools can call its API client."""
-    global _adapter
-    try:
-        from mithai.adapters.slack import SlackAdapterBase
-        if isinstance(adapter, SlackAdapterBase):
-            _adapter = adapter
-    except ImportError:
-        pass
+    """Store the SlackClient so tools can make Slack API calls."""
+    global _client
+    if hasattr(adapter, "slack_client"):
+        _client = adapter.slack_client
 
 
 def handle(name: str, input: dict, ctx: dict) -> str:
     if name == "slack_get_history":
-        if _adapter is None:
+        if _client is None:
             return json.dumps({"error": "Slack adapter not available in this context"})
 
         channel_id = input.get("channel_id") or ctx.get("channel_id", "")
@@ -53,12 +75,28 @@ def handle(name: str, input: dict, ctx: dict) -> str:
             return json.dumps({"error": "channel_id is required"})
 
         limit = min(int(input.get("limit", 100)), 500)
-        messages, user_map = _adapter._fetch_channel_history(channel_id, limit)
+        messages, user_map = _client.get_history(channel_id, limit)
 
         return json.dumps({
             "messages": messages,
             "user_map": user_map,
             "count": len(messages),
         })
+
+    if name == "slack_send_message":
+        if _client is None:
+            return json.dumps({"error": "Slack adapter not available in this context"})
+
+        text = input.get("text", "")
+        if not text:
+            return json.dumps({"error": "text is required"})
+
+        channel_id = input.get("channel_id") or ctx.get("channel_id", "")
+        if not channel_id:
+            return json.dumps({"error": "channel_id is required"})
+
+        thread_ts = input.get("thread_ts")
+        result = _client.post_message(channel_id, text, thread_ts=thread_ts)
+        return json.dumps(result)
 
     return json.dumps({"error": f"Unknown tool: {name}"})

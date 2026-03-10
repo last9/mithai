@@ -57,6 +57,10 @@ class SessionManager:
         session["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._state.set(NAMESPACE, key, session)
 
+    def delete(self, key: str) -> None:
+        """Delete a session by key."""
+        self._state.delete(NAMESPACE, key)
+
     def get_session(self, key: str) -> dict | None:
         """Get a session by key."""
         return self._state.get(NAMESPACE, key)

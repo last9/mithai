@@ -107,6 +107,9 @@ class Engine:
         learning_config = config.get("learning", {})
         self._learning_config = learning_config
 
+        # Injected by Slack adapter so handle_channel_join can fetch history
+        self._fetch_channel_history_fn = None
+
         # Session memory
         session_config = config.get("sessions", {})
         self._sessions = SessionManager(
@@ -278,6 +281,79 @@ class Engine:
             ).start()
 
         return response_text
+
+    def handle_channel_join(self, channel_id: str, channel_name: str) -> str | None:
+        """
+        Called when the bot is added to a new Slack channel.
+
+        Fetches channel history (via the callback set on the adapter), feeds a
+        synthetic onboarding message through the normal engine loop, and returns
+        the intro text to post.  Uses an isolated session so onboarding tool calls
+        don't pollute the channel's regular conversation history.
+        """
+        onboarding_config = self._config.get("onboarding", {})
+        if not onboarding_config.get("enabled", False):
+            return None
+
+        # Clear any stale session from a previous join so old history doesn't
+        # contaminate the new onboarding LLM call.
+        session_key = SessionManager.session_key("slack", f"onboard:{channel_id}", agent_id=self._agent_id)
+        self._sessions.delete(session_key)
+
+        history_lines: list[str] = []
+        user_map: dict[str, str] = {}
+
+        # Ask the Slack adapter to fetch history — injected via _fetch_channel_history_fn
+        if self._fetch_channel_history_fn:
+            limit = onboarding_config.get("history_messages", 100)
+            history_lines, user_map = self._fetch_channel_history_fn(channel_id, limit)
+
+        # Build the synthetic onboarding prompt
+        history_section = ""
+        if history_lines and onboarding_config.get("history_scan", True):
+            history_section = "\n\nRecent channel messages (oldest first):\n" + "\n".join(history_lines)
+
+        user_map_section = ""
+        if user_map:
+            lines = [f"- {name} (Slack ID: {uid})" for uid, name in sorted(user_map.items(), key=lambda x: x[1])]
+            user_map_section = "\n\nKnown Slack users in this channel:\n" + "\n".join(lines)
+
+        synthetic_text = (
+            f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n"
+            f"Your job right now is to onboard yourself to this channel so you can be effective immediately.\n"
+            f"\n"
+            f"Steps:\n"
+            f"1. Review the channel history below and save what's useful to memory using memory_write "
+            f"(channel context, team members and what they own, recurring topics, terminology).\n"
+            f"2. Save the Slack user map to memory/team/slack_users.md (overwrite) so you can @mention "
+            f"people correctly in future.\n"
+            f"3. Write a short intro message (3-5 sentences, no bullet points, no emojis) to post in the channel. "
+            f"Reference something specific you learned from the history to show you've been paying attention.\n"
+            f"Respond with only the intro message text — nothing else."
+            f"{user_map_section}"
+            f"{history_section}"
+        )
+
+        fake_message = IncomingMessage(
+            text=synthetic_text,
+            channel_id=channel_id,
+            user_id="system",
+            platform="slack",
+            # Isolated session key so onboarding turns don't appear in normal chat history
+            thread_id=f"onboard:{channel_id}",
+        )
+
+        class _NoOpAdapter:
+            """Minimal adapter stub for onboarding — approves only memory tools."""
+            def request_human_approval(self, request, channel_id):
+                tool_name = getattr(request, "tool_name", "") or ""
+                return tool_name.startswith("memory__")
+
+        return self.handle(fake_message, _NoOpAdapter())
+
+    def set_fetch_channel_history_fn(self, fn) -> None:
+        """Inject the adapter's history-fetch function after construction."""
+        self._fetch_channel_history_fn = fn
 
     def _build_history(self, session: dict) -> list[dict]:
         """Convert recent session turns into LLM message pairs.

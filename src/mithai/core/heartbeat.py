@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _HEARTBEAT_FILE = "heartbeat.md"
 _DEFAULT_AUTO_APPROVE = ["memory__"]
+_DEFAULT_INTERVAL = 3600
 
 
 class _HeartbeatAdapter(Adapter):
@@ -54,11 +55,13 @@ class HeartbeatScheduler:
          and runs it through `engine.handle()`.
     """
 
-    def __init__(self, engine, memory, interval: int = 3600, auto_approve: list[str] | None = None):
+    def __init__(self, engine, memory, interval: int = _DEFAULT_INTERVAL, auto_approve: list[str] | None = None,
+                 channels: list[str] | None = None):
         self._engine = engine
         self._memory = memory
         self._interval = interval
         self._auto_approve = auto_approve if auto_approve is not None else _DEFAULT_AUTO_APPROVE
+        self._channels = channels or []
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -89,9 +92,23 @@ class HeartbeatScheduler:
             logger.debug("Heartbeat tick: %s absent or empty, skipping", _HEARTBEAT_FILE)
             return
 
+        # Prepend recent channel activity for configured channels
+        context_parts = []
+        for channel_id in self._channels:
+            content = self._memory.read(f"channel_context/{channel_id}.md")
+            if content and content.strip():
+                context_parts.append(
+                    f"Recent channel activity in {channel_id} since last tick:\n{content.strip()}"
+                )
+
+        if context_parts:
+            full_text = "\n\n---\n\n".join(context_parts) + "\n\n---\n\n" + instructions.strip()
+        else:
+            full_text = instructions.strip()
+
         logger.info("Heartbeat tick: running instructions from %s", _HEARTBEAT_FILE)
         message = IncomingMessage(
-            text=instructions.strip(),
+            text=full_text,
             channel_id="heartbeat",
             user_id="system",
             platform="system",
@@ -102,3 +119,18 @@ class HeartbeatScheduler:
             self._engine.handle(message, adapter)
         except Exception:
             logger.warning("Heartbeat engine.handle() failed", exc_info=True)
+            return
+
+        # Truncate channel context files after injection — keep last 50 lines as a buffer
+        # so the file always contains activity since the last tick, not unbounded history.
+        for channel_id in self._channels:
+            self._truncate_channel_context(channel_id)
+
+    def _truncate_channel_context(self, channel_id: str, keep_lines: int = 50) -> None:
+        path = f"channel_context/{channel_id}.md"
+        content = self._memory.read(path)
+        if not content:
+            return
+        lines = content.splitlines(keepends=True)
+        if len(lines) > keep_lines:
+            self._memory.write(path, "".join(lines[-keep_lines:]))

@@ -141,11 +141,6 @@ class Engine:
         Called by adapters for each message. The adapter is passed so
         Human MCP approvals route back to the correct platform.
         """
-        # Log incoming message to channel context so the file has a complete record
-        # (observe() only fires for non-mention messages; @mentions go through handle())
-        if message.platform != "system":
-            self._log_to_channel_context(message)
-
         system = self._compose_system_prompt()
         tools = self._router.collect_tools_for_llm()
 
@@ -390,10 +385,14 @@ class Engine:
             )
             session = self._sessions.get_session(key)
             if session and session.get("turns"):
-                self._sessions.append_observation(key, {
-                    "user_id": message.user_id,
-                    "text": message.text,
-                })
+                # Skip if this message was just processed by handle() — it's already
+                # in the session history and doesn't need to be shown again as context.
+                last_turn = session["turns"][-1]
+                if last_turn.get("user_message") != message.text:
+                    self._sessions.append_observation(key, {
+                        "user_id": message.user_id,
+                        "text": message.text,
+                    })
 
     def _build_history(self, session: dict) -> list[dict]:
         """Convert recent session turns into LLM message pairs.

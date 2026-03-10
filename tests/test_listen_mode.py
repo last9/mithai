@@ -128,6 +128,33 @@ def test_mention_always_calls_on_message():
     on_message.assert_called_once()
 
 
+def test_mention_also_calls_on_observe():
+    """After responding to an @mention, on_observe is called so it lands in channel_context."""
+    adapter, mock_app = _build_adapter(respond="mentions")
+    on_message = MagicMock(return_value="reply")
+    on_observe = MagicMock()
+
+    captured = {}
+
+    def capture_event(name):
+        def decorator(fn):
+            captured[name] = fn
+            return fn
+        return decorator
+
+    mock_app.event.side_effect = capture_event
+    adapter._register_message_handlers(on_message, on_observe=on_observe)
+
+    handle_app_mention = captured.get("app_mention")
+    event = {"channel": "C1", "text": "<@UBOT> deploy please", "ts": "2.0", "user": "U2"}
+    handle_app_mention(event=event, say=MagicMock())
+
+    on_observe.assert_called_once()
+    observed_msg = on_observe.call_args[0][0]
+    assert observed_msg.text == "deploy please"
+    assert observed_msg.channel_id == "C1"
+
+
 # ---------------------------------------------------------------------------
 # 5. engine.observe() appends formatted line to channel_context/{channel_id}.md
 # ---------------------------------------------------------------------------
@@ -244,7 +271,8 @@ def test_run_cmd_on_observe_passed_when_mentions_mode():
 # 9. on_observe is None when respond: all
 # ---------------------------------------------------------------------------
 
-def test_run_cmd_on_observe_none_when_all_mode():
+def test_run_cmd_on_observe_always_passed_in_all_mode():
+    """on_observe is always passed regardless of respond mode — adapter uses it for all message types."""
     mock_app = _make_mock_app()
     mock_app_cls = MagicMock(return_value=mock_app)
 
@@ -263,16 +291,15 @@ def test_run_cmd_on_observe_none_when_all_mode():
 
     adapter._register_message_handlers = capture_register
 
-    # start() calls _register_message_handlers; intercept before uvicorn runs
-    # by monkey-patching the import inside start()
+    on_observe_fn = MagicMock()
 
     def fake_start(on_message, on_channel_join=None, on_observe=None):
         adapter._register_message_handlers(on_message, on_channel_join, on_observe)
 
     adapter.start = fake_start
-    adapter.start(on_message=MagicMock(), on_observe=None)
+    adapter.start(on_message=MagicMock(), on_observe=on_observe_fn)
 
-    assert start_calls["on_observe"] is None
+    assert start_calls["on_observe"] is on_observe_fn
 
 
 # ---------------------------------------------------------------------------

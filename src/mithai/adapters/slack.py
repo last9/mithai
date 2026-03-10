@@ -234,6 +234,9 @@ class SlackAdapterBase(Adapter):
             finally:
                 self._unreact(channel, ts, "thinking_face")
 
+            if on_observe:
+                on_observe(incoming)
+
         @self._app.event("message")
         def handle_message_subtype_events(body):
             # Silently acknowledge message subtypes (channel_join, message_changed,

@@ -87,7 +87,7 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         ok(f"Starting with [bright_cyan]{name}[/] adapter")
         console.print()
         on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
-        on_observe = engine.observe if getattr(adapter, "_respond", "all") == "mentions" else None
+        on_observe = engine.observe
         try:
             adapter.start(on_message=engine.handle, on_channel_join=on_join, on_observe=on_observe)
         except KeyboardInterrupt:
@@ -103,7 +103,7 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         threads = []
         for name, adapter in adapters:
             on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
-            on_observe = engine.observe if getattr(adapter, "_respond", "all") == "mentions" else None
+            on_observe = engine.observe
             t = threading.Thread(
                 target=_run_adapter,
                 args=(name, adapter, engine.handle, on_join, on_observe),
@@ -170,7 +170,7 @@ def _run_multi_agent(config: dict, agents_config: dict):
         label = f"{agent_id}/{adapter_type}"
         info(f"Starting [bright_cyan]{label}[/]")
         on_join = engine.handle_channel_join if adapter_type in ("slack", "slack_http") else None
-        on_observe = engine.observe if getattr(adapter, "_respond", "all") == "mentions" else None
+        on_observe = engine.observe
         t = threading.Thread(
             target=_run_adapter,
             args=(label, adapter, engine.handle, on_join, on_observe),
@@ -399,9 +399,11 @@ def _start_heartbeat(config: dict, engine):
     if engine._memory is None:
         return None
 
-    from mithai.core.heartbeat import HeartbeatScheduler
-    interval = int(hb_config.get("interval", 3600))
+    from mithai.core.heartbeat import HeartbeatScheduler, _DEFAULT_INTERVAL
+    interval = int(hb_config.get("interval", _DEFAULT_INTERVAL))
     auto_approve = hb_config.get("auto_approve")  # None → HeartbeatScheduler applies its default
-    scheduler = HeartbeatScheduler(engine, engine._memory, interval=interval, auto_approve=auto_approve)
+    channels = hb_config.get("channels", [])
+    scheduler = HeartbeatScheduler(engine, engine._memory, interval=interval, auto_approve=auto_approve,
+                                   channels=channels)
     scheduler.start()
     return scheduler

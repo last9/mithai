@@ -302,3 +302,128 @@ def test_start_heartbeat_default_auto_approve_is_memory():
         assert scheduler._auto_approve == ["memory__"]
     finally:
         scheduler.stop()
+
+
+def test_start_heartbeat_passes_channels_from_config():
+    from mithai.cli.run_cmd import _start_heartbeat
+    engine = MagicMock()
+    engine._memory = MagicMock()
+    config = {"heartbeat": {"enabled": True, "channels": ["C1", "C2"]}}
+    scheduler = _start_heartbeat(config, engine)
+    try:
+        assert scheduler._channels == ["C1", "C2"]
+    finally:
+        scheduler.stop()
+
+
+def test_start_heartbeat_default_channels_empty():
+    from mithai.cli.run_cmd import _start_heartbeat
+    engine = MagicMock()
+    engine._memory = MagicMock()
+    config = {"heartbeat": {"enabled": True}}
+    scheduler = _start_heartbeat(config, engine)
+    try:
+        assert scheduler._channels == []
+    finally:
+        scheduler.stop()
+
+
+# ---------------------------------------------------------------------------
+# channel_context injection and truncation
+# ---------------------------------------------------------------------------
+
+def _make_scheduler_with_channels(instructions, channels, channel_contents=None):
+    engine = MagicMock()
+    memory = MagicMock()
+
+    def read_side_effect(path):
+        if path == "heartbeat.md":
+            return instructions
+        if channel_contents and path in channel_contents:
+            return channel_contents[path]
+        return None
+
+    memory.read.side_effect = read_side_effect
+    scheduler = HeartbeatScheduler(engine, memory, interval=9999, channels=channels)
+    return scheduler, engine, memory
+
+
+def test_tick_injects_channel_context_into_message():
+    scheduler, engine, memory = _make_scheduler_with_channels(
+        instructions="Run weekly summary.",
+        channels=["C1"],
+        channel_contents={"channel_context/C1.md": "alice: deploy done\nbob: all green"},
+    )
+    scheduler._tick()
+
+    message = engine.handle.call_args[0][0]
+    assert "alice: deploy done" in message.text
+    assert "bob: all green" in message.text
+    assert "Run weekly summary." in message.text
+
+
+def test_tick_injects_multiple_channels():
+    scheduler, engine, memory = _make_scheduler_with_channels(
+        instructions="Summarize.",
+        channels=["C1", "C2"],
+        channel_contents={
+            "channel_context/C1.md": "alice: hello",
+            "channel_context/C2.md": "carol: incident resolved",
+        },
+    )
+    scheduler._tick()
+
+    message = engine.handle.call_args[0][0]
+    assert "alice: hello" in message.text
+    assert "carol: incident resolved" in message.text
+
+
+def test_tick_no_channel_context_when_files_absent():
+    scheduler, engine, memory = _make_scheduler_with_channels(
+        instructions="Do stuff.",
+        channels=["C1"],
+        channel_contents={},
+    )
+    scheduler._tick()
+
+    message = engine.handle.call_args[0][0]
+    assert message.text == "Do stuff."
+
+
+def test_tick_truncates_channel_context_after_tick():
+    scheduler, engine, memory = _make_scheduler_with_channels(
+        instructions="Go.",
+        channels=["C1"],
+        channel_contents={"channel_context/C1.md": "alice: msg\n" * 100},
+    )
+    scheduler._tick()
+
+    memory.write.assert_called()
+    write_calls = [c for c in memory.write.call_args_list if c[0][0] == "channel_context/C1.md"]
+    assert len(write_calls) == 1
+    written_content = write_calls[0][0][1]
+    assert len(written_content.splitlines()) == 50
+
+
+def test_tick_no_truncation_when_file_under_limit():
+    short_content = "alice: msg\n" * 10
+    scheduler, engine, memory = _make_scheduler_with_channels(
+        instructions="Go.",
+        channels=["C1"],
+        channel_contents={"channel_context/C1.md": short_content},
+    )
+    scheduler._tick()
+
+    write_calls = [c for c in memory.write.call_args_list if c[0][0] == "channel_context/C1.md"]
+    assert len(write_calls) == 0
+
+
+def test_tick_no_channels_no_channel_context_reads():
+    scheduler, engine, memory = _make_scheduler_with_channels(
+        instructions="Go.",
+        channels=[],
+    )
+    scheduler._tick()
+
+    read_calls = [c[0][0] for c in memory.read.call_args_list]
+    assert not any("channel_context" in p for p in read_calls)

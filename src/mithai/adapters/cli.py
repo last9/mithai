@@ -1,10 +1,13 @@
 """CLI/terminal adapter for local development and testing."""
 
 import sys
+import time
 
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.text import Text
 
 from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import CLIFormatter
@@ -125,10 +128,14 @@ class CLIAdapter(Adapter):
     Useful for testing skills and the engine without a chat platform.
     """
 
+    _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
     def __init__(self):
         self._running = False
         self._engine = None
         self._formatter = CLIFormatter()
+        self._thinking_start: float | None = None
+        self._live: Live | None = None
 
     def set_engine(self, engine) -> None:
         """Give the adapter a reference to the engine for slash commands."""
@@ -212,6 +219,8 @@ class CLIAdapter(Adapter):
                 _console.print(f"[bright_magenta]mithai>[/] {chunk}")
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
+        # Stop any active spinner before showing approval dialog
+        self._stop_live()
         # Flush buffered keystrokes so stale Enter presses don't auto-deny
         _flush_stdin()
 
@@ -248,6 +257,98 @@ class CLIAdapter(Adapter):
         else:
             _console.print("  [red]Denied.[/]\n")
         return approved
+
+
+    # ── Status callbacks for progress feedback ──
+
+    def on_thinking_start(self) -> None:
+        self._thinking_start = time.monotonic()
+        self._live = Live(
+            Text("  ● thinking...", style="bright_magenta"),
+            console=_console,
+            refresh_per_second=4,
+            transient=True,
+        )
+        self._live.start()
+        self._spin_thread_running = True
+        import threading
+        self._spin_thread = threading.Thread(target=self._spin_loop, daemon=True)
+        self._spin_thread.start()
+
+    def _spin_loop(self) -> None:
+        """Update the spinner with elapsed time."""
+        idx = 0
+        while self._spin_thread_running and self._live:
+            elapsed = time.monotonic() - (self._thinking_start or time.monotonic())
+            frame = self._SPINNER_FRAMES[idx % len(self._SPINNER_FRAMES)]
+            try:
+                self._live.update(
+                    Text(f"  {frame} thinking... {elapsed:.0f}s", style="bright_magenta")
+                )
+            except Exception:
+                break
+            idx += 1
+            time.sleep(0.15)
+
+    def _stop_live(self) -> None:
+        """Stop the live spinner."""
+        self._spin_thread_running = False
+        if self._live:
+            try:
+                self._live.stop()
+            except Exception:
+                pass
+            self._live = None
+
+    def on_thinking_end(self, elapsed_s: float) -> None:
+        self._stop_live()
+
+    def on_tool_start(self, tool_name: str, tool_input: dict) -> None:
+        self._stop_live()
+        # Show a compact preview of what's being called
+        preview = ""
+        if "command" in tool_input:
+            preview = f" `{tool_input['command'][:60]}`"
+        elif "repo" in tool_input:
+            preview = f" {tool_input['repo']}"
+        elif "namespace" in tool_input:
+            preview = f" ns={tool_input['namespace']}"
+        _console.print(f"  [cyan]▸[/] [dim]tool:[/] {tool_name}{preview}")
+        self._thinking_start = time.monotonic()
+
+    def on_tool_end(self, tool_name: str, elapsed_s: float, approved: bool) -> None:
+        if approved:
+            _console.print(f"  [green]✓[/] [dim]{tool_name}[/] [muted]({elapsed_s:.1f}s)[/]")
+        else:
+            _console.print(f"  [red]✗[/] [dim]{tool_name} denied[/]")
+
+    def on_synthesizing(self) -> None:
+        self._thinking_start = time.monotonic()
+        self._live = Live(
+            Text("  ● synthesizing response...", style="bright_magenta"),
+            console=_console,
+            refresh_per_second=4,
+            transient=True,
+        )
+        self._live.start()
+        self._spin_thread_running = True
+        import threading
+        self._spin_thread = threading.Thread(target=self._synth_spin_loop, daemon=True)
+        self._spin_thread.start()
+
+    def _synth_spin_loop(self) -> None:
+        idx = 0
+        while self._spin_thread_running and self._live:
+            elapsed = time.monotonic() - (self._thinking_start or time.monotonic())
+            frame = self._SPINNER_FRAMES[idx % len(self._SPINNER_FRAMES)]
+            try:
+                self._live.update(
+                    Text(f"  {frame} synthesizing response... {elapsed:.0f}s", style="bright_magenta")
+                )
+            except Exception:
+                break
+            idx += 1
+            time.sleep(0.15)
 
 
 def _extract_confirm_token(request: HumanRequest) -> str:

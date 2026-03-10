@@ -8,6 +8,7 @@ with Human MCP checks, and coordinates all components.
 import json
 import logging
 import re
+import time
 from dataclasses import replace
 from datetime import datetime
 
@@ -148,12 +149,15 @@ class Engine:
         messages = history + [{"role": "user", "content": message.text}]
 
         # Initial LLM call
+        adapter.on_thinking_start()
+        t0 = time.monotonic()
         response = self._llm.create_message(
             system=system,
             messages=messages,
             tools=tools if tools else None,
             max_tokens=self._llm_config.get("max_tokens", 4096),
         )
+        adapter.on_thinking_end(time.monotonic() - t0)
         messages.append({"role": "assistant", "content": response.content})
 
         logger.debug(
@@ -211,13 +215,18 @@ class Engine:
 
                     if approved:
                         logger.info("Executing tool: %s", prefixed_name)
+                        adapter.on_tool_start(prefixed_name, tool_input)
+                        t1 = time.monotonic()
                         result = self._router.route(prefixed_name, tool_input, skill_ctx)
+                        tool_elapsed = time.monotonic() - t1
+                        adapter.on_tool_end(prefixed_name, tool_elapsed, True)
                     else:
                         logger.info("Tool denied by human: %s", prefixed_name)
                         result = json.dumps({
                             "denied": True,
                             "reason": "Human denied this action",
                         })
+                        adapter.on_tool_end(prefixed_name, 0.0, False)
 
                     turn_tool_calls.append({
                         "tool": prefixed_name,
@@ -236,12 +245,15 @@ class Engine:
 
             messages.append({"role": "user", "content": tool_results})
 
+            adapter.on_synthesizing()
+            t2 = time.monotonic()
             response = self._llm.create_message(
                 system=system,
                 messages=messages,
                 tools=tools,
                 max_tokens=self._llm_config.get("max_tokens", 4096),
             )
+            adapter.on_thinking_end(time.monotonic() - t2)
             messages.append({"role": "assistant", "content": response.content})
 
         # Extract final text, strip any leaked history-format prefix

@@ -337,6 +337,7 @@ def test_run_cmd_creates_slack_http_adapter():
         "host": "0.0.0.0",
         "port": 3000,
         "allowed_channels": ["C123"],
+        "approval_timeout": 120,
     }
 
     with patch("slack_bolt.App", mock_app_cls, create=True):
@@ -349,7 +350,90 @@ def test_run_cmd_creates_slack_http_adapter():
     assert adapter._host == "0.0.0.0"
     assert adapter._port == 3000
     assert adapter._allowed_channels == {"C123"}
+    assert adapter._approval_timeout == 120
 
+
+def test_run_cmd_creates_slack_adapter_with_approval_timeout():
+    mock_app = _make_mock_app()
+    mock_app_cls = MagicMock(return_value=mock_app)
+    mock_handler_cls = MagicMock()
+
+    adapter_config = {
+        "bot_token": "xoxb-test",
+        "app_token": "xapp-test",
+        "approval_timeout": 60,
+    }
+
+    with patch("slack_bolt.App", mock_app_cls, create=True), \
+         patch("slack_bolt.adapter.socket_mode.SocketModeHandler", mock_handler_cls, create=True):
+        from mithai.cli.run_cmd import _create_adapter
+        from mithai.adapters.slack import SlackAdapter
+
+        adapter = _create_adapter({}, "slack", adapter_config=adapter_config)
+
+    assert isinstance(adapter, SlackAdapter)
+    assert adapter._approval_timeout == 60
+
+
+def test_run_cmd_slack_adapter_default_approval_timeout():
+    """Omitting approval_timeout from config uses the 300s default."""
+    mock_app = _make_mock_app()
+    mock_app_cls = MagicMock(return_value=mock_app)
+    mock_handler_cls = MagicMock()
+
+    adapter_config = {"bot_token": "xoxb-test", "app_token": "xapp-test"}
+
+    with patch("slack_bolt.App", mock_app_cls, create=True), \
+         patch("slack_bolt.adapter.socket_mode.SocketModeHandler", mock_handler_cls, create=True):
+        from mithai.cli.run_cmd import _create_adapter
+        adapter = _create_adapter({}, "slack", adapter_config=adapter_config)
+
+    assert adapter._approval_timeout == 300
+
+
+# ---------------------------------------------------------------------------
+# 10. thread_ts is thread-local — concurrent messages don't clobber each other
+# ---------------------------------------------------------------------------
+
+def test_thread_ts_is_per_thread():
+    """Two threads handling messages simultaneously must not share thread_ts."""
+    import threading
+
+    adapter, mock_app, _ = _build_http_adapter()
+
+    results = {}
+    barrier = threading.Barrier(2)
+
+    # Simulate two message handlers running concurrently
+    def thread_a():
+        adapter._local.thread_ts = "ts-A"
+        barrier.wait()  # both threads set their ts before either reads
+        results["a"] = getattr(adapter._local, "thread_ts", None)
+
+    def thread_b():
+        adapter._local.thread_ts = "ts-B"
+        barrier.wait()
+        results["b"] = getattr(adapter._local, "thread_ts", None)
+
+    t1 = threading.Thread(target=thread_a)
+    t2 = threading.Thread(target=thread_b)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+
+    # Each thread must see only its own ts
+    assert results["a"] == "ts-A"
+    assert results["b"] == "ts-B"
+
+
+def test_thread_ts_missing_on_new_thread_does_not_raise():
+    """request_human_approval must not raise AttributeError on a fresh thread."""
+    adapter, mock_app, _ = _build_http_adapter()
+    # _local.thread_ts is never set — getattr should return None safely
+    ts = getattr(adapter._local, "thread_ts", None)
+    assert ts is None
+
+
+# ---------------------------------------------------------------------------
 
 def test_run_cmd_unknown_adapter_raises():
     import click

@@ -225,6 +225,7 @@ class TestPerAgentAdapters:
                 bot_token="agent-tok",
                 app_token="agent-app",
                 allowed_channels=None,
+                approval_timeout=300,
             )
 
     def test_create_adapter_falls_back_to_global(self):
@@ -240,6 +241,7 @@ class TestPerAgentAdapters:
                 bot_token="global-tok",
                 app_token="global-app",
                 allowed_channels=None,
+                approval_timeout=300,
             )
 
     def test_create_adapter_cli_ignores_adapter_config(self):

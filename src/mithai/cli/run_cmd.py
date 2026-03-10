@@ -275,6 +275,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             bot_token=adapter_config["bot_token"],
             app_token=adapter_config["app_token"],
             allowed_channels=adapter_config.get("allowed_channels"),
+            approval_timeout=adapter_config.get("approval_timeout", 300),
         )
 
     elif adapter_type == "telegram":
@@ -292,6 +293,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             host=adapter_config.get("host", "0.0.0.0"),
             port=adapter_config.get("port", 3000),
             allowed_channels=adapter_config.get("allowed_channels"),
+            approval_timeout=adapter_config.get("approval_timeout", 300),
         )
 
     else:

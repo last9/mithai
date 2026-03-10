@@ -37,7 +37,9 @@ class SlackAdapterBase(Adapter):
         self._approval_timeout = approval_timeout
 
         self._formatter = SlackBlockFormatter()
-        self._current_thread_ts: str | None = None
+        # Per-thread storage for the current message ts — prevents concurrent
+        # messages from overwriting each other's thread context.
+        self._local = threading.local()
 
         # Bot's own user ID — resolved on start via auth.test
         self._bot_user_id: str | None = None
@@ -184,7 +186,7 @@ class SlackAdapterBase(Adapter):
             )
 
             ts = message.get("ts", "")
-            self._current_thread_ts = ts
+            self._local.thread_ts = ts
             self._react(channel, ts, "thinking_face")
             try:
                 response = on_message(incoming, self)
@@ -214,7 +216,7 @@ class SlackAdapterBase(Adapter):
             )
 
             ts = event.get("ts", "")
-            self._current_thread_ts = ts
+            self._local.thread_ts = ts
             self._react(channel, ts, "thinking_face")
             try:
                 response = on_message(incoming, self)
@@ -383,8 +385,9 @@ class SlackAdapterBase(Adapter):
                 "text": f"Approval required for {request.tool_name}",
                 "blocks": blocks,
             }
-            if self._current_thread_ts:
-                post_kwargs["thread_ts"] = self._current_thread_ts
+            current_thread_ts = getattr(self._local, "thread_ts", None)
+            if current_thread_ts:
+                post_kwargs["thread_ts"] = current_thread_ts
             self._app.client.chat_postMessage(**post_kwargs)
 
             logger.info(
@@ -402,8 +405,8 @@ class SlackAdapterBase(Adapter):
                     "channel": channel_id,
                     "text": f"Approval timed out for `{request.tool_name}` — auto-denied.",
                 }
-                if self._current_thread_ts:
-                    timeout_kwargs["thread_ts"] = self._current_thread_ts
+                if current_thread_ts:
+                    timeout_kwargs["thread_ts"] = current_thread_ts
                 self._app.client.chat_postMessage(**timeout_kwargs)
                 return False
 

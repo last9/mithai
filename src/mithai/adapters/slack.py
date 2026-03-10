@@ -234,42 +234,6 @@ class SlackAdapter(Adapter):
                 if intro:
                     self._send_formatted(say, intro, thread_ts=None)
 
-    def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None) -> None:
-        import re
-
-        # Resolve the bot's own user ID so we can detect self-join events
-        try:
-            auth = self._app.client.auth_test()
-            self._bot_user_id = auth["user_id"]
-            logger.info("Bot user ID: %s", self._bot_user_id)
-        except Exception:
-            logger.warning("Could not resolve bot user ID", exc_info=True)
-
-        if on_channel_join:
-            @self._app.event("member_joined_channel")
-            def handle_member_joined(event, say):
-                # Only act when the bot itself joins
-                if event.get("user") != self._bot_user_id:
-                    return
-
-                channel_id = event.get("channel", "")
-                if self._allowed_channels and channel_id not in self._allowed_channels:
-                    return
-
-                # Resolve channel name
-                try:
-                    info = self._app.client.conversations_info(channel=channel_id)
-                    channel_name = info["channel"].get("name", channel_id)
-                except Exception:
-                    channel_name = channel_id
-
-                logger.info("Bot joined channel #%s (%s) — running onboarding", channel_name, channel_id)
-
-                intro = on_channel_join(channel_id, channel_name)
-                if intro:
-                    for chunk in self._formatter.format(intro):
-                        say(text=chunk)
-
         @self._app.message("")
         def handle_message(message, say):
             channel = message.get("channel", "")

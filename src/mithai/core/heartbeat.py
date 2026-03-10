@@ -55,13 +55,11 @@ class HeartbeatScheduler:
          and runs it through `engine.handle()`.
     """
 
-    def __init__(self, engine, memory, interval: int = _DEFAULT_INTERVAL, auto_approve: list[str] | None = None,
-                 channels: list[str] | None = None):
+    def __init__(self, engine, memory, interval: int = _DEFAULT_INTERVAL, auto_approve: list[str] | None = None):
         self._engine = engine
         self._memory = memory
         self._interval = interval
         self._auto_approve = auto_approve if auto_approve is not None else _DEFAULT_AUTO_APPROVE
-        self._channels = channels or []
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -92,14 +90,16 @@ class HeartbeatScheduler:
             logger.debug("Heartbeat tick: %s absent or empty, skipping", _HEARTBEAT_FILE)
             return
 
-        # Prepend recent channel activity for configured channels
+        # Prepend recent channel activity from all channel_context/ files
         context_parts = []
-        for channel_id in self._channels:
-            content = self._memory.read(f"channel_context/{channel_id}.md")
-            if content and content.strip():
-                context_parts.append(
-                    f"Recent channel activity in {channel_id} since last tick:\n{content.strip()}"
-                )
+        for path in self._memory.list_files("channel_context", glob="*.md"):
+            content = self._memory.read(path)
+            if not content or not content.strip():
+                continue
+            channel_id = path.removeprefix("channel_context/").removesuffix(".md")
+            context_parts.append(
+                f"Recent channel activity in {channel_id} since last tick:\n{content.strip()}"
+            )
 
         if context_parts:
             full_text = "\n\n---\n\n".join(context_parts) + "\n\n---\n\n" + instructions.strip()
@@ -123,11 +123,10 @@ class HeartbeatScheduler:
 
         # Truncate channel context files after injection — keep last 50 lines as a buffer
         # so the file always contains activity since the last tick, not unbounded history.
-        for channel_id in self._channels:
-            self._truncate_channel_context(channel_id)
+        for path in self._memory.list_files("channel_context", glob="*.md"):
+            self._truncate_channel_context(path)
 
-    def _truncate_channel_context(self, channel_id: str, keep_lines: int = 50) -> None:
-        path = f"channel_context/{channel_id}.md"
+    def _truncate_channel_context(self, path: str, keep_lines: int = 50) -> None:
         content = self._memory.read(path)
         if not content:
             return

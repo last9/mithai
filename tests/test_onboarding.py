@@ -1,11 +1,6 @@
 """Tests for Slack channel onboarding."""
 
-import re
 from unittest.mock import MagicMock, patch
-
-import pytest
-
-from mithai.adapters.base import IncomingMessage
 from mithai.core.config import get_agent_config
 from mithai.memory.filesystem import FilesystemMemoryBackend
 

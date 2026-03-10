@@ -41,7 +41,7 @@ class SlackHTTPAdapter(SlackAdapterBase):
             from starlette.routing import Route
         except ImportError:
             raise ImportError(
-                "SlackHTTPAdapter requires uvicorn and starlette. "
+                "SlackHTTPAdapter requires uvicorn, starlette, and slack-bolt[starlette]. "
                 "Install with: pip install mithai[slack]"
             )
 

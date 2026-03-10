@@ -65,9 +65,9 @@ def _run_single_agent(config: dict, adapter_override: str | None):
 
     # Wire Slack adapter's history-fetch function into the engine for onboarding
     for name, adapter in adapters:
-        if name == "slack":
-            from mithai.adapters.slack import SlackAdapter
-            if isinstance(adapter, SlackAdapter):
+        if name in ("slack", "slack_http"):
+            from mithai.adapters.slack import SlackAdapterBase
+            if isinstance(adapter, SlackAdapterBase):
                 engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
 
     # Show startup info
@@ -89,7 +89,7 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         name, adapter = adapters[0]
         ok(f"Starting with [bright_cyan]{name}[/] adapter")
         console.print()
-        on_join = engine.handle_channel_join if name == "slack" else None
+        on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
         try:
             adapter.start(on_message=engine.handle, on_channel_join=on_join)
         except KeyboardInterrupt:
@@ -102,7 +102,7 @@ def _run_single_agent(config: dict, adapter_override: str | None):
 
         threads = []
         for name, adapter in adapters:
-            on_join = engine.handle_channel_join if name == "slack" else None
+            on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
             t = threading.Thread(
                 target=_run_adapter,
                 args=(name, adapter, engine.handle, on_join),
@@ -145,9 +145,9 @@ def _run_multi_agent(config: dict, agents_config: dict):
 
     # Wire history-fetch and channel-join callbacks for Slack adapters
     for agent_id, adapter_type, adapter, engine in all_adapters:
-        if adapter_type == "slack":
-            from mithai.adapters.slack import SlackAdapter
-            if isinstance(adapter, SlackAdapter):
+        if adapter_type in ("slack", "slack_http"):
+            from mithai.adapters.slack import SlackAdapterBase
+            if isinstance(adapter, SlackAdapterBase):
                 engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
 
     # Show startup info
@@ -168,7 +168,7 @@ def _run_multi_agent(config: dict, agents_config: dict):
     for agent_id, adapter_type, adapter, engine in all_adapters:
         label = f"{agent_id}/{adapter_type}"
         info(f"Starting [bright_cyan]{label}[/]")
-        on_join = engine.handle_channel_join if adapter_type == "slack" else None
+        on_join = engine.handle_channel_join if adapter_type in ("slack", "slack_http") else None
         t = threading.Thread(
             target=_run_adapter,
             args=(label, adapter, engine.handle, on_join),
@@ -282,6 +282,16 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
         return TelegramAdapter(
             bot_token=adapter_config["bot_token"],
             allowed_chat_ids=adapter_config.get("allowed_chat_ids"),
+        )
+
+    elif adapter_type == "slack_http":
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        return SlackHTTPAdapter(
+            bot_token=adapter_config["bot_token"],
+            signing_secret=adapter_config["signing_secret"],
+            host=adapter_config.get("host", "0.0.0.0"),
+            port=adapter_config.get("port", 3000),
+            allowed_channels=adapter_config.get("allowed_channels"),
         )
 
     else:

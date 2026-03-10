@@ -1,4 +1,4 @@
-"""Slack adapter using Socket Mode."""
+"""Slack adapters: SlackAdapterBase (shared logic), SlackAdapter (Socket Mode)."""
 
 import json
 import logging
@@ -11,25 +11,27 @@ from mithai.human.mcp import HumanRequest
 logger = logging.getLogger(__name__)
 
 
-class SlackAdapter(Adapter):
+class SlackAdapterBase(Adapter):
     """
-    Slack adapter using the Bolt SDK with Socket Mode.
+    Base class with all shared Slack logic.
 
-    Requires slack-bolt: pip install mithai[slack]
+    Subclasses provide transport (Socket Mode vs HTTP) via start()/stop().
     """
 
-    def __init__(self, bot_token: str, app_token: str, allowed_channels: list[str] | None = None,
-                 approval_timeout: int = 300):
+    def __init__(self, bot_token: str, allowed_channels: list[str] | None = None,
+                 approval_timeout: int = 300, signing_secret: str | None = None):
         try:
             from slack_bolt import App
-            from slack_bolt.adapter.socket_mode import SocketModeHandler
         except ImportError:
             raise ImportError(
                 "Slack adapter requires slack-bolt. Install with: pip install mithai[slack]"
             )
 
-        self._app = App(token=bot_token)
-        self._handler = SocketModeHandler(self._app, app_token)
+        app_kwargs: dict = {"token": bot_token}
+        if signing_secret:
+            app_kwargs["signing_secret"] = signing_secret
+        self._app = App(**app_kwargs)
+
         self._allowed_channels = set(allowed_channels) if allowed_channels else None
         self._bot_token = bot_token
         self._approval_timeout = approval_timeout
@@ -113,97 +115,13 @@ class SlackAdapter(Adapter):
                 ],
             )
 
-    def _resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
-        """Return a map of user_id -> display_name for the given set of IDs."""
-        result = {}
-        for uid in user_ids:
-            try:
-                resp = self._app.client.users_info(user=uid)
-                profile = resp["user"].get("profile", {})
-                name = (
-                    profile.get("display_name")
-                    or profile.get("real_name")
-                    or resp["user"].get("name")
-                    or uid
-                )
-                result[uid] = name
-            except Exception:
-                result[uid] = uid
-        return result
-
-    def _fetch_channel_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
+    def _register_message_handlers(self, on_message: MessageHandler,
+                                    on_channel_join: ChannelJoinHandler | None = None):
         """
-        Fetch recent messages from a channel.
+        Resolve bot user ID and register all message/event handlers.
 
-        Returns (formatted_messages, user_id_to_name_map).
-        User IDs in messages are replaced with real display names.
+        Called by subclass start() before launching the transport.
         """
-        import re
-
-        try:
-            resp = self._app.client.conversations_history(channel=channel_id, limit=limit)
-        except Exception:
-            logger.warning("Failed to fetch history for channel %s", channel_id, exc_info=True)
-            return [], {}
-
-        if not resp.get("ok"):
-            logger.warning("conversations_history error for %s: %s", channel_id, resp.get("error"))
-            return [], {}
-        raw_messages = resp.get("messages", [])
-
-        all_user_ids: set[str] = set()
-        for msg in raw_messages:
-            if uid := msg.get("user"):
-                all_user_ids.add(uid)
-            for mentioned in re.findall(r"<@([A-Z0-9]+)>", msg.get("text", "")):
-                all_user_ids.add(mentioned)
-
-        user_map = self._resolve_user_ids(all_user_ids)
-
-        def _replace_mentions(text: str) -> str:
-            return re.sub(
-                r"<@([A-Z0-9]+)>",
-                lambda m: f"@{user_map.get(m.group(1), m.group(1))}",
-                text,
-            )
-
-        formatted = []
-        for msg in reversed(raw_messages):  # oldest first
-            uid = msg.get("user", "unknown")
-            name = user_map.get(uid, uid)
-            text = _replace_mentions(msg.get("text", "")).strip()
-            if text:
-                formatted.append(f"{name}: {text}")
-
-        return formatted, user_map
-
-    def _send_formatted(self, say, response: str, thread_ts: str | None) -> None:
-        """Format a response and send via say(), using Block Kit when available."""
-        for chunk in self._formatter.format(response):
-            try:
-                blocks = json.loads(chunk)
-                if isinstance(blocks, list) and blocks:
-                    say(blocks=blocks, text=_blocks_fallback(blocks), thread_ts=thread_ts)
-                    continue
-            except (json.JSONDecodeError, TypeError):
-                pass
-            say(text=chunk, thread_ts=thread_ts)
-
-    def _react(self, channel: str, ts: str, emoji: str) -> None:
-        """Add a reaction emoji to a message, ignoring errors (e.g. missing scope)."""
-        try:
-            self._app.client.reactions_add(channel=channel, timestamp=ts, name=emoji)
-        except Exception:
-            pass
-
-    def _unreact(self, channel: str, ts: str, emoji: str) -> None:
-        """Remove a reaction emoji from a message, ignoring errors."""
-        try:
-            self._app.client.reactions_remove(channel=channel, timestamp=ts, name=emoji)
-        except Exception:
-            pass
-
-    def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None) -> None:
         import re
 
         # Resolve the bot's own user ID so we can detect self-join events
@@ -310,11 +228,95 @@ class SlackAdapter(Adapter):
             # bot_message, etc.) that @app.message("") does not match.
             pass
 
-        logger.info("Starting Slack adapter (Socket Mode)")
-        self._handler.start()
+    def _resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
+        """Return a map of user_id -> display_name for the given set of IDs."""
+        result = {}
+        for uid in user_ids:
+            try:
+                resp = self._app.client.users_info(user=uid)
+                profile = resp["user"].get("profile", {})
+                name = (
+                    profile.get("display_name")
+                    or profile.get("real_name")
+                    or resp["user"].get("name")
+                    or uid
+                )
+                result[uid] = name
+            except Exception:
+                result[uid] = uid
+        return result
 
-    def stop(self) -> None:
-        self._handler.close()
+    def _fetch_channel_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
+        """
+        Fetch recent messages from a channel.
+
+        Returns (formatted_messages, user_id_to_name_map).
+        User IDs in messages are replaced with real display names.
+        """
+        import re
+
+        try:
+            resp = self._app.client.conversations_history(channel=channel_id, limit=limit)
+        except Exception:
+            logger.warning("Failed to fetch history for channel %s", channel_id, exc_info=True)
+            return [], {}
+
+        if not resp.get("ok"):
+            logger.warning("conversations_history error for %s: %s", channel_id, resp.get("error"))
+            return [], {}
+        raw_messages = resp.get("messages", [])
+
+        all_user_ids: set[str] = set()
+        for msg in raw_messages:
+            if uid := msg.get("user"):
+                all_user_ids.add(uid)
+            for mentioned in re.findall(r"<@([A-Z0-9]+)>", msg.get("text", "")):
+                all_user_ids.add(mentioned)
+
+        user_map = self._resolve_user_ids(all_user_ids)
+
+        def _replace_mentions(text: str) -> str:
+            return re.sub(
+                r"<@([A-Z0-9]+)>",
+                lambda m: f"@{user_map.get(m.group(1), m.group(1))}",
+                text,
+            )
+
+        formatted = []
+        for msg in reversed(raw_messages):  # oldest first
+            uid = msg.get("user", "unknown")
+            name = user_map.get(uid, uid)
+            text = _replace_mentions(msg.get("text", "")).strip()
+            if text:
+                formatted.append(f"{name}: {text}")
+
+        return formatted, user_map
+
+    def _send_formatted(self, say, response: str, thread_ts: str | None) -> None:
+        """Format a response and send via say(), using Block Kit when available."""
+        for chunk in self._formatter.format(response):
+            try:
+                blocks = json.loads(chunk)
+                if isinstance(blocks, list) and blocks:
+                    say(blocks=blocks, text=_blocks_fallback(blocks), thread_ts=thread_ts)
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                pass
+            say(text=chunk, thread_ts=thread_ts)
+
+    def _react(self, channel: str, ts: str, emoji: str) -> None:
+        """Add a reaction emoji to a message, ignoring errors (e.g. missing scope)."""
+        try:
+            self._app.client.reactions_add(channel=channel, timestamp=ts, name=emoji)
+        except Exception:
+            pass
+
+    def _unreact(self, channel: str, ts: str, emoji: str) -> None:
+        """Remove a reaction emoji from a message, ignoring errors."""
+        try:
+            self._app.client.reactions_remove(channel=channel, timestamp=ts, name=emoji)
+        except Exception:
+            pass
 
     def send(self, message: OutgoingMessage) -> None:
         for chunk in self._formatter.format(message.text):
@@ -409,3 +411,31 @@ class SlackAdapter(Adapter):
 
         finally:
             self._pending_approvals.pop(request.request_id, None)
+
+
+class SlackAdapter(SlackAdapterBase):
+    """
+    Slack adapter using the Bolt SDK with Socket Mode.
+
+    Requires slack-bolt: pip install mithai[slack]
+    """
+
+    def __init__(self, bot_token: str, app_token: str, allowed_channels: list[str] | None = None,
+                 approval_timeout: int = 300):
+        try:
+            from slack_bolt.adapter.socket_mode import SocketModeHandler
+        except ImportError:
+            raise ImportError(
+                "Slack adapter requires slack-bolt. Install with: pip install mithai[slack]"
+            )
+
+        super().__init__(bot_token, allowed_channels, approval_timeout)
+        self._handler = SocketModeHandler(self._app, app_token)
+
+    def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None) -> None:
+        self._register_message_handlers(on_message, on_channel_join)
+        logger.info("Starting Slack adapter (Socket Mode)")
+        self._handler.start()
+
+    def stop(self) -> None:
+        self._handler.close()

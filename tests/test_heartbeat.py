@@ -1,8 +1,7 @@
 """Tests for HeartbeatScheduler."""
 
-import threading
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from mithai.core.heartbeat import HeartbeatScheduler, _HeartbeatAdapter
 from mithai.adapters.base import IncomingMessage

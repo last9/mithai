@@ -1,6 +1,5 @@
 """Tests for respond: mentions / respond: all listen mode."""
 
-import sys
 from unittest.mock import MagicMock, patch
 
 
@@ -230,8 +229,6 @@ def test_run_cmd_on_observe_passed_when_mentions_mode():
     on_observe_fn = MagicMock()
     start_calls = {}
 
-    original_register = adapter._register_message_handlers
-
     def capture_register(on_message, on_channel_join=None, on_observe=None):
         start_calls["on_observe"] = on_observe
 
@@ -268,12 +265,10 @@ def test_run_cmd_on_observe_none_when_all_mode():
 
     # start() calls _register_message_handlers; intercept before uvicorn runs
     # by monkey-patching the import inside start()
-    import types
 
     def fake_start(on_message, on_channel_join=None, on_observe=None):
         adapter._register_message_handlers(on_message, on_channel_join, on_observe)
 
-    original_start = adapter.start
     adapter.start = fake_start
     adapter.start(on_message=MagicMock(), on_observe=None)
 

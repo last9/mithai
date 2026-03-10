@@ -142,10 +142,14 @@ class SlackAdapter(Adapter):
 
         try:
             resp = self._app.client.conversations_history(channel=channel_id, limit=limit)
-            raw_messages = resp.get("messages", [])
         except Exception:
             logger.warning("Failed to fetch history for channel %s", channel_id, exc_info=True)
             return [], {}
+
+        if not resp.get("ok"):
+            logger.warning("conversations_history error for %s: %s", channel_id, resp.get("error"))
+            return [], {}
+        raw_messages = resp.get("messages", [])
 
         all_user_ids: set[str] = set()
         for msg in raw_messages:
@@ -228,11 +232,17 @@ class SlackAdapter(Adapter):
                 except Exception:
                     channel_name = channel_id
 
-                logger.info("Bot joined channel #%s (%s) — running onboarding", channel_name, channel_id)
+                logger.info("Bot joined channel #%s (%s) — running onboarding in background", channel_name, channel_id)
 
-                intro = on_channel_join(channel_id, channel_name)
-                if intro:
-                    self._send_formatted(say, intro, thread_ts=None)
+                def _run():
+                    try:
+                        intro = on_channel_join(channel_id, channel_name)
+                        if intro:
+                            self._send_formatted(say, intro, thread_ts=None)
+                    except Exception:
+                        logger.exception("Onboarding failed for #%s", channel_name)
+
+                threading.Thread(target=_run, daemon=True).start()
 
         @self._app.message("")
         def handle_message(message, say):

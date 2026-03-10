@@ -273,3 +273,83 @@ def test_run_cmd_on_observe_none_when_all_mode():
     adapter.start(on_message=MagicMock(), on_observe=None)
 
     assert start_calls["on_observe"] is None
+
+
+# ---------------------------------------------------------------------------
+# 10. Thread session continuity — thread_id must equal ts on first message
+#     so replies (thread_ts = that ts) land in the same session.
+# ---------------------------------------------------------------------------
+
+def _capture_app_mention_handler(adapter, mock_app, on_message):
+    """Register handlers and return the captured app_mention handler."""
+    captured = {}
+
+    def capture_event(name):
+        def decorator(fn):
+            captured[name] = fn
+            return fn
+        return decorator
+
+    mock_app.event.side_effect = capture_event
+    adapter._register_message_handlers(on_message)
+    return captured.get("app_mention")
+
+
+def test_handle_message_thread_id_equals_ts_when_no_thread_ts():
+    """First message in a channel has no thread_ts.
+    thread_id must be set to ts so that the reply (thread_ts=ts) hits the same session."""
+    adapter, mock_app = _build_adapter(respond="all")
+    captured_incoming = {}
+
+    def on_message(incoming, adapter):
+        captured_incoming["msg"] = incoming
+        return "ok"
+
+    handle_message = _capture_message_handler(adapter, mock_app, on_message)
+
+    fake_message = {"channel": "C1", "text": "hello", "ts": "111.000", "user": "U1"}
+    handle_message(message=fake_message, say=MagicMock())
+
+    msg = captured_incoming["msg"]
+    assert msg.thread_id == "111.000", (
+        f"thread_id should equal ts ('111.000') so replies land in the same session, got {msg.thread_id!r}"
+    )
+
+
+def test_handle_message_thread_id_equals_thread_ts_for_reply():
+    """A reply carries thread_ts; thread_id must equal thread_ts."""
+    adapter, mock_app = _build_adapter(respond="all")
+    captured_incoming = {}
+
+    def on_message(incoming, adapter):
+        captured_incoming["msg"] = incoming
+        return "ok"
+
+    handle_message = _capture_message_handler(adapter, mock_app, on_message)
+
+    reply = {"channel": "C1", "text": "reply", "ts": "222.000", "thread_ts": "111.000", "user": "U1"}
+    handle_message(message=reply, say=MagicMock())
+
+    msg = captured_incoming["msg"]
+    assert msg.thread_id == "111.000"
+
+
+def test_handle_app_mention_thread_id_equals_ts_when_no_thread_ts():
+    """First @mention in a channel has no thread_ts.
+    thread_id must be set to ts so replies hit the same session."""
+    adapter, mock_app = _build_adapter(respond="all")
+    captured_incoming = {}
+
+    def on_message(incoming, adapter):
+        captured_incoming["msg"] = incoming
+        return "ok"
+
+    handle_app_mention = _capture_app_mention_handler(adapter, mock_app, on_message)
+
+    fake_event = {"channel": "C1", "text": "<@UBOT> hello", "ts": "111.000", "user": "U1"}
+    handle_app_mention(event=fake_event, say=MagicMock())
+
+    msg = captured_incoming["msg"]
+    assert msg.thread_id == "111.000", (
+        f"thread_id should equal ts ('111.000') so replies land in the same session, got {msg.thread_id!r}"
+    )

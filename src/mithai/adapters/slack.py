@@ -187,7 +187,7 @@ class SlackAdapterBase(Adapter):
                 user_id=message.get("user", "unknown"),
                 platform="slack",
                 message_id=message.get("ts", ""),
-                thread_id=message.get("thread_ts"),
+                thread_id=message.get("thread_ts") or message.get("ts", ""),
             )
 
             if self._respond == "mentions":
@@ -222,7 +222,7 @@ class SlackAdapterBase(Adapter):
                 user_id=event.get("user", "unknown"),
                 platform="slack",
                 message_id=event.get("ts", ""),
-                thread_id=event.get("thread_ts"),
+                thread_id=event.get("thread_ts") or event.get("ts", ""),
             )
 
             ts = event.get("ts", "")

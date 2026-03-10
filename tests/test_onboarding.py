@@ -200,14 +200,138 @@ class TestHandleChannelJoin:
         assert not any(k == "CXYZ" for k in session_keys)
 
     def test_no_approval_required(self):
-        """_NoOpAdapter auto-approves — onboarding must not block on human approval."""
+        """Smoke test: onboarding completes without hanging when no tools are called."""
         config = _base_config(onboarding={"enabled": True, "history_scan": False})
         engine = _make_engine(config)
-
-        # Should return without blocking even if tools are called
         result = engine.handle_channel_join("C300", "infra")
-        # Returns a string (whatever the LLM says)
         assert result is not None
+
+    def test_noop_adapter_denies_non_memory_tools(self):
+        """_NoOpAdapter must deny non-memory tools (e.g. shell) during onboarding.
+
+        This is the critical security fix: if the shell skill is loaded, the LLM
+        calling shell__run must be denied — the tool handler must never execute.
+        """
+        from mithai.core.engine import Engine
+        from mithai.core.skill_loader import Skill, ToolDefinition
+        from mithai.state.memory import MemoryStateBackend
+        from pathlib import Path
+
+        shell_handle = MagicMock(return_value="executed")
+        shell_skill = Skill(
+            name="shell",
+            prompt="run shell commands",
+            tools=[ToolDefinition(
+                name="run",
+                description="run a command",
+                input_schema={"type": "object", "properties": {"command": {"type": "string"}}},
+                human="approve",
+            )],
+            handle=shell_handle,
+            source_dir=Path("/fake"),
+        )
+
+        llm = MagicMock()
+        # LLM attempts to call shell__run
+        resp1 = MagicMock()
+        resp1.content = [{"type": "tool_use", "id": "t1", "name": "shell__run", "input": {"command": "rm -rf /"}}]
+        resp1.stop_reason = "tool_use"
+        # After the denial result, LLM ends turn
+        resp2 = MagicMock()
+        resp2.content = [{"type": "text", "text": "Understood, I cannot run that."}]
+        resp2.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2]
+
+        config = _base_config(onboarding={"enabled": True, "history_scan": False})
+        engine = Engine(
+            config=config, llm=llm, state=MemoryStateBackend(), memory=None,
+            skills={"shell": shell_skill},
+        )
+
+        engine.handle_channel_join("C400", "security-test")
+
+        # The actual shell handler must never have been invoked
+        shell_handle.assert_not_called()
+
+    def test_noop_adapter_approves_memory_tools(self):
+        """_NoOpAdapter must approve memory__ tools during onboarding.
+
+        Onboarding's primary job is to save channel context to memory —
+        memory tools must be allowed through without blocking.
+        """
+        from mithai.core.engine import Engine
+        from mithai.core.skill_loader import Skill, ToolDefinition
+        from mithai.state.memory import MemoryStateBackend
+        from pathlib import Path
+
+        memory_handle = MagicMock(return_value="saved")
+        memory_skill = Skill(
+            name="memory",
+            prompt="store and retrieve memory",
+            tools=[ToolDefinition(
+                name="write",
+                description="write a memory entry",
+                input_schema={"type": "object", "properties": {"key": {"type": "string"}, "value": {"type": "string"}}},
+                human="approve",
+            )],
+            handle=memory_handle,
+            source_dir=Path("/fake"),
+        )
+
+        llm = MagicMock()
+        # LLM calls memory__write
+        resp1 = MagicMock()
+        resp1.content = [{"type": "tool_use", "id": "t1", "name": "memory__write", "input": {"key": "channel_context", "value": "ops channel"}}]
+        resp1.stop_reason = "tool_use"
+        # After the tool result, LLM produces intro text
+        resp2 = MagicMock()
+        resp2.content = [{"type": "text", "text": "Hi team, I've saved context about this channel."}]
+        resp2.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2]
+
+        config = _base_config(onboarding={"enabled": True, "history_scan": False})
+        engine = Engine(
+            config=config, llm=llm, state=MemoryStateBackend(), memory=None,
+            skills={"memory": memory_skill},
+        )
+
+        engine.handle_channel_join("C401", "teamchat")
+
+        # memory__write must have been executed (approved by _NoOpAdapter)
+        memory_handle.assert_called_once()
+
+    def test_stale_session_cleared_on_rejoin(self):
+        """Re-joining a channel clears the previous onboarding session before running."""
+        config = _base_config(onboarding={"enabled": True, "history_scan": False})
+        from mithai.state.memory import MemoryStateBackend
+        from mithai.core.engine import Engine
+        from mithai.core.session import SessionManager
+
+        state = MemoryStateBackend()
+        llm = MagicMock()
+        resp = MagicMock()
+        resp.content = [{"type": "text", "text": "Hi again!"}]
+        resp.stop_reason = "end_turn"
+        llm.create_message.return_value = resp
+
+        engine = Engine(config=config, llm=llm, state=state, memory=None, skills={})
+
+        # First join — creates a session
+        engine.handle_channel_join("CREJOIN", "ops")
+        session_key = SessionManager.session_key("slack", "onboard:CREJOIN")
+        assert state.get("sessions", session_key) is not None
+
+        # Second join — session should be cleared and re-created fresh
+        llm.create_message.reset_mock()
+        engine.handle_channel_join("CREJOIN", "ops")
+
+        # LLM was called again (not skipped)
+        assert llm.create_message.called
+        # Fresh session exists
+        new_session = state.get("sessions", session_key)
+        assert new_session is not None
+        # Only 1 turn — from the second join (old turns were cleared before it ran)
+        assert len(new_session["turns"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +465,7 @@ class TestFetchChannelHistory:
             return adapter
 
     def _mock_history(self, adapter, messages: list[dict]):
-        adapter._app.client.conversations_history.return_value = {"messages": messages}
+        adapter._app.client.conversations_history.return_value = {"ok": True, "messages": messages}
 
     def _mock_users(self, adapter, user_map: dict):
         def _info(user):
@@ -384,6 +508,16 @@ class TestFetchChannelHistory:
     def test_empty_on_api_error(self):
         adapter = self._make_adapter()
         adapter._app.client.conversations_history.side_effect = Exception("fail")
+        msgs, user_map = adapter._fetch_channel_history("C1", 10)
+        assert msgs == []
+        assert user_map == {}
+
+    def test_empty_on_ok_false(self):
+        adapter = self._make_adapter()
+        adapter._app.client.conversations_history.return_value = {
+            "ok": False,
+            "error": "not_in_channel",
+        }
         msgs, user_map = adapter._fetch_channel_history("C1", 10)
         assert msgs == []
         assert user_map == {}

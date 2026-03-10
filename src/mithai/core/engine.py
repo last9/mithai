@@ -283,6 +283,11 @@ class Engine:
         if not onboarding_config.get("enabled", False):
             return None
 
+        # Clear any stale session from a previous join so old history doesn't
+        # contaminate the new onboarding LLM call.
+        session_key = SessionManager.session_key("slack", f"onboard:{channel_id}", agent_id=self._agent_id)
+        self._sessions.delete(session_key)
+
         history_lines: list[str] = []
         user_map: dict[str, str] = {}
 
@@ -327,9 +332,10 @@ class Engine:
         )
 
         class _NoOpAdapter:
-            """Minimal adapter stub for the onboarding engine call (no approvals needed)."""
+            """Minimal adapter stub for onboarding — approves only memory tools."""
             def request_human_approval(self, request, channel_id):
-                return True
+                tool_name = getattr(request, "tool_name", "") or ""
+                return tool_name.startswith("memory__")
 
         return self.handle(fake_message, _NoOpAdapter())
 

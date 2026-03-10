@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 
-from mithai.adapters.base import Adapter, ChannelJoinHandler, IncomingMessage, MessageHandler, OutgoingMessage
+from mithai.adapters.base import Adapter, ChannelJoinHandler, ChannelObserveHandler, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
 from mithai.human.mcp import HumanRequest
 
@@ -19,7 +19,8 @@ class SlackAdapterBase(Adapter):
     """
 
     def __init__(self, bot_token: str, allowed_channels: list[str] | None = None,
-                 approval_timeout: int = 300, signing_secret: str | None = None):
+                 approval_timeout: int = 300, signing_secret: str | None = None,
+                 respond: str = "all"):
         try:
             from slack_bolt import App
         except ImportError:
@@ -36,6 +37,7 @@ class SlackAdapterBase(Adapter):
         self._bot_token = bot_token
         self._approval_timeout = approval_timeout
 
+        self._respond = respond
         self._formatter = SlackBlockFormatter()
         # Per-thread storage for the current message ts — prevents concurrent
         # messages from overwriting each other's thread context.
@@ -118,7 +120,8 @@ class SlackAdapterBase(Adapter):
             )
 
     def _register_message_handlers(self, on_message: MessageHandler,
-                                    on_channel_join: ChannelJoinHandler | None = None):
+                                    on_channel_join: ChannelJoinHandler | None = None,
+                                    on_observe: ChannelObserveHandler | None = None):
         """
         Resolve bot user ID and register all message/event handlers.
 
@@ -184,6 +187,11 @@ class SlackAdapterBase(Adapter):
                 message_id=message.get("ts", ""),
                 thread_id=message.get("thread_ts"),
             )
+
+            if self._respond == "mentions":
+                if on_observe:
+                    on_observe(incoming)
+                return
 
             ts = message.get("ts", "")
             self._local.thread_ts = ts
@@ -424,7 +432,7 @@ class SlackAdapter(SlackAdapterBase):
     """
 
     def __init__(self, bot_token: str, app_token: str, allowed_channels: list[str] | None = None,
-                 approval_timeout: int = 300):
+                 approval_timeout: int = 300, respond: str = "all"):
         try:
             from slack_bolt.adapter.socket_mode import SocketModeHandler
         except ImportError:
@@ -432,11 +440,12 @@ class SlackAdapter(SlackAdapterBase):
                 "Slack adapter requires slack-bolt. Install with: pip install mithai[slack]"
             )
 
-        super().__init__(bot_token, allowed_channels, approval_timeout)
+        super().__init__(bot_token, allowed_channels, approval_timeout, respond=respond)
         self._handler = SocketModeHandler(self._app, app_token)
 
-    def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None) -> None:
-        self._register_message_handlers(on_message, on_channel_join)
+    def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None,
+              on_observe: ChannelObserveHandler | None = None) -> None:
+        self._register_message_handlers(on_message, on_channel_join, on_observe)
         logger.info("Starting Slack adapter (Socket Mode)")
         self._handler.start()
 

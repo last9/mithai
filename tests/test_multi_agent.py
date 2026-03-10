@@ -226,6 +226,7 @@ class TestPerAgentAdapters:
                 app_token="agent-app",
                 allowed_channels=None,
                 approval_timeout=300,
+                respond="all",
             )
 
     def test_create_adapter_falls_back_to_global(self):
@@ -242,6 +243,7 @@ class TestPerAgentAdapters:
                 app_token="global-app",
                 allowed_channels=None,
                 approval_timeout=300,
+                respond="all",
             )
 
     def test_create_adapter_cli_ignores_adapter_config(self):
@@ -279,7 +281,7 @@ class TestPerAgentAdapters:
         mock_support_adapter = MagicMock()
         adapters_created = []
 
-        def fake_create_adapter(cfg, atype, adapter_config=None):
+        def fake_create_adapter(cfg, atype, adapter_config=None, respond="all"):
             if adapter_config and adapter_config.get("bot_token") == "dev-tok":
                 adapters_created.append(("devops", mock_devops_adapter))
                 return mock_devops_adapter

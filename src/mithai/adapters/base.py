@@ -75,3 +75,21 @@ class Adapter(ABC):
         Returns True if approved, False if denied or timed out.
         """
         ...
+
+    # ── Optional status callbacks (no-op by default) ──
+    # Engine calls these to let the adapter show progress feedback.
+
+    def on_thinking_start(self) -> None:
+        """Called before an LLM call starts."""
+
+    def on_thinking_end(self, elapsed_s: float) -> None:
+        """Called when an LLM call completes."""
+
+    def on_tool_start(self, tool_name: str, tool_input: dict) -> None:
+        """Called before a tool is executed."""
+
+    def on_tool_end(self, tool_name: str, elapsed_s: float, approved: bool) -> None:
+        """Called after a tool finishes executing."""
+
+    def on_synthesizing(self) -> None:
+        """Called before the follow-up LLM call after tool results."""

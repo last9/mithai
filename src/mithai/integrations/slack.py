@@ -1,0 +1,92 @@
+"""SlackClient — low-level Slack Web API access for integrations and skills."""
+
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+
+
+class SlackClient:
+    """Thin wrapper around slack_sdk.WebClient for Slack API calls.
+
+    Used by both SlackAdapterBase (internally) and skills (via adapter.slack_client).
+    """
+
+    def __init__(self, bot_token: str):
+        from slack_sdk import WebClient
+        self._client = WebClient(token=bot_token)
+
+    def get_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
+        """
+        Fetch recent messages from a channel.
+
+        Returns (formatted_messages, user_id_to_name_map).
+        User IDs in messages are replaced with real display names.
+        """
+        try:
+            resp = self._client.conversations_history(channel=channel_id, limit=limit)
+        except Exception:
+            logger.warning("Failed to fetch history for channel %s", channel_id, exc_info=True)
+            return [], {}
+
+        if not resp.get("ok"):
+            logger.warning("conversations_history error for %s: %s", channel_id, resp.get("error"))
+            return [], {}
+
+        raw_messages = resp.get("messages", [])
+
+        all_user_ids: set[str] = set()
+        for msg in raw_messages:
+            if uid := msg.get("user"):
+                all_user_ids.add(uid)
+            for mentioned in re.findall(r"<@([A-Z0-9]+)>", msg.get("text", "")):
+                all_user_ids.add(mentioned)
+
+        user_map = self.resolve_user_ids(all_user_ids)
+
+        def _replace_mentions(text: str) -> str:
+            return re.sub(
+                r"<@([A-Z0-9]+)>",
+                lambda m: f"@{user_map.get(m.group(1), m.group(1))}",
+                text,
+            )
+
+        formatted = []
+        for msg in reversed(raw_messages):  # oldest first
+            uid = msg.get("user", "unknown")
+            name = user_map.get(uid, uid)
+            text = _replace_mentions(msg.get("text", "")).strip()
+            if text:
+                formatted.append(f"{name}: {text}")
+
+        return formatted, user_map
+
+    def post_message(self, channel_id: str, text: str, thread_ts: str | None = None) -> dict:
+        """Post a message to a Slack channel or thread."""
+        kwargs: dict = {"channel": channel_id, "text": text}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        try:
+            resp = self._client.chat_postMessage(**kwargs)
+            return {"ok": resp.get("ok", False), "ts": resp.get("ts", ""), "channel": channel_id}
+        except Exception:
+            logger.warning("Failed to post message to %s", channel_id, exc_info=True)
+            return {"ok": False, "error": "post_message failed", "channel": channel_id}
+
+    def resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
+        """Return a map of user_id -> display_name for the given set of IDs."""
+        result = {}
+        for uid in user_ids:
+            try:
+                resp = self._client.users_info(user=uid)
+                profile = resp["user"].get("profile", {})
+                name = (
+                    profile.get("display_name")
+                    or profile.get("real_name")
+                    or resp["user"].get("name")
+                    or uid
+                )
+                result[uid] = name
+            except Exception:
+                result[uid] = uid
+        return result

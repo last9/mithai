@@ -120,12 +120,17 @@ class Engine:
 
         Called from run_cmd after adapters are created but before they start.
         Skills that export bind(engine, adapter) get called here.
+
+        Each adapter is offered to each skill in order so skills that look for
+        a specific interface (e.g. slack_client) find it regardless of adapter
+        list position.
         """
-        primary_adapter = adapters[0][1] if adapters else None
         for skill_name, skill in self._skills.items():
-            if skill.bind:
+            if not skill.bind:
+                continue
+            for _, adapter in adapters:
                 try:
-                    skill.bind(self, primary_adapter)
+                    skill.bind(self, adapter)
                 except Exception:
                     logger.warning("Skill %s bind() failed", skill_name, exc_info=True)
 

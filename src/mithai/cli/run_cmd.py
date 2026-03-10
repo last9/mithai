@@ -401,6 +401,7 @@ def _start_heartbeat(config: dict, engine):
 
     from mithai.core.heartbeat import HeartbeatScheduler
     interval = int(hb_config.get("interval", 3600))
-    scheduler = HeartbeatScheduler(engine, engine._memory, interval=interval)
+    auto_approve = hb_config.get("auto_approve")  # None → HeartbeatScheduler applies its default
+    scheduler = HeartbeatScheduler(engine, engine._memory, interval=interval, auto_approve=auto_approve)
     scheduler.start()
     return scheduler

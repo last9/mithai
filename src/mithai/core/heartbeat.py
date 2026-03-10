@@ -20,14 +20,18 @@ from mithai.adapters.base import Adapter, IncomingMessage
 logger = logging.getLogger(__name__)
 
 _HEARTBEAT_FILE = "heartbeat.md"
+_DEFAULT_AUTO_APPROVE = ["memory__"]
 
 
 class _HeartbeatAdapter(Adapter):
-    """Minimal adapter for heartbeat ticks — auto-approves only memory__ tools."""
+    """Minimal adapter for heartbeat ticks — auto-approves configured tool prefixes."""
+
+    def __init__(self, auto_approve: list[str] | None = None):
+        self._auto_approve = auto_approve if auto_approve is not None else _DEFAULT_AUTO_APPROVE
 
     def request_human_approval(self, request, channel_id):
         tool_name = getattr(request, "tool_name", "") or ""
-        return tool_name.startswith("memory__")
+        return any(tool_name.startswith(prefix) for prefix in self._auto_approve)
 
     def on_thinking_start(self): pass
     def on_thinking_end(self, elapsed_s): pass
@@ -51,10 +55,11 @@ class HeartbeatScheduler:
          and runs it through `engine.handle()`.
     """
 
-    def __init__(self, engine, memory, interval: int = 3600):
+    def __init__(self, engine, memory, interval: int = 3600, auto_approve: list[str] | None = None):
         self._engine = engine
         self._memory = memory
         self._interval = interval
+        self._auto_approve = auto_approve if auto_approve is not None else _DEFAULT_AUTO_APPROVE
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -93,7 +98,7 @@ class HeartbeatScheduler:
             platform="system",
             thread_id="heartbeat",
         )
-        adapter = _HeartbeatAdapter()
+        adapter = _HeartbeatAdapter(auto_approve=self._auto_approve)
         try:
             self._engine.handle(message, adapter)
         except Exception:

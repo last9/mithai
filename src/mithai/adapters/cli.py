@@ -3,6 +3,9 @@
 import sys
 import time
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import ANSI
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -14,6 +17,28 @@ from mithai.adapters.formatters import CLIFormatter
 from mithai.human.mcp import HumanRequest
 
 _console = Console()
+
+# Slash commands with descriptions for autocomplete
+_SLASH_COMMANDS = {
+    "/help": "Show available commands",
+    "/skills": "List loaded skills and tool counts",
+    "/sessions": "List recent conversation sessions",
+    "/memory": "Show memory files",
+    "/clear": "Clear the terminal screen",
+    "/status": "Show engine status",
+}
+
+
+class _SlashCompleter(Completer):
+    """Tab-complete slash commands when input starts with '/'."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+        for cmd, desc in _SLASH_COMMANDS.items():
+            if cmd.startswith(text):
+                yield Completion(cmd, start_position=-len(text), display_meta=desc)
 
 
 # ── In-chat slash commands ──
@@ -136,6 +161,10 @@ class CLIAdapter(Adapter):
         self._formatter = CLIFormatter()
         self._thinking_start: float | None = None
         self._live: Live | None = None
+        self._prompt_session = PromptSession(
+            completer=_SlashCompleter(),
+            complete_while_typing=True,
+        )
 
     def set_engine(self, engine) -> None:
         """Give the adapter a reference to the engine for slash commands."""
@@ -147,9 +176,12 @@ class CLIAdapter(Adapter):
             "\n  [bright_magenta bold]mithai[/] [muted]ready · type [white]quit[/white] to exit · [white]/help[/white] for commands[/]\n"
         )
 
+        # Build ANSI prompt using Rich's rendering
+        prompt_ansi = ANSI("\x1b[1;96myou>\x1b[0m ")
+
         while self._running:
             try:
-                text = _console.input("[bright_cyan bold]you>[/] ").strip()
+                text = self._prompt_session.prompt(prompt_ansi).strip()
             except (EOFError, KeyboardInterrupt):
                 _console.print()
                 break

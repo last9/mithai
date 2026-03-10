@@ -176,9 +176,15 @@ def get_agent_config(config: dict, agent_id: str) -> dict:
 
     agent = agents[agent_id]
 
-    # Agent-level system_prompt overrides global bot.system_prompt
     merged = dict(config)
+
+    # Agent-level system_prompt overrides global bot.system_prompt
     if "system_prompt" in agent:
         merged = {**merged, "bot": {**merged.get("bot", {}), "system_prompt": agent["system_prompt"]}}
+
+    # Deep-merge agent-level top-level section overrides
+    for key in ("onboarding", "learning", "sessions"):
+        if key in agent:
+            merged[key] = {**merged.get(key, {}), **agent[key]}
 
     return merged

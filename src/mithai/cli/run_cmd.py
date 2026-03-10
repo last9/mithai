@@ -63,6 +63,13 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         if hasattr(adapter, "set_engine"):
             adapter.set_engine(engine)
 
+    # Wire Slack adapter's history-fetch function into the engine for onboarding
+    for name, adapter in adapters:
+        if name == "slack":
+            from mithai.adapters.slack import SlackAdapter
+            if isinstance(adapter, SlackAdapter):
+                engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+
     # Show startup info
     banner_small("run")
     llm_config = get_llm_config(config)
@@ -82,8 +89,9 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         name, adapter = adapters[0]
         ok(f"Starting with [bright_cyan]{name}[/] adapter")
         console.print()
+        on_join = engine.handle_channel_join if name == "slack" else None
         try:
-            adapter.start(on_message=engine.handle)
+            adapter.start(on_message=engine.handle, on_channel_join=on_join)
         except KeyboardInterrupt:
             console.print("\n  [muted]Shutting down...[/]")
         finally:
@@ -94,9 +102,10 @@ def _run_single_agent(config: dict, adapter_override: str | None):
 
         threads = []
         for name, adapter in adapters:
+            on_join = engine.handle_channel_join if name == "slack" else None
             t = threading.Thread(
                 target=_run_adapter,
-                args=(name, adapter, engine.handle),
+                args=(name, adapter, engine.handle, on_join),
                 daemon=True,
             )
             t.start()
@@ -134,6 +143,13 @@ def _run_multi_agent(config: dict, agents_config: dict):
         agent_adapters = [(t, a) for aid, t, a, _ in all_adapters if aid == agent_id]
         engine.late_bind(agent_adapters)
 
+    # Wire history-fetch and channel-join callbacks for Slack adapters
+    for agent_id, adapter_type, adapter, engine in all_adapters:
+        if adapter_type == "slack":
+            from mithai.adapters.slack import SlackAdapter
+            if isinstance(adapter, SlackAdapter):
+                engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+
     # Show startup info
     banner_small("multi-agent")
     section("Agents")
@@ -152,9 +168,10 @@ def _run_multi_agent(config: dict, agents_config: dict):
     for agent_id, adapter_type, adapter, engine in all_adapters:
         label = f"{agent_id}/{adapter_type}"
         info(f"Starting [bright_cyan]{label}[/]")
+        on_join = engine.handle_channel_join if adapter_type == "slack" else None
         t = threading.Thread(
             target=_run_adapter,
-            args=(label, adapter, engine.handle),
+            args=(label, adapter, engine.handle, on_join),
             daemon=True,
         )
         t.start()
@@ -171,12 +188,12 @@ def _run_multi_agent(config: dict, agents_config: dict):
             adapter.stop()
 
 
-def _run_adapter(name: str, adapter, handler):
+def _run_adapter(name: str, adapter, on_message, on_channel_join=None):
     """Run a single adapter in a thread."""
     logger = logging.getLogger(f"mithai.adapter.{name}")
     try:
         logger.info("Starting %s adapter", name)
-        adapter.start(on_message=handler)
+        adapter.start(on_message=on_message, on_channel_join=on_channel_join)
     except Exception:
         logger.exception("Adapter %s crashed", name)
     finally:

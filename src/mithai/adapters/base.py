@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Optional
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
 # Callback type: (message, adapter) -> response text
 MessageHandler = Callable[["IncomingMessage", "Adapter"], str]
+
+# Callback type: (channel_id, channel_name) -> response text to post (or None)
+ChannelJoinHandler = Callable[[str, str], Optional[str]]
 
 
 @dataclass
@@ -44,7 +47,7 @@ class Adapter(ABC):
     """
 
     @abstractmethod
-    def start(self, on_message: MessageHandler) -> None:
+    def start(self, on_message: MessageHandler, on_channel_join: "ChannelJoinHandler | None" = None) -> None:
         """
         Start listening for messages.
 

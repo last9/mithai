@@ -63,12 +63,13 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         if hasattr(adapter, "set_engine"):
             adapter.set_engine(engine)
 
-    # Wire Slack adapter's history-fetch function into the engine for onboarding
+    # Wire Slack adapter's history-fetch function into the engine for onboarding.
+    # Stop after the first match — only one adapter's client should own this callback.
+    from mithai.adapters.slack import SlackAdapterBase
     for name, adapter in adapters:
-        if name in ("slack", "slack_http"):
-            from mithai.adapters.slack import SlackAdapterBase
-            if isinstance(adapter, SlackAdapterBase):
-                engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+        if name in ("slack", "slack_http") and isinstance(adapter, SlackAdapterBase):
+            engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+            break
 
     # Show startup info
     banner_small("run")
@@ -143,12 +144,14 @@ def _run_multi_agent(config: dict, agents_config: dict):
         agent_adapters = [(t, a) for aid, t, a, _ in all_adapters if aid == agent_id]
         engine.late_bind(agent_adapters)
 
-    # Wire history-fetch and channel-join callbacks for Slack adapters
+    # Wire history-fetch callbacks — at most one Slack adapter per engine.
+    from mithai.adapters.slack import SlackAdapterBase
+    _history_wired: set[str] = set()
     for agent_id, adapter_type, adapter, engine in all_adapters:
-        if adapter_type in ("slack", "slack_http"):
-            from mithai.adapters.slack import SlackAdapterBase
-            if isinstance(adapter, SlackAdapterBase):
-                engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+        if agent_id not in _history_wired and adapter_type in ("slack", "slack_http") \
+                and isinstance(adapter, SlackAdapterBase):
+            engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+            _history_wired.add(agent_id)
 
     # Show startup info
     banner_small("multi-agent")

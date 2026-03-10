@@ -1,6 +1,5 @@
 """Telegram adapter using long-polling."""
 
-import json
 import logging
 import time
 import requests
@@ -100,7 +99,7 @@ class TelegramAdapter(Adapter):
         )
 
         if request.level == "confirm":
-            text += f"Reply with the resource name to confirm, or 'deny' to reject."
+            text += "Reply with the resource name to confirm, or 'deny' to reject."
             self._api(
                 "sendMessage",
                 chat_id=channel_id,

@@ -8,8 +8,8 @@ bot:
     You have access to skills that let you interact with infrastructure.
     Be concise and precise. Explain before acting.
 
+# Global adapter kept for --adapter cli override and validation
 adapter:
-  # Run multiple adapters simultaneously
   types:
     - slack
   slack:
@@ -23,19 +23,94 @@ adapter:
 llm:
   provider: anthropic
   model: claude-sonnet-4-6
-  max_tokens: 4096
+  max_tokens: 16384
   anthropic:
     api_key: ${ANTHROPIC_API_KEY}
+
+# MCP servers — shared infrastructure for tool backends
+# Skills declare which MCP tools they need in their tools.py (MCP_TOOLS)
+mcp_servers:
+  linear:
+    transport: sse
+    url: https://mcp.linear.app/sse
+    headers:
+      Authorization: Bearer ${LINEAR_API_KEY}
+  last9:
+    transport: streamablehttp
+    url: https://mcp.example.com
+    headers:
+      X-API-TOKEN: Bearer ${EXAMPLE_API_TOKEN}
 
 skills:
   paths:
     - ./skills
+  config:
+    kubernetes:
+      default_namespace: default
+      context: ""
+      kubeconfig: "/tmp/kubeconfig/REDACTED_KUBECONFIG_CONTEXT/platform"
+      alert_channel: ""
+      poll_interval_minutes: 5
+      cooldown_minutes: 30
+      namespaces: []
+      auto_investigate: true
+      exclude_namespaces:
+        - kube-system
+        - kube-public
+        - kube-node-lease
+
+    aws_costs:
+      region: us-east-1
+      profile: ""
+      account_id: ""
 
 learning:
   enabled: true
-  memory_dir: ./memory
   reflection: true
   approval_auto_promote: 3
+  memory:
+    backend: filesystem
+    filesystem:
+      path: ./memory
+
+# Multi-agent mode — each agent is its own Slack app
+agents:
+  devops:
+    name: "DevOps Agent"
+    system_prompt: |
+      You are a helpful operations assistant. You are a member of the devops team. You have a funny personality.
+      You have access to skills that let you interact with infrastructure.
+      Be concise and precise. Explain before acting.
+    skills:
+      allowed: [shell, kubernetes, memory, http_checker, aws_costs, parrot]
+    memory:
+      path: ./memory/devops
+    adapter:
+      slack:
+        bot_token: ${FIRST_SLACK_BOT_TOKEN}
+        app_token: ${FIRST_SLACK_APP_TOKEN}
+
+  tester:
+    name: "Tester Agent"
+    system_prompt: |
+      You are a testing assistant. You are a member of the testing team. You have a not so funny personality.
+      You help verify infrastructure, run checks, and validate deployments.
+      Be thorough and report findings clearly.
+    skills:
+      allowed: [shell, memory, http_checker]
+    memory:
+      path: ./memory/tester
+    adapter:
+      slack:
+        bot_token: ${SECOND_SLACK_BOT_TOKEN}
+        app_token: ${SECOND_SLACK_APP_TOKEN}
+
+  default_agent: devops
+
+ui:
+  host: 0.0.0.0
+  port: 8420
+  auth_token: ${MITHAI_UI_TOKEN}
 
 state:
   backend: filesystem

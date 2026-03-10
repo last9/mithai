@@ -32,16 +32,13 @@ DEFAULT_ALLOWED = ["df -h", "free -h", "uptime", "whoami", "uname -a", "ps aux"]
 
 def _load_approvals(ctx: dict) -> dict:
     """Load approval history from memory."""
-    from pathlib import Path
-    config = ctx.get("config", {})
-    memory_dir = Path(config.get("memory_dir", "./memory")).resolve()
-    approvals_file = memory_dir / "approvals.json"
-    if approvals_file.exists():
-        try:
-            return json.loads(approvals_file.read_text())
-        except Exception:
-            pass
-    return {}
+    memory = ctx.get("memory")
+    if memory is None:
+        return {}
+    try:
+        return memory.read_json("approvals.json") or {}
+    except Exception:
+        return {}
 
 
 def resolve_human(name: str, input: dict, ctx: dict) -> str | None:

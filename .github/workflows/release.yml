@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v0.2.0). Must match pyproject.toml."
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run — build binaries but don't create release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14          # Apple Silicon
+            platform: darwin-arm64
+          - runner: ubuntu-latest     # Linux x86_64
+            platform: linux-amd64
+          # darwin-amd64: GitHub retired Intel Mac runners (macos-13).
+          # Add back when self-hosted Intel runner is available.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Verify version matches
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          PYPROJECT_VERSION="v$(uv run python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          if [ "$PYPROJECT_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "ERROR: pyproject.toml version ($PYPROJECT_VERSION) does not match input ($EXPECTED_VERSION)"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: uv run pytest tests/ -v
+
+      - name: Build binary
+        run: |
+          uv run pyinstaller mithai.spec --noconfirm
+          ls -lh dist/mithai-*
+
+      - name: Smoke test binary
+        run: |
+          BINARY=$(ls dist/mithai-*)
+          chmod +x "$BINARY"
+          "$BINARY" --version
+          "$BINARY" --help
+          "$BINARY" skill list --config /dev/null 2>/dev/null || true
+          "$BINARY" service status 2>/dev/null || true
+          echo "Smoke tests passed for $BINARY"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mithai-${{ matrix.platform }}
+          path: dist/mithai-*
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release/
+          find artifacts/ -name 'mithai-*' -type f -exec mv {} release/ \;
+          chmod +x release/mithai-*
+
+          cd release
+          sha256sum mithai-* > checksums.txt
+          echo "=== Release assets ==="
+          ls -lh
+          echo ""
+          echo "=== Checksums ==="
+          cat checksums.txt
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          {
+            echo "NOTES<<EOF"
+            echo "## Mithai ${RELEASE_VERSION}"
+            echo ""
+            echo "### Installation"
+            echo ""
+            echo '```sh'
+            echo 'curl -fsSL https://raw.githubusercontent.com/nishantmodak/mithai/master/install.sh | sh'
+            echo '```'
+            echo ""
+            echo "Or download the binary for your platform from the assets below."
+            echo ""
+            echo "### Quick start"
+            echo ""
+            echo '```sh'
+            echo 'mithai init      # interactive setup wizard'
+            echo 'mithai doctor    # verify configuration'
+            echo 'mithai run       # start the agent'
+            echo '```'
+            echo ""
+            echo "### What's changed"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              git log --pretty=format:"- %s" "${PREV_TAG}..HEAD" -- | head -30
+            else
+              git log --pretty=format:"- %s" -20
+            fi
+            echo ""
+            echo ""
+            echo "### Checksums (SHA256)"
+            echo ""
+            echo '```'
+            cat release/checksums.txt
+            echo '```'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+
+      - name: Create GitHub Release
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_NOTES: ${{ steps.notes.outputs.NOTES }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Determine if prerelease
+          PRERELEASE_FLAG=""
+          case "$RELEASE_VERSION" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+
+          gh release create "$RELEASE_VERSION" \
+            --title "$RELEASE_VERSION" \
+            --notes "$RELEASE_NOTES" \
+            $PRERELEASE_FLAG \
+            release/mithai-* \
+            release/checksums.txt \
+            install.sh

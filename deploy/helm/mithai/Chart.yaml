@@ -1,0 +1,16 @@
+apiVersion: v2
+name: mithai
+description: AI agent framework for organizations
+type: application
+version: 0.2.1
+appVersion: "0.2.1"
+keywords:
+  - ai
+  - agent
+  - llm
+  - kubernetes
+  - slack
+  - operations
+home: https://github.com/nishantmodak/mithai
+maintainers:
+  - name: Last9

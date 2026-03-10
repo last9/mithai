@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mithai.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mithai.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    bot:
+      name: {{ .Values.bot.name | quote }}
+      system_prompt: |
+        {{- .Values.bot.systemPrompt | nindent 8 }}
+
+    adapter:
+      types:
+        {{- toYaml .Values.adapter.types | nindent 8 }}
+      {{- if has "slack" .Values.adapter.types }}
+      slack:
+        bot_token: ${SLACK_BOT_TOKEN}
+        app_token: ${SLACK_APP_TOKEN}
+        {{- with .Values.adapter.slack.allowedChannels }}
+        allowed_channels:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+      {{- if has "telegram" .Values.adapter.types }}
+      telegram:
+        bot_token: ${TELEGRAM_BOT_TOKEN}
+        {{- with .Values.adapter.telegram.allowedChatIds }}
+        allowed_chat_ids:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+
+    llm:
+      provider: {{ .Values.llm.provider }}
+      model: {{ .Values.llm.model }}
+      max_tokens: {{ .Values.llm.maxTokens }}
+      anthropic:
+        api_key: ${ANTHROPIC_API_KEY}
+
+    {{- if .Values.mcpServers }}
+    mcp_servers:
+      {{- range $name, $server := .Values.mcpServers }}
+      {{ $name }}:
+        transport: {{ $server.transport }}
+        url: {{ $server.url }}
+        {{- with $server.headers }}
+        headers:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+
+    skills:
+      paths:
+        {{- toYaml .Values.skills.paths | nindent 8 }}
+      {{- with .Values.skills.config }}
+      config:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+    learning:
+      enabled: {{ .Values.learning.enabled }}
+      reflection: {{ .Values.learning.reflection }}
+      approval_auto_promote: {{ .Values.learning.approvalAutoPromote }}
+      memory:
+        backend: {{ .Values.learning.memory.backend }}
+        {{- if eq .Values.learning.memory.backend "filesystem" }}
+        filesystem:
+          path: /app/memory
+        {{- end }}
+
+    {{- if .Values.agents }}
+    agents:
+      {{- toYaml .Values.agents | nindent 6 }}
+    {{- end }}
+
+    {{- if .Values.ui.enabled }}
+    ui:
+      host: 0.0.0.0
+      port: {{ .Values.ui.port }}
+      {{- if .Values.ui.authToken }}
+      auth_token: ${MITHAI_UI_TOKEN}
+      {{- end }}
+    {{- end }}
+
+    state:
+      backend: {{ .Values.state.backend }}
+      {{- if eq .Values.state.backend "filesystem" }}
+      filesystem:
+        path: /app/.mithai/state
+      {{- end }}

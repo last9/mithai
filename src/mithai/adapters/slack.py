@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 
-from mithai.adapters.base import Adapter, IncomingMessage, MessageHandler, OutgoingMessage
+from mithai.adapters.base import Adapter, ChannelJoinHandler, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
 from mithai.human.mcp import HumanRequest
 
@@ -36,6 +36,9 @@ class SlackAdapter(Adapter):
 
         self._formatter = SlackBlockFormatter()
         self._current_thread_ts: str | None = None
+
+        # Bot's own user ID — resolved on start via auth.test
+        self._bot_user_id: str | None = None
 
         # Pending approval requests: request_id -> threading.Event + result
         self._pending_approvals: dict[str, dict] = {}
@@ -110,6 +113,70 @@ class SlackAdapter(Adapter):
                 ],
             )
 
+    def _resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
+        """Return a map of user_id -> display_name for the given set of IDs."""
+        result = {}
+        for uid in user_ids:
+            try:
+                resp = self._app.client.users_info(user=uid)
+                profile = resp["user"].get("profile", {})
+                name = (
+                    profile.get("display_name")
+                    or profile.get("real_name")
+                    or resp["user"].get("name")
+                    or uid
+                )
+                result[uid] = name
+            except Exception:
+                result[uid] = uid
+        return result
+
+    def _fetch_channel_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
+        """
+        Fetch recent messages from a channel.
+
+        Returns (formatted_messages, user_id_to_name_map).
+        User IDs in messages are replaced with real display names.
+        """
+        import re
+
+        try:
+            resp = self._app.client.conversations_history(channel=channel_id, limit=limit)
+        except Exception:
+            logger.warning("Failed to fetch history for channel %s", channel_id, exc_info=True)
+            return [], {}
+
+        if not resp.get("ok"):
+            logger.warning("conversations_history error for %s: %s", channel_id, resp.get("error"))
+            return [], {}
+        raw_messages = resp.get("messages", [])
+
+        all_user_ids: set[str] = set()
+        for msg in raw_messages:
+            if uid := msg.get("user"):
+                all_user_ids.add(uid)
+            for mentioned in re.findall(r"<@([A-Z0-9]+)>", msg.get("text", "")):
+                all_user_ids.add(mentioned)
+
+        user_map = self._resolve_user_ids(all_user_ids)
+
+        def _replace_mentions(text: str) -> str:
+            return re.sub(
+                r"<@([A-Z0-9]+)>",
+                lambda m: f"@{user_map.get(m.group(1), m.group(1))}",
+                text,
+            )
+
+        formatted = []
+        for msg in reversed(raw_messages):  # oldest first
+            uid = msg.get("user", "unknown")
+            name = user_map.get(uid, uid)
+            text = _replace_mentions(msg.get("text", "")).strip()
+            if text:
+                formatted.append(f"{name}: {text}")
+
+        return formatted, user_map
+
     def _send_formatted(self, say, response: str, thread_ts: str | None) -> None:
         """Format a response and send via say(), using Block Kit when available."""
         for chunk in self._formatter.format(response):
@@ -136,8 +203,46 @@ class SlackAdapter(Adapter):
         except Exception:
             pass
 
-    def start(self, on_message: MessageHandler) -> None:
+    def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None) -> None:
         import re
+
+        # Resolve the bot's own user ID so we can detect self-join events
+        try:
+            auth = self._app.client.auth_test()
+            self._bot_user_id = auth["user_id"]
+            logger.info("Bot user ID: %s", self._bot_user_id)
+        except Exception:
+            logger.warning("Could not resolve bot user ID", exc_info=True)
+
+        if on_channel_join:
+            @self._app.event("member_joined_channel")
+            def handle_member_joined(event, say):
+                # Only act when the bot itself joins
+                if event.get("user") != self._bot_user_id:
+                    return
+
+                channel_id = event.get("channel", "")
+                if self._allowed_channels and channel_id not in self._allowed_channels:
+                    return
+
+                # Resolve channel name
+                try:
+                    info = self._app.client.conversations_info(channel=channel_id)
+                    channel_name = info["channel"].get("name", channel_id)
+                except Exception:
+                    channel_name = channel_id
+
+                logger.info("Bot joined channel #%s (%s) — running onboarding in background", channel_name, channel_id)
+
+                def _run():
+                    try:
+                        intro = on_channel_join(channel_id, channel_name)
+                        if intro:
+                            self._send_formatted(say, intro, thread_ts=None)
+                    except Exception:
+                        logger.exception("Onboarding failed for #%s", channel_name)
+
+                threading.Thread(target=_run, daemon=True).start()
 
         @self._app.message("")
         def handle_message(message, say):

@@ -642,6 +642,8 @@ s3 = [
 ]
 slack = [
     { name = "slack-bolt" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 telegram = [
     { name = "python-telegram-bot" },
@@ -673,7 +675,9 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.18.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
+    { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.40.0" },
+    { name = "uvicorn", marker = "extra == 'slack'", specifier = ">=0.30.0" },
     { name = "uvicorn", marker = "extra == 'ui'", specifier = ">=0.30.0" },
 ]
 provides-extras = ["slack", "telegram", "mcp", "redis", "s3", "ui", "dev"]

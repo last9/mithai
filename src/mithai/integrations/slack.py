@@ -73,6 +73,34 @@ class SlackClient:
             logger.warning("Failed to post message to %s", channel_id, exc_info=True)
             return {"ok": False, "error": "post_message failed", "channel": channel_id}
 
+    def get_thread_replies(self, channel_id: str, thread_ts: str, limit: int = 100) -> list[str]:
+        """Fetch messages in a thread, oldest-first, formatted as 'name: text'.
+
+        Returns [] on error or when the API returns not-ok.
+        """
+        try:
+            resp = self._client.conversations_replies(channel=channel_id, ts=thread_ts, limit=limit)
+        except Exception:
+            logger.warning("Failed to fetch thread replies for %s/%s", channel_id, thread_ts, exc_info=True)
+            return []
+
+        if not resp.get("ok"):
+            logger.warning("conversations_replies error: %s", resp.get("error"))
+            return []
+
+        messages = resp.get("messages", [])
+        all_user_ids: set[str] = {msg["user"] for msg in messages if msg.get("user")}
+        user_map = self.resolve_user_ids(all_user_ids)
+
+        lines = []
+        for msg in messages:  # already oldest-first from Slack
+            uid = msg.get("user", "unknown")
+            name = user_map.get(uid, uid).lower()
+            text = msg.get("text", "").strip()
+            if text:
+                lines.append(f"{name}: {text}")
+        return lines
+
     def resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
         """Return a map of user_id -> display_name for the given set of IDs."""
         result = {}

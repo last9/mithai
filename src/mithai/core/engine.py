@@ -141,6 +141,11 @@ class Engine:
         Called by adapters for each message. The adapter is passed so
         Human MCP approvals route back to the correct platform.
         """
+        # Log incoming message to channel context so the file has a complete record
+        # (observe() only fires for non-mention messages; @mentions go through handle())
+        if message.platform != "system":
+            self._log_to_channel_context(message)
+
         system = self._compose_system_prompt()
         tools = self._router.collect_tools_for_llm()
 
@@ -151,7 +156,32 @@ class Engine:
         session = self._sessions.load(session_key)
         history = self._build_history(session)
 
-        messages = history + [{"role": "user", "content": message.text}]
+        # Thread backfill — first @mention in an existing thread (no agent turns yet)
+        # Fetch prior messages so the agent has full context from the start.
+        backfill_prefix = ""
+        is_thread_reply = message.thread_id and message.thread_id != message.message_id
+        if is_thread_reply and not session.get("turns"):
+            thread_history = adapter.fetch_thread_context(message.channel_id, message.thread_id)
+            if thread_history:
+                backfill_prefix = (
+                    "[Thread history — messages before you were mentioned:]\n"
+                    + "\n".join(f"  {line}" for line in thread_history)
+                    + "\n\n"
+                )
+
+        # Drain any thread observations accumulated since the last agent response
+        pending = self._sessions.pop_observations(session_key)
+        if pending:
+            context_lines = "\n".join(f"  {o['user_id']}: {o['text']}" for o in pending)
+            user_content = (
+                f"{backfill_prefix}"
+                f"[Thread context — messages since your last response:]\n{context_lines}\n\n"
+                f"{message.text}"
+            )
+        else:
+            user_content = f"{backfill_prefix}{message.text}"
+
+        messages = history + [{"role": "user", "content": user_content}]
 
         # Initial LLM call
         adapter.on_thinking_start()
@@ -329,17 +359,41 @@ class Engine:
             def on_tool_start(self, tool_name, tool_input): pass
             def on_tool_end(self, tool_name, elapsed_s, approved): pass
             def on_synthesizing(self): pass
+            def fetch_thread_context(self, channel_id, thread_ts): return None
 
         return self.handle(fake_message, _NoOpAdapter())
 
-    def observe(self, message: IncomingMessage) -> None:
-        """Silently record an observed message to channel memory. No LLM call."""
+    def _log_to_channel_context(self, message: IncomingMessage) -> None:
+        """Append a single message line to channel_context/{channel_id}.md."""
         if self._memory is None:
             return
         from datetime import timezone
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        line = f"{ts} | {message.user_id} | {message.text}\n"
-        self._memory.write(f"channel_context/{message.channel_id}.md", line, append=True)
+        self._memory.write(
+            f"channel_context/{message.channel_id}.md",
+            f"{ts} | {message.user_id} | {message.text}\n",
+            append=True,
+        )
+
+    def observe(self, message: IncomingMessage) -> None:
+        """Silently record an observed message to channel memory. No LLM call.
+
+        If the message is a thread reply and the agent has an active session for
+        that thread (at least one completed turn), also store it as a pending
+        observation so the agent sees it as context on the next @mention.
+        """
+        self._log_to_channel_context(message)
+
+        if message.thread_id:
+            key = SessionManager.session_key(
+                message.platform, message.thread_id, agent_id=self._agent_id
+            )
+            session = self._sessions.get_session(key)
+            if session and session.get("turns"):
+                self._sessions.append_observation(key, {
+                    "user_id": message.user_id,
+                    "text": message.text,
+                })
 
     def _build_history(self, session: dict) -> list[dict]:
         """Convert recent session turns into LLM message pairs.

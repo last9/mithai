@@ -240,6 +240,10 @@ class SlackAdapterBase(Adapter):
             # bot_message, etc.) that @app.message("") does not match.
             pass
 
+    def fetch_thread_context(self, channel_id: str, thread_ts: str) -> list[str] | None:
+        """Fetch prior thread messages for backfill context. Delegates to SlackClient."""
+        return self._slack_client.get_thread_replies(channel_id, thread_ts)
+
     @property
     def slack_client(self) -> SlackClient:
         """SlackClient instance for use by skills."""

@@ -65,6 +65,8 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         if hasattr(adapter, "set_engine"):
             adapter.set_engine(engine)
 
+    heartbeat = _start_heartbeat(config, engine)
+
     # Show startup info
     banner_small("run")
     llm_config = get_llm_config(config)
@@ -92,6 +94,8 @@ def _run_single_agent(config: dict, adapter_override: str | None):
             console.print("\n  [muted]Shutting down...[/]")
         finally:
             adapter.stop()
+            if heartbeat:
+                heartbeat.stop()
     else:
         ok(f"Starting with adapters: [bright_cyan]{', '.join(adapter_names)}[/]")
         console.print()
@@ -115,6 +119,8 @@ def _run_single_agent(config: dict, adapter_override: str | None):
             console.print("\n  [muted]Shutting down...[/]")
             for _, adapter in adapters:
                 adapter.stop()
+            if heartbeat:
+                heartbeat.stop()
 
 
 def _run_multi_agent(config: dict, agents_config: dict):
@@ -137,9 +143,13 @@ def _run_multi_agent(config: dict, agents_config: dict):
         )
 
     # Late-bind each engine with its own adapters
+    heartbeats = []
     for agent_id, engine in engines.items():
         agent_adapters = [(t, a) for aid, t, a, _ in all_adapters if aid == agent_id]
         engine.late_bind(agent_adapters)
+        hb = _start_heartbeat(config, engine)
+        if hb:
+            heartbeats.append(hb)
 
     # Show startup info
     banner_small("multi-agent")
@@ -178,6 +188,8 @@ def _run_multi_agent(config: dict, agents_config: dict):
         console.print("\n  [muted]Shutting down...[/]")
         for _, _, adapter, _ in all_adapters:
             adapter.stop()
+        for hb in heartbeats:
+            hb.stop()
 
 
 def _run_adapter(name: str, adapter, on_message, on_channel_join=None, on_observe=None):
@@ -377,3 +389,18 @@ def _create_memory_backend(config: dict):
 
     else:
         raise click.ClickException(f"Unknown memory backend: {backend}")
+
+
+def _start_heartbeat(config: dict, engine):
+    """Start a HeartbeatScheduler if enabled in config. Returns the scheduler or None."""
+    hb_config = config.get("heartbeat", {})
+    if not hb_config.get("enabled", False):
+        return None
+    if engine._memory is None:
+        return None
+
+    from mithai.core.heartbeat import HeartbeatScheduler
+    interval = int(hb_config.get("interval", 3600))
+    scheduler = HeartbeatScheduler(engine, engine._memory, interval=interval)
+    scheduler.start()
+    return scheduler

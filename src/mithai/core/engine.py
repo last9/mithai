@@ -349,6 +349,12 @@ class Engine:
                 tool_name = getattr(request, "tool_name", "") or ""
                 return tool_name.startswith("memory__")
 
+            def on_thinking_start(self): pass
+            def on_thinking_end(self, elapsed_s): pass
+            def on_tool_start(self, tool_name, tool_input): pass
+            def on_tool_end(self, tool_name, elapsed_s, approved): pass
+            def on_synthesizing(self): pass
+
         return self.handle(fake_message, _NoOpAdapter())
 
     def set_fetch_channel_history_fn(self, fn) -> None:

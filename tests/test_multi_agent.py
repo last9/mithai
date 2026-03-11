@@ -412,7 +412,6 @@ class TestEngineAgentId:
         }
         from mithai.core.engine import Engine
         engine_devops = Engine(config=config, llm=llm, state=shared_state, agent_id="devops", skills={})
-        engine_support = Engine(config=config, llm=llm, state=shared_state, agent_id="support", skills={})
 
         adapter = MagicMock()
         adapter.fetch_thread_context.return_value = None

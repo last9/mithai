@@ -20,7 +20,7 @@ class SlackAdapterConfig(BaseModel):
 class TelegramAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     bot_token: str | None = None
-    allowed_chat_ids: list[int] | None = None
+    allowed_chat_ids: list[int | str] | None = None
 
 
 class AdapterConfig(BaseModel):
@@ -59,7 +59,7 @@ class LearningConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     enabled: bool | None = None
     reflection: Any | None = None
-    approval_auto_promote: bool | None = None
+    approval_auto_promote: int | bool | None = None
     memory: MemoryConfig | None = None
 
 

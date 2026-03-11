@@ -1,5 +1,6 @@
 """Tests for respond: mentions / respond: all listen mode."""
 
+import sys
 from unittest.mock import MagicMock, patch
 
 
@@ -271,34 +272,48 @@ def test_run_cmd_on_observe_passed_when_mentions_mode():
 # ---------------------------------------------------------------------------
 
 def test_run_cmd_on_observe_always_passed_in_all_mode():
-    """on_observe is always passed regardless of respond mode — adapter uses it for all message types."""
+    """start() must forward on_observe to _register_message_handlers — verified
+    by calling the real start() method, not a fake replacement."""
     mock_app = _make_mock_app()
     mock_app_cls = MagicMock(return_value=mock_app)
 
-    with patch("slack_bolt.App", mock_app_cls, create=True):
+    mock_uvicorn = MagicMock()
+    mock_server = MagicMock()
+    mock_uvicorn.Server.return_value = mock_server
+
+    class FakeRoute:
+        def __init__(self, path, endpoint, methods=None):
+            self.path = path
+
+    mock_starlette_apps = MagicMock()
+    mock_starlette_routing = MagicMock()
+    mock_starlette_routing.Route = FakeRoute
+    mock_starlette_apps.Starlette.return_value = MagicMock()
+
+    fake_modules = {
+        "uvicorn": mock_uvicorn,
+        "starlette": MagicMock(),
+        "starlette.applications": mock_starlette_apps,
+        "starlette.routing": mock_starlette_routing,
+        "starlette.requests": MagicMock(),
+        "slack_bolt.adapter.starlette": MagicMock(),
+    }
+
+    captured = {}
+
+    with patch("slack_bolt.App", mock_app_cls, create=True), \
+         patch.dict(sys.modules, fake_modules):
         from mithai.adapters.slack_http import SlackHTTPAdapter
-        adapter = SlackHTTPAdapter(
-            bot_token="xoxb-test",
-            signing_secret="sig",
-            respond="all",
-        )
+        adapter = SlackHTTPAdapter(bot_token="xoxb-test", signing_secret="sig", respond="all")
 
-    start_calls = {}
+        def capture_register(on_message, on_channel_join=None, on_observe=None):
+            captured["on_observe"] = on_observe
 
-    def capture_register(on_message, on_channel_join=None, on_observe=None):
-        start_calls["on_observe"] = on_observe
+        adapter._register_message_handlers = capture_register
+        on_observe_fn = MagicMock()
+        adapter.start(on_message=MagicMock(), on_observe=on_observe_fn)
 
-    adapter._register_message_handlers = capture_register
-
-    on_observe_fn = MagicMock()
-
-    def fake_start(on_message, on_channel_join=None, on_observe=None):
-        adapter._register_message_handlers(on_message, on_channel_join, on_observe)
-
-    adapter.start = fake_start
-    adapter.start(on_message=MagicMock(), on_observe=on_observe_fn)
-
-    assert start_calls["on_observe"] is on_observe_fn
+    assert captured["on_observe"] is on_observe_fn
 
 
 # ---------------------------------------------------------------------------

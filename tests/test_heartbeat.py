@@ -167,10 +167,10 @@ def test_loop_exception_does_not_kill_thread():
         return None  # second call: empty, so engine.handle is not called
 
     memory.read.side_effect = read_side_effect
-    scheduler = HeartbeatScheduler(engine, memory, interval=0)
+    scheduler = HeartbeatScheduler(engine, memory, interval=1)
     scheduler.start()
-    # Give the loop time to run at least 2 iterations
-    time.sleep(0.1)
+    # Give the loop time to run at least 2 iterations (1s interval)
+    time.sleep(2.5)
     scheduler.stop()
     assert call_count[0] >= 2, "loop stopped after exception"
     engine.handle.assert_not_called()

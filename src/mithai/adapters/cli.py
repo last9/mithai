@@ -170,7 +170,7 @@ class CLIAdapter(Adapter):
         """Give the adapter a reference to the engine for slash commands."""
         self._engine = engine
 
-    def start(self, on_message: MessageHandler, on_channel_join=None) -> None:
+    def start(self, on_message: MessageHandler, on_channel_join=None, on_observe=None) -> None:
         self._running = True
         _console.print(
             "\n  [bright_magenta bold]mithai[/] [muted]ready · type [white]quit[/white] to exit · [white]/help[/white] for commands[/]\n"

@@ -58,8 +58,17 @@ class HeartbeatScheduler:
     def __init__(self, engine, memory, interval: int = _DEFAULT_INTERVAL, auto_approve: list[str] | None = None):
         self._engine = engine
         self._memory = memory
+        if interval < 1:
+            logger.warning("Heartbeat interval %ds is too low, clamping to 1s", interval)
+            interval = 1
         self._interval = interval
-        self._auto_approve = auto_approve if auto_approve is not None else _DEFAULT_AUTO_APPROVE
+        # Normalize auto_approve — YAML may provide a scalar string instead of a list
+        if auto_approve is None:
+            self._auto_approve = _DEFAULT_AUTO_APPROVE
+        elif isinstance(auto_approve, str):
+            self._auto_approve = [auto_approve]
+        else:
+            self._auto_approve = list(auto_approve)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 

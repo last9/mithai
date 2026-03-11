@@ -76,17 +76,17 @@ TOOLS = [
     },
     {
         "name": "get_events",
-        "description": "Get recent Kubernetes events for a namespace, sorted by time. Useful for diagnosing why pods are failing.",
+        "description": "Get recent Kubernetes events sorted by time. Omit namespace to search all namespaces. Useful for diagnosing why pods are failing.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "namespace": {"type": "string", "description": "Namespace to get events for"},
+                "namespace": {"type": "string", "description": "Namespace to get events for. Omit for --all-namespaces."},
                 "resource": {
                     "type": "string",
                     "description": "Optional: filter events for a specific resource name (pod or deployment name)",
                 },
             },
-            "required": ["namespace"],
+            "required": [],
         },
     },
     {
@@ -553,8 +553,12 @@ def handle(name: str, input: dict, ctx: dict) -> str:  # noqa: A002
         return json.dumps(result)
 
     if name == "get_events":
-        ns = input["namespace"]
-        cmd = ["get", "events", "-n", ns, "--sort-by=.lastTimestamp"]
+        ns = input.get("namespace")
+        cmd = ["get", "events", "--sort-by=.lastTimestamp"]
+        if ns:
+            cmd += ["-n", ns]
+        else:
+            cmd += ["--all-namespaces"]
         if input.get("resource"):
             cmd += ["--field-selector", f"involvedObject.name={input['resource']}"]
         result = _kubectl(*cmd, *flags)

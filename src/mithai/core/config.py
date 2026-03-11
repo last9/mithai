@@ -14,10 +14,14 @@ def _resolve_env_vars(value: Any) -> Any:
     if isinstance(value, str):
         pattern = re.compile(r"\$\{([^}]+)\}")
         def replacer(match):
-            var_name = match.group(1)
+            expr = match.group(1)
+            if ":-" in expr:
+                var_name, default = expr.split(":-", 1)
+            else:
+                var_name, default = expr, None
             env_val = os.environ.get(var_name)
             if env_val is None:
-                return match.group(0)  # Leave unresolved
+                return default if default is not None else match.group(0)
             return env_val
         return pattern.sub(replacer, value)
     elif isinstance(value, dict):

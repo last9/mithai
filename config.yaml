@@ -15,6 +15,7 @@ adapter:
   slack:
     bot_token: ${SLACK_BOT_TOKEN}
     app_token: ${SLACK_APP_TOKEN}
+    respond: mentions  # observe all messages, reply only to @mentions
   telegram:
     bot_token: ${TELEGRAM_BOT_TOKEN}
     allowed_chat_ids:
@@ -73,39 +74,44 @@ learning:
     filesystem:
       path: ./memory
 
+heartbeat:
+  enabled: true
+  interval: 60  # seconds — set to 3600 in production
+
 # Multi-agent mode — each agent is its own Slack app
-agents:
-  devops:
-    name: "DevOps Agent"
-    system_prompt: |
-      You are a helpful operations assistant. You are a member of the devops team. You have a funny personality.
-      You have access to skills that let you interact with infrastructure.
-      Be concise and precise. Explain before acting.
-    skills:
-      allowed: [shell, kubernetes, memory, http_checker, aws_costs, parrot]
-    memory:
-      path: ./memory/devops
-    adapter:
-      slack:
-        bot_token: ${FIRST_SLACK_BOT_TOKEN}
-        app_token: ${FIRST_SLACK_APP_TOKEN}
-
-  tester:
-    name: "Tester Agent"
-    system_prompt: |
-      You are a testing assistant. You are a member of the testing team. You have a not so funny personality.
-      You help verify infrastructure, run checks, and validate deployments.
-      Be thorough and report findings clearly.
-    skills:
-      allowed: [shell, memory, http_checker]
-    memory:
-      path: ./memory/tester
-    adapter:
-      slack:
-        bot_token: ${SECOND_SLACK_BOT_TOKEN}
-        app_token: ${SECOND_SLACK_APP_TOKEN}
-
-  default_agent: devops
+# Uncomment and set FIRST_SLACK_BOT_TOKEN / SECOND_SLACK_BOT_TOKEN to enable.
+# agents:
+#   devops:
+#     name: "DevOps Agent"
+#     system_prompt: |
+#       You are a helpful operations assistant. You are a member of the devops team. You have a funny personality.
+#       You have access to skills that let you interact with infrastructure.
+#       Be concise and precise. Explain before acting.
+#     skills:
+#       allowed: [shell, kubernetes, memory, http_checker, aws_costs, parrot]
+#     memory:
+#       path: ./memory/devops
+#     adapter:
+#       slack:
+#         bot_token: ${FIRST_SLACK_BOT_TOKEN}
+#         app_token: ${FIRST_SLACK_APP_TOKEN}
+#
+#   tester:
+#     name: "Tester Agent"
+#     system_prompt: |
+#       You are a testing assistant. You are a member of the testing team. You have a not so funny personality.
+#       You help verify infrastructure, run checks, and validate deployments.
+#       Be thorough and report findings clearly.
+#     skills:
+#       allowed: [shell, memory, http_checker]
+#     memory:
+#       path: ./memory/tester
+#     adapter:
+#       slack:
+#         bot_token: ${SECOND_SLACK_BOT_TOKEN}
+#         app_token: ${SECOND_SLACK_APP_TOKEN}
+#
+#   default_agent: devops
 
 ui:
   host: 0.0.0.0

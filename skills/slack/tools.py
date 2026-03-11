@@ -65,14 +65,25 @@ def bind(engine, adapter):
         _client = adapter.slack_client
 
 
+def _resolve_channel_id(input: dict, ctx: dict) -> str | None:
+    """Resolve and validate a Slack channel ID from input or context."""
+    channel_id = input.get("channel_id") or ctx.get("channel_id", "")
+    if not channel_id:
+        return None
+    # Slack channel IDs start with C (public), G (group/mpim), or D (DM)
+    if not channel_id[0] in ("C", "G", "D"):
+        return None
+    return channel_id
+
+
 def handle(name: str, input: dict, ctx: dict) -> str:
     if name == "slack_get_history":
         if _client is None:
             return json.dumps({"error": "Slack adapter not available in this context"})
 
-        channel_id = input.get("channel_id") or ctx.get("channel_id", "")
+        channel_id = _resolve_channel_id(input, ctx)
         if not channel_id:
-            return json.dumps({"error": "channel_id is required"})
+            return json.dumps({"error": "channel_id is required — provide a valid Slack channel ID (e.g. C01234ABC)"})
 
         limit = min(int(input.get("limit", 100)), 500)
         messages, user_map = _client.get_history(channel_id, limit)
@@ -91,9 +102,9 @@ def handle(name: str, input: dict, ctx: dict) -> str:
         if not text:
             return json.dumps({"error": "text is required"})
 
-        channel_id = input.get("channel_id") or ctx.get("channel_id", "")
+        channel_id = _resolve_channel_id(input, ctx)
         if not channel_id:
-            return json.dumps({"error": "channel_id is required"})
+            return json.dumps({"error": "channel_id is required — provide a valid Slack channel ID (e.g. C01234ABC)"})
 
         thread_ts = input.get("thread_ts")
         result = _client.post_message(channel_id, text, thread_ts=thread_ts)

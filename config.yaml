@@ -15,6 +15,7 @@ adapter:
   slack:
     bot_token: ${SLACK_BOT_TOKEN}
     app_token: ${SLACK_APP_TOKEN}
+    respond: mentions  # observe all messages, reply only to @mentions
   telegram:
     bot_token: ${TELEGRAM_BOT_TOKEN}
     allowed_chat_ids:
@@ -72,6 +73,10 @@ learning:
     backend: filesystem
     filesystem:
       path: ./memory
+
+heartbeat:
+  enabled: true
+  interval: 60  # seconds — set to 3600 in production
 
 # Multi-agent mode — each agent is its own Slack app
 # Uncomment and set FIRST_SLACK_BOT_TOKEN / SECOND_SLACK_BOT_TOKEN to enable.

@@ -25,8 +25,8 @@ class SlackClient:
         """
         try:
             resp = self._client.conversations_history(channel=channel_id, limit=limit)
-        except Exception:
-            logger.warning("Failed to fetch history for channel %s", channel_id, exc_info=True)
+        except Exception as exc:
+            logger.warning("Failed to fetch history for channel %s: %s", channel_id, exc)
             return [], {}
 
         if not resp.get("ok"):

@@ -29,10 +29,29 @@ class SlackAdapterBase(Adapter):
                 "Slack adapter requires slack-bolt. Install with: pip install mithai[slack]"
             )
 
+        if not bot_token or bot_token.startswith("${"):
+            raise RuntimeError(
+                "SLACK_BOT_TOKEN is missing or not set.\n"
+                "  1. Go to https://api.slack.com/apps → select your app\n"
+                "  2. OAuth & Permissions → copy the Bot User OAuth Token\n"
+                "  3. Add SLACK_BOT_TOKEN=xoxb-... to your .env file"
+            )
+
         app_kwargs: dict = {"token": bot_token}
         if signing_secret:
             app_kwargs["signing_secret"] = signing_secret
-        self._app = App(**app_kwargs)
+        try:
+            self._app = App(**app_kwargs)
+        except Exception as exc:
+            msg = str(exc)
+            if "invalid_auth" in msg or "token" in msg.lower():
+                raise RuntimeError(
+                    "Slack authentication failed — your SLACK_BOT_TOKEN is invalid or expired.\n"
+                    "  1. Go to https://api.slack.com/apps → select your app\n"
+                    "  2. OAuth & Permissions → copy the Bot User OAuth Token\n"
+                    "  3. Update SLACK_BOT_TOKEN in your .env file"
+                ) from None
+            raise
 
         self._allowed_channels = set(allowed_channels) if allowed_channels else None
         self._bot_token = bot_token
@@ -394,6 +413,14 @@ class SlackAdapter(SlackAdapterBase):
         except ImportError:
             raise ImportError(
                 "Slack adapter requires slack-bolt. Install with: pip install mithai[slack]"
+            )
+
+        if not app_token or app_token.startswith("${"):
+            raise RuntimeError(
+                "SLACK_APP_TOKEN is missing or not set.\n"
+                "  1. Go to https://api.slack.com/apps → select your app\n"
+                "  2. Basic Information → App-Level Tokens → generate/copy token\n"
+                "  3. Add SLACK_APP_TOKEN=xapp-... to your .env file"
             )
 
         super().__init__(bot_token, allowed_channels, approval_timeout, respond=respond)

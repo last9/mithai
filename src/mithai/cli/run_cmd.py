@@ -33,12 +33,16 @@ def run(config_path, adapter_override, verbose):
 
     config = load_config(config_path)
 
-    agents_config = get_agents(config)
+    try:
+        agents_config = get_agents(config)
 
-    if agents_config:
-        _run_multi_agent(config, agents_config)
-    else:
-        _run_single_agent(config, adapter_override)
+        if agents_config:
+            _run_multi_agent(config, agents_config)
+        else:
+            _run_single_agent(config, adapter_override)
+    except (RuntimeError, ImportError) as exc:
+        console.print(f"\n  [red bold]Error:[/] {exc}\n")
+        raise SystemExit(1) from None
 
 
 def _run_single_agent(config: dict, adapter_override: str | None):

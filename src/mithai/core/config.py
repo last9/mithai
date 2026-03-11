@@ -253,16 +253,24 @@ def load_config(config_path: str | Path | None = None, env_path: str | Path | No
 
 
 def _validate_config(config: dict) -> None:
-    """Validate required config sections exist."""
-    if "adapter" not in config:
-        raise ValueError("Config must have an 'adapter' section")
-    adapter = config["adapter"]
-    has_type = "type" in adapter
-    has_types = "types" in adapter
-    if not has_type and not has_types:
-        raise ValueError("Config adapter must have 'type' or 'types' field")
-    if "llm" not in config:
-        raise ValueError("Config must have an 'llm' section")
+    """Validate required config sections exist.
+
+    Multi-agent configs define adapters under `agents.<id>.adapter` and may
+    omit the top-level `adapter` / `llm` sections, so those checks are skipped
+    when an `agents` section is present.
+    """
+    is_multi_agent = bool(config.get("agents"))
+
+    if not is_multi_agent:
+        if "adapter" not in config:
+            raise ValueError("Config must have an 'adapter' section")
+        adapter = config["adapter"]
+        has_type = "type" in adapter
+        has_types = "types" in adapter
+        if not has_type and not has_types:
+            raise ValueError("Config adapter must have 'type' or 'types' field")
+        if "llm" not in config:
+            raise ValueError("Config must have an 'llm' section")
 
 
 def get_adapter_types(config: dict) -> list[str]:

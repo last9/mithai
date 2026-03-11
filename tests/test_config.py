@@ -132,3 +132,49 @@ def test_schema_wrong_type_heartbeat_enabled(tmp_path):
     config_path.write_text(yaml.dump(config))
     with pytest.raises(ValueError, match=r"heartbeat -> enabled"):
         load_config(config_path)
+
+
+# ---------------------------------------------------------------------------
+# Regression: multi-agent config must load without top-level adapter/llm
+#
+# `_validate_config` and MithaiConfig schema must not reject configs where
+# `adapter` / `llm` are absent at the top level — multi-agent configs define
+# adapters under `agents.<id>.adapter` and may define llm per-agent.
+# ---------------------------------------------------------------------------
+
+def test_load_config_multi_agent_without_top_level_adapter(tmp_path):
+    """A valid multi-agent config has no top-level 'adapter' — must load cleanly."""
+    config = {
+        "llm": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "agents": {
+            "ops": {
+                "adapter": {"slack": {"bot_token": "xoxb-ops", "app_token": "xapp-ops"}},
+            },
+            "dev": {
+                "adapter": {"slack": {"bot_token": "xoxb-dev", "app_token": "xapp-dev"}},
+            },
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+
+    loaded = load_config(config_path)
+    assert "agents" in loaded
+    assert "ops" in loaded["agents"]
+
+
+def test_load_config_multi_agent_without_top_level_llm(tmp_path):
+    """A valid multi-agent config may omit top-level 'llm' — must load cleanly."""
+    config = {
+        "agents": {
+            "ops": {
+                "adapter": {"slack": {"bot_token": "xoxb-ops", "app_token": "xapp-ops"}},
+                "llm": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+            },
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+
+    loaded = load_config(config_path)
+    assert "agents" in loaded

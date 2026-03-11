@@ -86,12 +86,12 @@ def test_get_history_replaces_user_mentions():
 
 
 def test_get_history_skips_bot_messages_without_user():
-    """Messages with no 'user' field (bot_message subtypes) are skipped."""
+    """Messages with no 'user' field (bot/system messages) must be excluded from output."""
     client = _make_client()
     client._client.conversations_history.return_value = {
         "ok": True,
         "messages": [
-            {"text": "bot alert: deploy done"},  # no user field
+            {"text": "bot alert: deploy done"},  # no user field — should be skipped
             {"user": "U1", "text": "thanks"},
         ],
     }
@@ -100,9 +100,8 @@ def test_get_history_skips_bot_messages_without_user():
     }
 
     messages, _ = client.get_history("C1", 10)
-    # bot message has user="unknown", so it gets formatted as "unknown: bot alert: deploy done"
-    # this just documents current behavior — the key check is no crash
-    assert len(messages) == 2
+    assert len(messages) == 1
+    assert messages[0] == "alice: thanks"
 
 
 def test_get_history_returns_empty_list_for_no_messages():

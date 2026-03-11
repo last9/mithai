@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 
-from mithai.adapters.base import Adapter, ChannelJoinHandler, ChannelObserveHandler, IncomingMessage, MessageHandler, OutgoingMessage
+from mithai.adapters.base import Adapter, BotReplyHandler, ChannelJoinHandler, ChannelObserveHandler, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
 from mithai.human.mcp import HumanRequest
 from mithai.integrations.slack import SlackClient
@@ -142,7 +142,8 @@ class SlackAdapterBase(Adapter):
 
     def _register_message_handlers(self, on_message: MessageHandler,
                                     on_channel_join: ChannelJoinHandler | None = None,
-                                    on_observe: ChannelObserveHandler | None = None):
+                                    on_observe: ChannelObserveHandler | None = None,
+                                    on_bot_reply: BotReplyHandler | None = None):
         """
         Resolve bot user ID and register all message/event handlers.
 
@@ -220,6 +221,8 @@ class SlackAdapterBase(Adapter):
             try:
                 response = on_message(incoming, self)
                 self._send_formatted(say, response, thread_ts=ts)
+                if on_bot_reply and self._bot_user_id and response:
+                    on_bot_reply(channel, self._bot_user_id, response, ts)
             finally:
                 self._unreact(channel, ts, "thinking_face")
 
@@ -250,6 +253,8 @@ class SlackAdapterBase(Adapter):
             try:
                 response = on_message(incoming, self)
                 self._send_formatted(say, response, thread_ts=ts)
+                if on_bot_reply and self._bot_user_id and response:
+                    on_bot_reply(channel, self._bot_user_id, response, ts)
             finally:
                 self._unreact(channel, ts, "thinking_face")
 
@@ -427,8 +432,9 @@ class SlackAdapter(SlackAdapterBase):
         self._handler = SocketModeHandler(self._app, app_token)
 
     def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None,
-              on_observe: ChannelObserveHandler | None = None) -> None:
-        self._register_message_handlers(on_message, on_channel_join, on_observe)
+              on_observe: ChannelObserveHandler | None = None,
+              on_bot_reply: BotReplyHandler | None = None) -> None:
+        self._register_message_handlers(on_message, on_channel_join, on_observe, on_bot_reply)
         logger.info("Starting Slack adapter (Socket Mode)")
         self._handler.start()
 

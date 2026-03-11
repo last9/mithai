@@ -92,8 +92,10 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         console.print()
         on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
         on_observe = engine.observe
+        on_bot_reply = engine.log_outgoing if name in ("slack", "slack_http") else None
         try:
-            adapter.start(on_message=engine.handle, on_channel_join=on_join, on_observe=on_observe)
+            adapter.start(on_message=engine.handle, on_channel_join=on_join, on_observe=on_observe,
+                          on_bot_reply=on_bot_reply)
         except KeyboardInterrupt:
             console.print("\n  [muted]Shutting down...[/]")
         finally:
@@ -108,9 +110,10 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         for name, adapter in adapters:
             on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
             on_observe = engine.observe
+            on_bot_reply = engine.log_outgoing if name in ("slack", "slack_http") else None
             t = threading.Thread(
                 target=_run_adapter,
-                args=(name, adapter, engine.handle, on_join, on_observe),
+                args=(name, adapter, engine.handle, on_join, on_observe, on_bot_reply),
                 daemon=True,
             )
             t.start()
@@ -175,9 +178,10 @@ def _run_multi_agent(config: dict, agents_config: dict):
         info(f"Starting [bright_cyan]{label}[/]")
         on_join = engine.handle_channel_join if adapter_type in ("slack", "slack_http") else None
         on_observe = engine.observe
+        on_bot_reply = engine.log_outgoing if adapter_type in ("slack", "slack_http") else None
         t = threading.Thread(
             target=_run_adapter,
-            args=(label, adapter, engine.handle, on_join, on_observe),
+            args=(label, adapter, engine.handle, on_join, on_observe, on_bot_reply),
             daemon=True,
         )
         t.start()
@@ -196,12 +200,13 @@ def _run_multi_agent(config: dict, agents_config: dict):
             hb.stop()
 
 
-def _run_adapter(name: str, adapter, on_message, on_channel_join=None, on_observe=None):
+def _run_adapter(name: str, adapter, on_message, on_channel_join=None, on_observe=None, on_bot_reply=None):
     """Run a single adapter in a thread."""
     logger = logging.getLogger(f"mithai.adapter.{name}")
     try:
         logger.info("Starting %s adapter", name)
-        adapter.start(on_message=on_message, on_channel_join=on_channel_join, on_observe=on_observe)
+        adapter.start(on_message=on_message, on_channel_join=on_channel_join, on_observe=on_observe,
+                      on_bot_reply=on_bot_reply)
     except Exception:
         logger.exception("Adapter %s crashed", name)
     finally:

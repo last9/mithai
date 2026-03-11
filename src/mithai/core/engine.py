@@ -374,6 +374,21 @@ class Engine:
             append=True,
         )
 
+    def log_outgoing(self, channel_id: str, user_id: str, text: str, message_id: str = "") -> None:
+        """Log a bot outgoing response to channel_context only.
+
+        Unlike observe(), this never touches pending_observations — it purely
+        writes a channel_context entry so the heartbeat can see the bot already
+        replied in this channel/thread.
+        """
+        if self._memory is None:
+            return
+        self._memory.write(
+            f"channel_context/{channel_id}.md",
+            f"{message_id} | {user_id} | {text}\n",
+            append=True,
+        )
+
     def observe(self, message: IncomingMessage) -> None:
         """Silently record an observed message to channel memory. No LLM call.
 

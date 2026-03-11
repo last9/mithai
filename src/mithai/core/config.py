@@ -142,11 +142,6 @@ class AgentConfig(BaseModel):
     learning: LearningConfig | None = None
 
 
-class AgentsConfig(BaseModel):
-    model_config = ConfigDict(extra="allow")
-    default_agent: str | None = None
-
-
 class BotConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     system_prompt: str | None = None
@@ -178,13 +173,13 @@ class HumanConfig(BaseModel):
 class MithaiConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     bot: BotConfig | None = None
-    adapter: AdapterConfig
-    llm: LLMConfig
+    adapter: AdapterConfig | None = None
+    llm: LLMConfig | None = None
     mcp_servers: dict | None = None
     skills: SkillsConfig | None = None
     learning: LearningConfig | None = None
     heartbeat: HeartbeatConfig | None = None
-    agents: AgentsConfig | None = None
+    agents: dict[str, AgentConfig] | None = None
     default_agent: str | None = None
     state: StateConfig | None = None
     ui: UIConfig | None = None

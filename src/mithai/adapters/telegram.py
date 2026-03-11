@@ -40,7 +40,7 @@ class TelegramAdapter(Adapter):
             raise RuntimeError(f"Telegram API error: {data}")
         return data.get("result", {})
 
-    def start(self, on_message: MessageHandler, on_channel_join=None) -> None:
+    def start(self, on_message: MessageHandler, on_channel_join=None, on_observe=None) -> None:
         self._running = True
         logger.info("Starting Telegram adapter (long-polling)")
 

@@ -145,6 +145,23 @@ def test_post_message_does_not_send_thread_ts_when_none():
     assert "thread_ts" not in call_kwargs
 
 
+def test_post_message_ignores_invalid_thread_ts():
+    """LLM may hallucinate a thread_ts like Long.MAX_VALUE — must not send it to Slack."""
+    client = _make_client()
+    client._client.chat_postMessage.return_value = {"ok": True, "ts": "1.0"}
+    client.post_message("C1", "hello", thread_ts="9223372036854775807")
+    call_kwargs = client._client.chat_postMessage.call_args[1]
+    assert "thread_ts" not in call_kwargs
+
+
+def test_post_message_accepts_valid_thread_ts():
+    client = _make_client()
+    client._client.chat_postMessage.return_value = {"ok": True, "ts": "1.0"}
+    client.post_message("C1", "hello", thread_ts="1234567890.123456")
+    call_kwargs = client._client.chat_postMessage.call_args[1]
+    assert call_kwargs["thread_ts"] == "1234567890.123456"
+
+
 def test_post_message_returns_error_on_exception():
     client = _make_client()
     client._client.chat_postMessage.side_effect = Exception("api error")

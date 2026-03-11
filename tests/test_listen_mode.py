@@ -184,9 +184,8 @@ def test_engine_observe_writes_to_memory(tmp_path):
     assert content is not None
     assert "U42" in content
     assert "deploy just went out" in content
-    # Check timestamp format
-    import re
-    assert re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", content)
+    # message_id (Slack ts or UUID hex) should appear, not ISO wall-clock time
+    assert msg.message_id in content
 
 
 # ---------------------------------------------------------------------------

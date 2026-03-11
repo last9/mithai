@@ -61,11 +61,23 @@ class SlackClient:
 
         return formatted, user_map
 
+    @staticmethod
+    def _is_valid_slack_ts(ts: str) -> bool:
+        """Slack timestamps are Unix epoch floats like '1234567890.123456'."""
+        try:
+            float(ts)
+            return "." in ts
+        except (ValueError, TypeError):
+            return False
+
     def post_message(self, channel_id: str, text: str, thread_ts: str | None = None) -> dict:
         """Post a message to a Slack channel or thread."""
         kwargs: dict = {"channel": channel_id, "text": text}
         if thread_ts:
-            kwargs["thread_ts"] = thread_ts
+            if self._is_valid_slack_ts(thread_ts):
+                kwargs["thread_ts"] = thread_ts
+            else:
+                logger.warning("Ignoring invalid thread_ts %r — must be a Slack timestamp float", thread_ts)
         try:
             resp = self._client.chat_postMessage(**kwargs)
             return {"ok": resp.get("ok", False), "ts": resp.get("ts", ""), "channel": channel_id}
@@ -78,6 +90,9 @@ class SlackClient:
 
         Returns [] on error or when the API returns not-ok.
         """
+        if not self._is_valid_slack_ts(thread_ts):
+            logger.warning("Ignoring invalid thread_ts %r for get_thread_replies", thread_ts)
+            return []
         try:
             resp = self._client.conversations_replies(channel=channel_id, ts=thread_ts, limit=limit)
         except Exception:

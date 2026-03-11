@@ -359,14 +359,18 @@ class Engine:
         return self.handle(fake_message, _NoOpAdapter())
 
     def _log_to_channel_context(self, message: IncomingMessage) -> None:
-        """Append a single message line to channel_context/{channel_id}.md."""
+        """Append a single message line to channel_context/{channel_id}.md.
+
+        Uses message.message_id as the timestamp — for Slack messages this is
+        the actual Slack ts (e.g. '1736553600.123456') which the LLM can use
+        directly as thread_ts. ISO wall-clock time would cause the LLM to
+        hallucinate invalid thread_ts values when trying to reply in threads.
+        """
         if self._memory is None:
             return
-        from datetime import timezone
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._memory.write(
             f"channel_context/{message.channel_id}.md",
-            f"{ts} | {message.user_id} | {message.text}\n",
+            f"{message.message_id} | {message.user_id} | {message.text}\n",
             append=True,
         )
 

@@ -7,6 +7,136 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+
+class SlackAdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    host: str | None = None
+    port: int | None = None
+    token: str | None = None
+
+
+class TelegramAdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bot_token: str | None = None
+    allowed_chat_ids: list[int] | None = None
+
+
+class AdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str | None = None
+    types: list[str] | None = None
+    slack: SlackAdapterConfig | None = None
+    telegram: TelegramAdapterConfig | None = None
+
+
+class LLMAnthropicConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    api_key: str | None = None
+
+
+class LLMConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    provider: str | None = None
+    model: str | None = None
+    max_tokens: int | None = None
+    anthropic: LLMAnthropicConfig | None = None
+
+
+class FilesystemMemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    path: str | None = None
+
+
+class MemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    backend: str | None = None
+    filesystem: FilesystemMemoryConfig | None = None
+
+
+class LearningConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+    reflection: Any | None = None
+    approval_auto_promote: bool | None = None
+    memory: MemoryConfig | None = None
+
+
+class HeartbeatConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+    interval: int | None = None
+
+
+class StateFilesystemConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    path: str | None = None
+
+
+class StateConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    backend: str | None = None
+    filesystem: StateFilesystemConfig | None = None
+
+
+class UIConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    host: str | None = None
+    port: int | None = None
+    auth_token: str | None = None
+
+
+class AgentConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str | None = None
+    system_prompt: str | None = None
+    skills: list[str] | None = None
+    memory: MemoryConfig | None = None
+    adapter: AdapterConfig | None = None
+
+
+class AgentsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    default_agent: str | None = None
+
+
+class BotConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str | None = None
+    system_prompt: str | None = None
+
+
+class SkillsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    paths: list[str] | None = None
+    config: dict[str, dict] | None = None
+
+
+class MithaiConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bot: BotConfig | None = None
+    adapter: AdapterConfig
+    llm: LLMConfig
+    mcp_servers: dict | None = None
+    skills: SkillsConfig | None = None
+    learning: LearningConfig | None = None
+    heartbeat: HeartbeatConfig | None = None
+    agents: AgentsConfig | None = None
+    default_agent: str | None = None
+    state: StateConfig | None = None
+    ui: UIConfig | None = None
+
+
+def _validate_config_schema(config: dict) -> None:
+    try:
+        MithaiConfig.model_validate(config)
+    except ValidationError as e:
+        lines = ["Config validation failed:"]
+        for err in e.errors():
+            loc = " -> ".join(str(p) for p in err["loc"])
+            lines.append(f"  [{loc}] {err['msg']}")
+        raise ValueError("\n".join(lines)) from None
 
 
 def _resolve_env_vars(value: Any) -> Any:
@@ -58,6 +188,7 @@ def load_config(config_path: str | Path | None = None, env_path: str | Path | No
 
     config = _resolve_env_vars(raw)
     _validate_config(config)
+    _validate_config_schema(config)
     return config
 
 

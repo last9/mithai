@@ -16,6 +16,10 @@ TOOLS = [
                     "description": "Filter by state (running, stopped, all)",
                     "default": "all",
                 },
+                "region": {
+                    "type": "string",
+                    "description": "AWS region to query (e.g. us-west-2). Defaults to configured region.",
+                },
             },
         },
     },
@@ -24,7 +28,12 @@ TOOLS = [
         "description": "List S3 buckets.",
         "input_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "region": {
+                    "type": "string",
+                    "description": "AWS region to query. Defaults to configured region.",
+                },
+            },
         },
     },
     {
@@ -38,6 +47,10 @@ TOOLS = [
                     "description": "Look back N days (default: 30)",
                     "default": 30,
                 },
+                "region": {
+                    "type": "string",
+                    "description": "AWS region to query. Defaults to configured region.",
+                },
             },
         },
     },
@@ -50,6 +63,10 @@ TOOLS = [
                 "instance_id": {
                     "type": "string",
                     "description": "EC2 instance ID (e.g., i-0123456789abcdef0)",
+                },
+                "region": {
+                    "type": "string",
+                    "description": "AWS region where the instance lives. Defaults to configured region.",
                 },
             },
             "required": ["instance_id"],
@@ -67,6 +84,7 @@ def _aws(*args, timeout=30) -> dict:
             capture_output=True,
             text=True,
             timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
         if result.returncode != 0:
             return {"error": result.stderr.strip()}
@@ -82,7 +100,7 @@ def _aws(*args, timeout=30) -> dict:
 
 def handle(name: str, input: dict, ctx: dict) -> str:
     config = ctx.get("config", {})
-    region = config.get("region", "us-east-1")
+    region = input.get("region") or config.get("region", "us-east-1")
     profile = config.get("profile")
 
     base_args = ["--region", region]

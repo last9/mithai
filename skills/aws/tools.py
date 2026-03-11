@@ -257,7 +257,9 @@ def handle(name: str, input: dict, ctx: dict) -> str:
             "--metrics", "UnblendedCost",
             *base,
         )
-        if "error" not in cost:
+        if "error" in cost:
+            parts.append(f"Cost MTD: unavailable ({cost['error']})")
+        else:
             try:
                 total = sum(
                     float(p["Total"]["UnblendedCost"]["Amount"])
@@ -265,7 +267,7 @@ def handle(name: str, input: dict, ctx: dict) -> str:
                 )
                 parts.append(f"Cost MTD: ${total:.2f}")
             except Exception:
-                pass
+                parts.append("Cost MTD: unavailable (parse error)")
 
         return "\n\n".join(parts)
 

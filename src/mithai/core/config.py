@@ -10,17 +10,36 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 
+# Slack Socket Mode adapter (adapter.slack)
+# Ref: https://api.slack.com/apis/socket-mode
 class SlackAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
+    bot_token: str | None = None     # xoxb-... OAuth bot token
+    app_token: str | None = None     # xapp-... Socket Mode app-level token
+    allowed_channels: list[str] | None = None  # channel IDs whitelist
+    approval_timeout: int | None = None        # seconds; default 300
+    respond: str | None = None                 # "all" or "mentions"
+
+
+# Slack HTTP adapter (adapter.slack_http)
+# Ref: https://api.slack.com/apis/http
+class SlackHTTPAdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bot_token: str | None = None
+    signing_secret: str | None = None  # HMAC signing secret for request verification
     host: str | None = None
     port: int | None = None
-    token: str | None = None
+    allowed_channels: list[str] | None = None
+    approval_timeout: int | None = None
+    respond: str | None = None
 
 
+# Telegram Bot adapter (adapter.telegram)
+# Ref: https://core.telegram.org/bots/api — chat_id is a signed 64-bit integer
 class TelegramAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     bot_token: str | None = None
-    allowed_chat_ids: list[int] | None = None
+    allowed_chat_ids: list[int] | None = None  # signed int64 per Telegram Bot API
 
 
 class AdapterConfig(BaseModel):
@@ -28,6 +47,7 @@ class AdapterConfig(BaseModel):
     type: str | None = None
     types: list[str] | None = None
     slack: SlackAdapterConfig | None = None
+    slack_http: SlackHTTPAdapterConfig | None = None
     telegram: TelegramAdapterConfig | None = None
 
 
@@ -49,24 +69,44 @@ class FilesystemMemoryConfig(BaseModel):
     path: str | None = None
 
 
+# Ref: https://redis-py.readthedocs.io/en/stable/connections.html
+class RedisMemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    url: str | None = None    # redis://host:port
+    prefix: str | None = None
+
+
+# Ref: https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html
+class S3MemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bucket: str | None = None
+    prefix: str | None = None
+    region: str | None = None
+    profile: str | None = None  # AWS CLI named profile
+
+
 class MemoryConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     backend: str | None = None
     filesystem: FilesystemMemoryConfig | None = None
+    redis: RedisMemoryConfig | None = None
+    s3: S3MemoryConfig | None = None
+    memory_dir: str | None = None  # legacy flat path field
 
 
 class LearningConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     enabled: bool | None = None
-    reflection: Any | None = None
-    approval_auto_promote: int | None = None
+    reflection: bool | None = None
+    approval_auto_promote: int | None = None  # threshold count, not a flag
     memory: MemoryConfig | None = None
 
 
 class HeartbeatConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     enabled: bool | None = None
-    interval: int | None = None
+    interval: int | None = None                        # seconds
+    auto_approve: list[str] | str | None = None        # tool name prefixes to skip approval
 
 
 class StateFilesystemConfig(BaseModel):
@@ -87,13 +127,19 @@ class UIConfig(BaseModel):
     auth_token: str | None = None
 
 
+class AgentSkillsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    allowed: list[str] | None = None
+
+
 class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     name: str | None = None
     system_prompt: str | None = None
-    skills: list[str] | None = None
+    skills: AgentSkillsConfig | None = None
     memory: MemoryConfig | None = None
     adapter: AdapterConfig | None = None
+    learning: LearningConfig | None = None
 
 
 class AgentsConfig(BaseModel):
@@ -103,7 +149,6 @@ class AgentsConfig(BaseModel):
 
 class BotConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
-    name: str | None = None
     system_prompt: str | None = None
 
 
@@ -111,6 +156,23 @@ class SkillsConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     paths: list[str] | None = None
     config: dict[str, dict] | None = None
+
+
+class SessionsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    max_stored: int | None = None   # max sessions retained on disk
+    max_history: int | None = None  # max turns sent to LLM context
+
+
+class OnboardingConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+
+
+class HumanConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    timeout_seconds: int | None = None
+    overrides: dict[str, str | None] | None = None  # tool prefix → "approve"|"confirm"|None
 
 
 class MithaiConfig(BaseModel):
@@ -126,6 +188,9 @@ class MithaiConfig(BaseModel):
     default_agent: str | None = None
     state: StateConfig | None = None
     ui: UIConfig | None = None
+    sessions: SessionsConfig | None = None
+    onboarding: OnboardingConfig | None = None
+    human: HumanConfig | None = None
 
 
 def _validate_config_schema(config: dict) -> None:

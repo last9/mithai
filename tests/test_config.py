@@ -35,6 +35,36 @@ def test_env_var_resolution(tmp_path, monkeypatch):
     assert loaded["llm"]["anthropic"]["api_key"] == "sk-test-123"
 
 
+def test_env_var_default_syntax_with_var_set(tmp_path, monkeypatch):
+    monkeypatch.setenv("STATE_PATH", "/app/data/state")
+
+    config = {
+        "adapter": {"type": "cli"},
+        "llm": {"provider": "anthropic"},
+        "state": {"filesystem": {"path": "${STATE_PATH:-./.REDACTED_INTERNAL_CHANNEL/state}"}},
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+
+    loaded = load_config(config_path)
+    assert loaded["state"]["filesystem"]["path"] == "/app/data/state"
+
+
+def test_env_var_default_syntax_with_var_missing(tmp_path, monkeypatch):
+    monkeypatch.delenv("STATE_PATH", raising=False)
+
+    config = {
+        "adapter": {"type": "cli"},
+        "llm": {"provider": "anthropic"},
+        "state": {"filesystem": {"path": "${STATE_PATH:-./.REDACTED_INTERNAL_CHANNEL/state}"}},
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+
+    loaded = load_config(config_path)
+    assert loaded["state"]["filesystem"]["path"] == "./.REDACTED_INTERNAL_CHANNEL/state"
+
+
 def test_missing_config():
     import pytest
     with pytest.raises(FileNotFoundError):

@@ -107,9 +107,6 @@ class Engine:
         learning_config = config.get("learning", {})
         self._learning_config = learning_config
 
-        # Injected by Slack adapter so handle_channel_join can fetch history
-        self._fetch_channel_history_fn = None
-
         # Session memory
         session_config = config.get("sessions", {})
         self._sessions = SessionManager(
@@ -123,12 +120,17 @@ class Engine:
 
         Called from run_cmd after adapters are created but before they start.
         Skills that export bind(engine, adapter) get called here.
+
+        Each adapter is offered to each skill in order so skills that look for
+        a specific interface (e.g. slack_client) find it regardless of adapter
+        list position.
         """
-        primary_adapter = adapters[0][1] if adapters else None
         for skill_name, skill in self._skills.items():
-            if skill.bind:
+            if not skill.bind:
+                continue
+            for _, adapter in adapters:
                 try:
-                    skill.bind(self, primary_adapter)
+                    skill.bind(self, adapter)
                 except Exception:
                     logger.warning("Skill %s bind() failed", skill_name, exc_info=True)
 
@@ -149,7 +151,32 @@ class Engine:
         session = self._sessions.load(session_key)
         history = self._build_history(session)
 
-        messages = history + [{"role": "user", "content": message.text}]
+        # Thread backfill — first @mention in an existing thread (no agent turns yet)
+        # Fetch prior messages so the agent has full context from the start.
+        backfill_prefix = ""
+        is_thread_reply = message.thread_id and message.thread_id != message.message_id
+        if is_thread_reply and not session.get("turns"):
+            thread_history = adapter.fetch_thread_context(message.channel_id, message.thread_id)
+            if thread_history:
+                backfill_prefix = (
+                    "[Thread history — messages before you were mentioned:]\n"
+                    + "\n".join(f"  {line}" for line in thread_history)
+                    + "\n\n"
+                )
+
+        # Drain any thread observations accumulated since the last agent response
+        pending = self._sessions.pop_observations(session_key)
+        if pending:
+            context_lines = "\n".join(f"  {o['user_id']}: {o['text']}" for o in pending)
+            user_content = (
+                f"{backfill_prefix}"
+                f"[Thread context — messages since your last response:]\n{context_lines}\n\n"
+                f"{message.text}"
+            )
+        else:
+            user_content = f"{backfill_prefix}{message.text}"
+
+        messages = history + [{"role": "user", "content": user_content}]
 
         # Initial LLM call
         adapter.on_thinking_start()
@@ -300,38 +327,11 @@ class Engine:
         session_key = SessionManager.session_key("slack", f"onboard:{channel_id}", agent_id=self._agent_id)
         self._sessions.delete(session_key)
 
-        history_lines: list[str] = []
-        user_map: dict[str, str] = {}
-
-        # Ask the Slack adapter to fetch history — injected via _fetch_channel_history_fn
-        if self._fetch_channel_history_fn:
-            limit = onboarding_config.get("history_messages", 100)
-            history_lines, user_map = self._fetch_channel_history_fn(channel_id, limit)
-
-        # Build the synthetic onboarding prompt
-        history_section = ""
-        if history_lines and onboarding_config.get("history_scan", True):
-            history_section = "\n\nRecent channel messages (oldest first):\n" + "\n".join(history_lines)
-
-        user_map_section = ""
-        if user_map:
-            lines = [f"- {name} (Slack ID: {uid})" for uid, name in sorted(user_map.items(), key=lambda x: x[1])]
-            user_map_section = "\n\nKnown Slack users in this channel:\n" + "\n".join(lines)
-
         synthetic_text = (
             f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n"
-            f"Your job right now is to onboard yourself to this channel so you can be effective immediately.\n"
-            f"\n"
-            f"Steps:\n"
-            f"1. Review the channel history below and save what's useful to memory using memory_write "
-            f"(channel context, team members and what they own, recurring topics, terminology).\n"
-            f"2. Save the Slack user map to memory/team/slack_users.md (overwrite) so you can @mention "
-            f"people correctly in future.\n"
-            f"3. Write a short intro message (3-5 sentences, no bullet points, no emojis) to post in the channel. "
-            f"Reference something specific you learned from the history to show you've been paying attention.\n"
+            f"Use your available tools to learn about this channel, save what's useful to memory, "
+            f"and write a short intro message (3-5 sentences, no bullet points, no emojis).\n"
             f"Respond with only the intro message text — nothing else."
-            f"{user_map_section}"
-            f"{history_section}"
         )
 
         fake_message = IncomingMessage(
@@ -349,11 +349,54 @@ class Engine:
                 tool_name = getattr(request, "tool_name", "") or ""
                 return tool_name.startswith("memory__")
 
+            def on_thinking_start(self): pass
+            def on_thinking_end(self, elapsed_s): pass
+            def on_tool_start(self, tool_name, tool_input): pass
+            def on_tool_end(self, tool_name, elapsed_s, approved): pass
+            def on_synthesizing(self): pass
+            def fetch_thread_context(self, channel_id, thread_ts): return None
+
         return self.handle(fake_message, _NoOpAdapter())
 
-    def set_fetch_channel_history_fn(self, fn) -> None:
-        """Inject the adapter's history-fetch function after construction."""
-        self._fetch_channel_history_fn = fn
+    def _log_to_channel_context(self, message: IncomingMessage) -> None:
+        """Append a single message line to channel_context/{channel_id}.md.
+
+        Uses message.message_id as the timestamp — for Slack messages this is
+        the actual Slack ts (e.g. '1736553600.123456') which the LLM can use
+        directly as thread_ts. ISO wall-clock time would cause the LLM to
+        hallucinate invalid thread_ts values when trying to reply in threads.
+        """
+        if self._memory is None:
+            return
+        self._memory.write(
+            f"channel_context/{message.channel_id}.md",
+            f"{message.message_id} | {message.user_id} | {message.text}\n",
+            append=True,
+        )
+
+    def observe(self, message: IncomingMessage) -> None:
+        """Silently record an observed message to channel memory. No LLM call.
+
+        If the message is a thread reply and the agent has an active session for
+        that thread (at least one completed turn), also store it as a pending
+        observation so the agent sees it as context on the next @mention.
+        """
+        self._log_to_channel_context(message)
+
+        if message.thread_id:
+            key = SessionManager.session_key(
+                message.platform, message.thread_id, agent_id=self._agent_id
+            )
+            session = self._sessions.get_session(key)
+            if session and session.get("turns"):
+                # Skip if this message was just processed by handle() — it's already
+                # in the session history and doesn't need to be shown again as context.
+                last_turn = session["turns"][-1]
+                if last_turn.get("user_message") != message.text:
+                    self._sessions.append_observation(key, {
+                        "user_id": message.user_id,
+                        "text": message.text,
+                    })
 
     def _build_history(self, session: dict) -> list[dict]:
         """Convert recent session turns into LLM message pairs.

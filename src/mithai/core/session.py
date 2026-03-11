@@ -57,6 +57,27 @@ class SessionManager:
         session["updated_at"] = datetime.now(timezone.utc).isoformat()
         self._state.set(NAMESPACE, key, session)
 
+    def append_observation(self, key: str, observation: dict) -> None:
+        """Append a passive thread observation (no agent response) to the session."""
+        session = self._state.get(NAMESPACE, key)
+        if session is None:
+            return
+        if "pending_observations" not in session:
+            session["pending_observations"] = []
+        session["pending_observations"].append(observation)
+        session["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._state.set(NAMESPACE, key, session)
+
+    def pop_observations(self, key: str) -> list[dict]:
+        """Return and clear pending observations for a session."""
+        session = self._state.get(NAMESPACE, key)
+        if not session:
+            return []
+        observations = session.pop("pending_observations", [])
+        if observations:
+            self._state.set(NAMESPACE, key, session)
+        return observations
+
     def delete(self, key: str) -> None:
         """Delete a session by key."""
         self._state.delete(NAMESPACE, key)

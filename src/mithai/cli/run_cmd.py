@@ -22,7 +22,7 @@ from mithai.core.config import (
 @click.option(
     "--adapter",
     "adapter_override",
-    type=click.Choice(["cli", "slack", "telegram"]),
+    type=click.Choice(["cli", "slack", "slack_http", "telegram"]),
     default=None,
     help="Run only this adapter (overrides config, single-agent mode only)",
 )
@@ -33,12 +33,16 @@ def run(config_path, adapter_override, verbose):
 
     config = load_config(config_path)
 
-    agents_config = get_agents(config)
+    try:
+        agents_config = get_agents(config)
 
-    if agents_config:
-        _run_multi_agent(config, agents_config)
-    else:
-        _run_single_agent(config, adapter_override)
+        if agents_config:
+            _run_multi_agent(config, agents_config)
+        else:
+            _run_single_agent(config, adapter_override)
+    except (RuntimeError, ImportError) as exc:
+        console.print(f"\n  [red bold]Error:[/] {exc}\n")
+        raise SystemExit(1) from None
 
 
 def _run_single_agent(config: dict, adapter_override: str | None):
@@ -53,7 +57,9 @@ def _run_single_agent(config: dict, adapter_override: str | None):
 
     adapters = []
     for adapter_type in adapter_types:
-        adapter = _create_adapter(config, adapter_type)
+        adapter_config = get_adapter_config(config, adapter_type)
+        respond = adapter_config.get("respond", "all")
+        adapter = _create_adapter(config, adapter_type, respond=respond)
         adapters.append((adapter_type, adapter))
 
     engine.late_bind(adapters)
@@ -63,12 +69,7 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         if hasattr(adapter, "set_engine"):
             adapter.set_engine(engine)
 
-    # Wire Slack adapter's history-fetch function into the engine for onboarding
-    for name, adapter in adapters:
-        if name == "slack":
-            from mithai.adapters.slack import SlackAdapter
-            if isinstance(adapter, SlackAdapter):
-                engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+    heartbeat = _start_heartbeat(config, engine)
 
     # Show startup info
     banner_small("run")
@@ -89,23 +90,27 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         name, adapter = adapters[0]
         ok(f"Starting with [bright_cyan]{name}[/] adapter")
         console.print()
-        on_join = engine.handle_channel_join if name == "slack" else None
+        on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
+        on_observe = engine.observe
         try:
-            adapter.start(on_message=engine.handle, on_channel_join=on_join)
+            adapter.start(on_message=engine.handle, on_channel_join=on_join, on_observe=on_observe)
         except KeyboardInterrupt:
             console.print("\n  [muted]Shutting down...[/]")
         finally:
             adapter.stop()
+            if heartbeat:
+                heartbeat.stop()
     else:
         ok(f"Starting with adapters: [bright_cyan]{', '.join(adapter_names)}[/]")
         console.print()
 
         threads = []
         for name, adapter in adapters:
-            on_join = engine.handle_channel_join if name == "slack" else None
+            on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
+            on_observe = engine.observe
             t = threading.Thread(
                 target=_run_adapter,
-                args=(name, adapter, engine.handle, on_join),
+                args=(name, adapter, engine.handle, on_join, on_observe),
                 daemon=True,
             )
             t.start()
@@ -118,6 +123,8 @@ def _run_single_agent(config: dict, adapter_override: str | None):
             console.print("\n  [muted]Shutting down...[/]")
             for _, adapter in adapters:
                 adapter.stop()
+            if heartbeat:
+                heartbeat.stop()
 
 
 def _run_multi_agent(config: dict, agents_config: dict):
@@ -130,7 +137,8 @@ def _run_multi_agent(config: dict, agents_config: dict):
         engine = engines[agent_id]
         agent_adapter_cfg = agent_def.get("adapter", {})
         for adapter_type, type_cfg in agent_adapter_cfg.items():
-            adapter = _create_adapter(config, adapter_type, adapter_config=type_cfg)
+            respond = agent_def.get("respond") or type_cfg.get("respond", "all")
+            adapter = _create_adapter(config, adapter_type, adapter_config=type_cfg, respond=respond)
             all_adapters.append((agent_id, adapter_type, adapter, engine))
 
     if not all_adapters:
@@ -139,16 +147,13 @@ def _run_multi_agent(config: dict, agents_config: dict):
         )
 
     # Late-bind each engine with its own adapters
+    heartbeats = []
     for agent_id, engine in engines.items():
         agent_adapters = [(t, a) for aid, t, a, _ in all_adapters if aid == agent_id]
         engine.late_bind(agent_adapters)
-
-    # Wire history-fetch and channel-join callbacks for Slack adapters
-    for agent_id, adapter_type, adapter, engine in all_adapters:
-        if adapter_type == "slack":
-            from mithai.adapters.slack import SlackAdapter
-            if isinstance(adapter, SlackAdapter):
-                engine.set_fetch_channel_history_fn(adapter._fetch_channel_history)
+        hb = _start_heartbeat(get_agent_config(config, agent_id), engine)
+        if hb:
+            heartbeats.append(hb)
 
     # Show startup info
     banner_small("multi-agent")
@@ -168,10 +173,11 @@ def _run_multi_agent(config: dict, agents_config: dict):
     for agent_id, adapter_type, adapter, engine in all_adapters:
         label = f"{agent_id}/{adapter_type}"
         info(f"Starting [bright_cyan]{label}[/]")
-        on_join = engine.handle_channel_join if adapter_type == "slack" else None
+        on_join = engine.handle_channel_join if adapter_type in ("slack", "slack_http") else None
+        on_observe = engine.observe
         t = threading.Thread(
             target=_run_adapter,
-            args=(label, adapter, engine.handle, on_join),
+            args=(label, adapter, engine.handle, on_join, on_observe),
             daemon=True,
         )
         t.start()
@@ -186,14 +192,16 @@ def _run_multi_agent(config: dict, agents_config: dict):
         console.print("\n  [muted]Shutting down...[/]")
         for _, _, adapter, _ in all_adapters:
             adapter.stop()
+        for hb in heartbeats:
+            hb.stop()
 
 
-def _run_adapter(name: str, adapter, on_message, on_channel_join=None):
+def _run_adapter(name: str, adapter, on_message, on_channel_join=None, on_observe=None):
     """Run a single adapter in a thread."""
     logger = logging.getLogger(f"mithai.adapter.{name}")
     try:
         logger.info("Starting %s adapter", name)
-        adapter.start(on_message=on_message, on_channel_join=on_channel_join)
+        adapter.start(on_message=on_message, on_channel_join=on_channel_join, on_observe=on_observe)
     except Exception:
         logger.exception("Adapter %s crashed", name)
     finally:
@@ -256,7 +264,8 @@ def _create_engines_multi(config: dict, agents_config: dict) -> dict:
     return engines
 
 
-def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None = None):
+def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None = None,
+                    respond: str = "all"):
     """Create an adapter instance.
 
     If adapter_config is provided (per-agent mode), use it directly.
@@ -275,6 +284,8 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             bot_token=adapter_config["bot_token"],
             app_token=adapter_config["app_token"],
             allowed_channels=adapter_config.get("allowed_channels"),
+            approval_timeout=adapter_config.get("approval_timeout", 300),
+            respond=respond,
         )
 
     elif adapter_type == "telegram":
@@ -282,6 +293,18 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
         return TelegramAdapter(
             bot_token=adapter_config["bot_token"],
             allowed_chat_ids=adapter_config.get("allowed_chat_ids"),
+        )
+
+    elif adapter_type == "slack_http":
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        return SlackHTTPAdapter(
+            bot_token=adapter_config["bot_token"],
+            signing_secret=adapter_config["signing_secret"],
+            host=adapter_config.get("host", "0.0.0.0"),
+            port=adapter_config.get("port", 3000),
+            allowed_channels=adapter_config.get("allowed_channels"),
+            approval_timeout=adapter_config.get("approval_timeout", 300),
+            respond=respond,
         )
 
     else:
@@ -370,3 +393,19 @@ def _create_memory_backend(config: dict):
 
     else:
         raise click.ClickException(f"Unknown memory backend: {backend}")
+
+
+def _start_heartbeat(config: dict, engine):
+    """Start a HeartbeatScheduler if enabled in config. Returns the scheduler or None."""
+    hb_config = config.get("heartbeat", {})
+    if not hb_config.get("enabled", False):
+        return None
+    if engine._memory is None:
+        return None
+
+    from mithai.core.heartbeat import HeartbeatScheduler, _DEFAULT_INTERVAL
+    interval = int(hb_config.get("interval", _DEFAULT_INTERVAL))
+    auto_approve = hb_config.get("auto_approve")  # None → HeartbeatScheduler applies its default
+    scheduler = HeartbeatScheduler(engine, engine._memory, interval=interval, auto_approve=auto_approve)
+    scheduler.start()
+    return scheduler

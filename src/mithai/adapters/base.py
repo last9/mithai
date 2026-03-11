@@ -16,6 +16,9 @@ MessageHandler = Callable[["IncomingMessage", "Adapter"], str]
 # Callback type: (channel_id, channel_name) -> response text to post (or None)
 ChannelJoinHandler = Callable[[str, str], Optional[str]]
 
+# Callback type: (message,) -> None  — called for observed messages (no reply)
+ChannelObserveHandler = Callable[["IncomingMessage"], None]
+
 
 @dataclass
 class IncomingMessage:
@@ -47,7 +50,8 @@ class Adapter(ABC):
     """
 
     @abstractmethod
-    def start(self, on_message: MessageHandler, on_channel_join: "ChannelJoinHandler | None" = None) -> None:
+    def start(self, on_message: MessageHandler, on_channel_join: "ChannelJoinHandler | None" = None,
+              on_observe: "ChannelObserveHandler | None" = None) -> None:
         """
         Start listening for messages.
 
@@ -96,3 +100,12 @@ class Adapter(ABC):
 
     def on_synthesizing(self) -> None:
         """Called before the follow-up LLM call after tool results."""
+
+    def fetch_thread_context(self, channel_id: str, thread_ts: str) -> list[str] | None:
+        """Fetch historical messages from a thread for backfill context.
+
+        Called when the agent is @mentioned in a thread for the first time and
+        needs to see what was discussed above. Returns formatted 'name: text'
+        lines oldest-first, or None if not supported by this adapter.
+        """
+        return None

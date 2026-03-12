@@ -1,5 +1,6 @@
 """Tests for respond: mentions / respond: all listen mode."""
 
+import sys
 from unittest.mock import MagicMock, patch
 
 
@@ -255,7 +256,7 @@ def test_run_cmd_on_observe_passed_when_mentions_mode():
     on_observe_fn = MagicMock()
     start_calls = {}
 
-    def capture_register(on_message, on_channel_join=None, on_observe=None):
+    def capture_register(on_message, on_channel_join=None, on_observe=None, on_bot_reply=None):
         start_calls["on_observe"] = on_observe
 
     adapter._register_message_handlers = capture_register
@@ -271,38 +272,126 @@ def test_run_cmd_on_observe_passed_when_mentions_mode():
 # ---------------------------------------------------------------------------
 
 def test_run_cmd_on_observe_always_passed_in_all_mode():
-    """on_observe is always passed regardless of respond mode — adapter uses it for all message types."""
+    """start() must forward on_observe to _register_message_handlers — verified
+    by calling the real start() method, not a fake replacement."""
     mock_app = _make_mock_app()
     mock_app_cls = MagicMock(return_value=mock_app)
 
-    with patch("slack_bolt.App", mock_app_cls, create=True):
+    mock_uvicorn = MagicMock()
+    mock_server = MagicMock()
+    mock_uvicorn.Server.return_value = mock_server
+
+    class FakeRoute:
+        def __init__(self, path, endpoint, methods=None):
+            self.path = path
+
+    mock_starlette_apps = MagicMock()
+    mock_starlette_routing = MagicMock()
+    mock_starlette_routing.Route = FakeRoute
+    mock_starlette_apps.Starlette.return_value = MagicMock()
+
+    fake_modules = {
+        "uvicorn": mock_uvicorn,
+        "starlette": MagicMock(),
+        "starlette.applications": mock_starlette_apps,
+        "starlette.routing": mock_starlette_routing,
+        "starlette.requests": MagicMock(),
+        "slack_bolt.adapter.starlette": MagicMock(),
+    }
+
+    captured = {}
+
+    with patch("slack_bolt.App", mock_app_cls, create=True), \
+         patch.dict(sys.modules, fake_modules):
         from mithai.adapters.slack_http import SlackHTTPAdapter
-        adapter = SlackHTTPAdapter(
-            bot_token="xoxb-test",
-            signing_secret="sig",
-            respond="all",
-        )
+        adapter = SlackHTTPAdapter(bot_token="xoxb-test", signing_secret="sig", respond="all")
 
-    start_calls = {}
+        def capture_register(on_message, on_channel_join=None, on_observe=None, on_bot_reply=None):
+            captured["on_observe"] = on_observe
 
-    def capture_register(on_message, on_channel_join=None, on_observe=None):
-        start_calls["on_observe"] = on_observe
+        adapter._register_message_handlers = capture_register
+        on_observe_fn = MagicMock()
+        adapter.start(on_message=MagicMock(), on_observe=on_observe_fn)
 
-    adapter._register_message_handlers = capture_register
-
-    on_observe_fn = MagicMock()
-
-    def fake_start(on_message, on_channel_join=None, on_observe=None):
-        adapter._register_message_handlers(on_message, on_channel_join, on_observe)
-
-    adapter.start = fake_start
-    adapter.start(on_message=MagicMock(), on_observe=on_observe_fn)
-
-    assert start_calls["on_observe"] is on_observe_fn
+    assert captured["on_observe"] is on_observe_fn
 
 
 # ---------------------------------------------------------------------------
-# 10. Thread session continuity — thread_id must equal ts on first message
+# 10. on_bot_reply is called with (channel, bot_user_id, response, ts)
+# ---------------------------------------------------------------------------
+
+def test_on_bot_reply_called_after_handle_message():
+    """on_bot_reply must be called with (channel, bot_user_id, response, ts)
+    after a message is handled — this logs the reply to channel_context."""
+    adapter, mock_app = _build_adapter(respond="all")
+    on_bot_reply = MagicMock()
+
+    captured = {}
+
+    def capture_decorator(pattern):
+        def decorator(fn):
+            captured["fn"] = fn
+            return fn
+        return decorator
+
+    mock_app.message.side_effect = capture_decorator
+    adapter._register_message_handlers(MagicMock(return_value="hello there"), on_bot_reply=on_bot_reply)
+    handle_message = captured["fn"]
+
+    fake_say = MagicMock()
+    fake_message = {"channel": "C1", "text": "hi", "ts": "1.0", "user": "U1"}
+    handle_message(message=fake_message, say=fake_say)
+
+    on_bot_reply.assert_called_once_with("C1", "UBOT", "hello there", "1.0")
+
+
+def test_on_bot_reply_called_after_app_mention():
+    """on_bot_reply must be called after an app_mention is handled."""
+    adapter, mock_app = _build_adapter(respond="all")
+    on_bot_reply = MagicMock()
+
+    captured = {}
+
+    def capture_event(name):
+        def decorator(fn):
+            captured[name] = fn
+            return fn
+        return decorator
+
+    mock_app.event.side_effect = capture_event
+    adapter._register_message_handlers(MagicMock(return_value="pong"), on_bot_reply=on_bot_reply)
+    handle_app_mention = captured.get("app_mention")
+
+    fake_say = MagicMock()
+    fake_event = {"channel": "C2", "text": "<@UBOT> ping", "ts": "2.0", "user": "U2"}
+    handle_app_mention(event=fake_event, say=fake_say)
+
+    on_bot_reply.assert_called_once_with("C2", "UBOT", "pong", "2.0")
+
+
+def test_on_bot_reply_not_called_when_none():
+    """If on_bot_reply is not provided, no AttributeError — just skipped."""
+    adapter, mock_app = _build_adapter(respond="all")
+
+    captured = {}
+
+    def capture_decorator(pattern):
+        def decorator(fn):
+            captured["fn"] = fn
+            return fn
+        return decorator
+
+    mock_app.message.side_effect = capture_decorator
+    adapter._register_message_handlers(MagicMock(return_value="hi"), on_bot_reply=None)
+    handle_message = captured["fn"]
+
+    # Should not raise
+    handle_message(message={"channel": "C1", "text": "test", "ts": "1.0", "user": "U1"},
+                   say=MagicMock())
+
+
+# ---------------------------------------------------------------------------
+# 11. Thread session continuity — thread_id must equal ts on first message
 #     so replies (thread_ts = that ts) land in the same session.
 # ---------------------------------------------------------------------------
 

@@ -2,7 +2,7 @@
 
 import logging
 
-from mithai.adapters.base import ChannelJoinHandler, ChannelObserveHandler, MessageHandler
+from mithai.adapters.base import BotReplyHandler, ChannelJoinHandler, ChannelObserveHandler, MessageHandler
 from mithai.adapters.slack import SlackAdapterBase
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,8 @@ class SlackHTTPAdapter(SlackAdapterBase):
         self._server = None
 
     def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None,
-              on_observe: ChannelObserveHandler | None = None) -> None:
+              on_observe: ChannelObserveHandler | None = None,
+              on_bot_reply: BotReplyHandler | None = None) -> None:
         try:
             import uvicorn
             from slack_bolt.adapter.starlette import SlackRequestHandler
@@ -46,7 +47,7 @@ class SlackHTTPAdapter(SlackAdapterBase):
                 "Install with: pip install mithai[slack]"
             )
 
-        self._register_message_handlers(on_message, on_channel_join, on_observe)
+        self._register_message_handlers(on_message, on_channel_join, on_observe, on_bot_reply)
 
         bolt_handler = SlackRequestHandler(self._app)
 

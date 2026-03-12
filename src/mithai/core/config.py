@@ -7,6 +7,196 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+
+# Slack Socket Mode adapter (adapter.slack)
+# Ref: https://api.slack.com/apis/socket-mode
+class SlackAdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bot_token: str | None = None     # xoxb-... OAuth bot token
+    app_token: str | None = None     # xapp-... Socket Mode app-level token
+    allowed_channels: list[str] | None = None  # channel IDs whitelist
+    approval_timeout: int | None = None        # seconds; default 300
+    respond: str | None = None                 # "all" or "mentions"
+
+
+# Slack HTTP adapter (adapter.slack_http)
+# Ref: https://api.slack.com/apis/http
+class SlackHTTPAdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bot_token: str | None = None
+    signing_secret: str | None = None  # HMAC signing secret for request verification
+    host: str | None = None
+    port: int | None = None
+    allowed_channels: list[str] | None = None
+    approval_timeout: int | None = None
+    respond: str | None = None
+
+
+# Telegram Bot adapter (adapter.telegram)
+# Ref: https://core.telegram.org/bots/api — chat_id is a signed 64-bit integer
+class TelegramAdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bot_token: str | None = None
+    allowed_chat_ids: list[int] | None = None  # signed int64 per Telegram Bot API
+
+
+class AdapterConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str | None = None
+    types: list[str] | None = None
+    slack: SlackAdapterConfig | None = None
+    slack_http: SlackHTTPAdapterConfig | None = None
+    telegram: TelegramAdapterConfig | None = None
+
+
+class LLMAnthropicConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    api_key: str | None = None
+
+
+class LLMConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    provider: str | None = None
+    model: str | None = None
+    max_tokens: int | None = None
+    anthropic: LLMAnthropicConfig | None = None
+
+
+class FilesystemMemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    path: str | None = None
+
+
+# Ref: https://redis-py.readthedocs.io/en/stable/connections.html
+class RedisMemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    url: str | None = None    # redis://host:port
+    prefix: str | None = None
+
+
+# Ref: https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html
+class S3MemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bucket: str | None = None
+    prefix: str | None = None
+    region: str | None = None
+    profile: str | None = None  # AWS CLI named profile
+
+
+class MemoryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    backend: str | None = None
+    filesystem: FilesystemMemoryConfig | None = None
+    redis: RedisMemoryConfig | None = None
+    s3: S3MemoryConfig | None = None
+    memory_dir: str | None = None  # legacy flat path field
+
+
+class LearningConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+    reflection: bool | None = None
+    approval_auto_promote: int | None = None  # threshold count, not a flag
+    memory: MemoryConfig | None = None
+
+
+class HeartbeatConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+    interval: int | None = None                        # seconds
+    auto_approve: list[str] | str | None = None        # tool name prefixes to skip approval
+
+
+class StateFilesystemConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    path: str | None = None
+
+
+class StateConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    backend: str | None = None
+    filesystem: StateFilesystemConfig | None = None
+
+
+class UIConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    host: str | None = None
+    port: int | None = None
+    auth_token: str | None = None
+
+
+class AgentSkillsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    allowed: list[str] | None = None
+
+
+class AgentConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str | None = None
+    system_prompt: str | None = None
+    skills: AgentSkillsConfig | None = None
+    memory: MemoryConfig | None = None
+    adapter: AdapterConfig | None = None
+    learning: LearningConfig | None = None
+
+
+class BotConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    system_prompt: str | None = None
+
+
+class SkillsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    paths: list[str] | None = None
+    config: dict[str, dict] | None = None
+
+
+class SessionsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    max_stored: int | None = None   # max sessions retained on disk
+    max_history: int | None = None  # max turns sent to LLM context
+
+
+class OnboardingConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+
+
+class HumanConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    timeout_seconds: int | None = None
+    overrides: dict[str, str | None] | None = None  # tool prefix → "approve"|"confirm"|None
+
+
+class MithaiConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    bot: BotConfig | None = None
+    adapter: AdapterConfig | None = None
+    llm: LLMConfig | None = None
+    mcp_servers: dict | None = None
+    skills: SkillsConfig | None = None
+    learning: LearningConfig | None = None
+    heartbeat: HeartbeatConfig | None = None
+    agents: dict[str, AgentConfig] | None = None
+    default_agent: str | None = None
+    state: StateConfig | None = None
+    ui: UIConfig | None = None
+    sessions: SessionsConfig | None = None
+    onboarding: OnboardingConfig | None = None
+    human: HumanConfig | None = None
+
+
+def _validate_config_schema(config: dict) -> None:
+    try:
+        MithaiConfig.model_validate(config)
+    except ValidationError as e:
+        lines = ["Config validation failed:"]
+        for err in e.errors():
+            loc = " -> ".join(str(p) for p in err["loc"])
+            lines.append(f"  [{loc}] {err['msg']}")
+        raise ValueError("\n".join(lines)) from None
 
 
 def _resolve_env_vars(value: Any) -> Any:
@@ -58,20 +248,29 @@ def load_config(config_path: str | Path | None = None, env_path: str | Path | No
 
     config = _resolve_env_vars(raw)
     _validate_config(config)
+    _validate_config_schema(config)
     return config
 
 
 def _validate_config(config: dict) -> None:
-    """Validate required config sections exist."""
-    if "adapter" not in config:
-        raise ValueError("Config must have an 'adapter' section")
-    adapter = config["adapter"]
-    has_type = "type" in adapter
-    has_types = "types" in adapter
-    if not has_type and not has_types:
-        raise ValueError("Config adapter must have 'type' or 'types' field")
-    if "llm" not in config:
-        raise ValueError("Config must have an 'llm' section")
+    """Validate required config sections exist.
+
+    Multi-agent configs define adapters under `agents.<id>.adapter` and may
+    omit the top-level `adapter` / `llm` sections, so those checks are skipped
+    when an `agents` section is present.
+    """
+    is_multi_agent = bool(config.get("agents"))
+
+    if not is_multi_agent:
+        if "adapter" not in config:
+            raise ValueError("Config must have an 'adapter' section")
+        adapter = config["adapter"]
+        has_type = "type" in adapter
+        has_types = "types" in adapter
+        if not has_type and not has_types:
+            raise ValueError("Config adapter must have 'type' or 'types' field")
+        if "llm" not in config:
+            raise ValueError("Config must have an 'llm' section")
 
 
 def get_adapter_types(config: dict) -> list[str]:

@@ -28,6 +28,14 @@ data:
       anthropic:
         api_key: ${ANTHROPIC_API_KEY}
 
+    # MCP servers — shared infrastructure for tool backends
+    mcp_servers:
+      last9:
+        transport: streamablehttp
+        url: https://app.last9.io/api/v4/organizations/last9/mcp
+        headers:
+          X-LAST9-API-TOKEN: Bearer ${LAST9_API_TOKEN}
+
     skills:
       paths:
         - /app/skills

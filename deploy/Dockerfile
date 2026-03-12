@@ -11,7 +11,7 @@ COPY src/ src/
 
 RUN python -m venv /app/.venv && \
     /app/.venv/bin/pip install --upgrade pip --quiet && \
-    /app/.venv/bin/pip install ".[slack]" --quiet && \
+    /app/.venv/bin/pip install ".[slack,mcp]" --quiet && \
     echo "=== entry point ===" && \
     head -1 /app/.venv/bin/mithai && \
     /app/.venv/bin/mithai --help

@@ -160,30 +160,6 @@ state:
   # -- State backend (filesystem)
   backend: filesystem
 
-# -----------------------------------------------------------------------------
-# Persistence (PVC)
-# -----------------------------------------------------------------------------
-persistence:
-  state:
-    # -- Enable PVC for state directory (else emptyDir)
-    enabled: false
-    # -- PVC size
-    size: 1Gi
-    # -- Storage class (empty = cluster default)
-    storageClass: ""
-    # -- Access modes
-    accessModes:
-      - ReadWriteOnce
-  memory:
-    # -- Enable PVC for memory directory (else emptyDir)
-    enabled: false
-    # -- PVC size
-    size: 1Gi
-    # -- Storage class (empty = cluster default)
-    storageClass: ""
-    # -- Access modes
-    accessModes:
-      - ReadWriteOnce
 
 # -----------------------------------------------------------------------------
 # Resource limits

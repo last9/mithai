@@ -58,19 +58,9 @@ spec:
           configMap:
             name: {{ include "mithai.fullname" . }}-config
         - name: state
-          {{- if .Values.persistence.state.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "mithai.fullname" . }}-state
-          {{- else }}
           emptyDir: {}
-          {{- end }}
         - name: memory
-          {{- if .Values.persistence.memory.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "mithai.fullname" . }}-memory
-          {{- else }}
           emptyDir: {}
-          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

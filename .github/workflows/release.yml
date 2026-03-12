@@ -69,8 +69,6 @@ jobs:
             platform: darwin-arm64
           - runner: ubuntu-latest
             platform: linux-amd64
-          - runner: windows-latest
-            platform: windows-amd64
 
     steps:
       - uses: actions/checkout@v4

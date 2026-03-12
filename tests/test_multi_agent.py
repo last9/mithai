@@ -390,13 +390,79 @@ class TestEngineAgentId:
         assert key_no_agent == "slack:C123"
         assert key_no_agent != key_with_agent
 
-    def test_engine_stores_agent_id(self):
-        engine = self._make_engine(agent_id="devops")
-        assert engine._agent_id == "devops"
+    def test_engine_uses_agent_id_for_session_isolation(self):
+        """Two engines with different agent_ids sharing the same state must not
+        see each other's conversation history on the same channel."""
+        from mithai.adapters.base import IncomingMessage
+        from mithai.state.memory import MemoryStateBackend
 
-    def test_engine_without_agent_id(self):
-        engine = self._make_engine()
-        assert engine._agent_id is None
+        shared_state = MemoryStateBackend()
+
+        llm = MagicMock()
+        resp = MagicMock()
+        resp.content = [{"type": "text", "text": "ok"}]
+        resp.stop_reason = "end_turn"
+        llm.create_message.return_value = resp
+
+        config = {
+            "bot": {"system_prompt": "test"},
+            "learning": {"enabled": False},
+            "llm": {"provider": "anthropic", "api_key": "k"},
+            "skills": {"paths": []},
+        }
+        from mithai.core.engine import Engine
+        engine_devops = Engine(config=config, llm=llm, state=shared_state, agent_id="devops", skills={})
+
+        adapter = MagicMock()
+        adapter.fetch_thread_context.return_value = None
+
+        msg = IncomingMessage(
+            text="hello from devops",
+            channel_id="C1", user_id="alice",
+            platform="slack", thread_id="111.000",
+        )
+        engine_devops.handle(msg, adapter)
+
+        # Support engine's session for the same thread must be empty
+        key_support = SessionManager.session_key("slack", "111.000", agent_id="support")
+        session = shared_state.get("sessions", key_support)
+        assert session is None or not session.get("turns")
+
+    def test_engine_without_agent_id_does_not_pollute_named_agent_sessions(self):
+        """An engine with no agent_id must use a bare session key, leaving
+        named-agent sessions untouched."""
+        from mithai.adapters.base import IncomingMessage
+        from mithai.state.memory import MemoryStateBackend
+
+        shared_state = MemoryStateBackend()
+
+        llm = MagicMock()
+        resp = MagicMock()
+        resp.content = [{"type": "text", "text": "ok"}]
+        resp.stop_reason = "end_turn"
+        llm.create_message.return_value = resp
+
+        config = {
+            "bot": {"system_prompt": "test"},
+            "learning": {"enabled": False},
+            "llm": {"provider": "anthropic", "api_key": "k"},
+            "skills": {"paths": []},
+        }
+        from mithai.core.engine import Engine
+        engine_bare = Engine(config=config, llm=llm, state=shared_state, agent_id=None, skills={})
+        adapter = MagicMock()
+        adapter.fetch_thread_context.return_value = None
+
+        msg = IncomingMessage(
+            text="hello", channel_id="C1", user_id="alice",
+            platform="slack", thread_id="111.000",
+        )
+        engine_bare.handle(msg, adapter)
+
+        # Named-agent session for the same thread must be empty
+        key_named = SessionManager.session_key("slack", "111.000", agent_id="devops")
+        session = shared_state.get("sessions", key_named)
+        assert session is None or not session.get("turns")
 
 
 # ---------------------------------------------------------------------------

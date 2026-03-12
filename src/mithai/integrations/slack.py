@@ -53,7 +53,9 @@ class SlackClient:
 
         formatted = []
         for msg in reversed(raw_messages):  # oldest first
-            uid = msg.get("user", "unknown")
+            uid = msg.get("user")
+            if not uid:
+                continue  # skip bot/system messages with no user field
             name = user_map.get(uid, uid)
             text = _replace_mentions(msg.get("text", "")).strip()
             if text:

@@ -19,6 +19,9 @@ ChannelJoinHandler = Callable[[str, str], Optional[str]]
 # Callback type: (message,) -> None  — called for observed messages (no reply)
 ChannelObserveHandler = Callable[["IncomingMessage"], None]
 
+# Callback type: (channel_id, user_id, text, message_id) -> None — log bot reply to channel_context
+BotReplyHandler = Callable[[str, str, str, str], None]
+
 
 @dataclass
 class IncomingMessage:

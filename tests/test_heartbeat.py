@@ -117,27 +117,42 @@ def test_tick_passes_heartbeat_adapter():
 
 
 def test_tick_passes_auto_approve_to_adapter():
+    """Adapter passed to engine.handle must approve tools from the configured list."""
     engine = MagicMock()
     memory = MagicMock()
     memory.read.return_value = "do something"
+    memory.list_files.return_value = []
     scheduler = HeartbeatScheduler(
         engine, memory, interval=9999,
         auto_approve=["memory__", "slack__send_message"],
     )
     scheduler._tick()
     adapter = engine.handle.call_args[0][1]
-    assert isinstance(adapter, _HeartbeatAdapter)
-    assert adapter._auto_approve == ["memory__", "slack__send_message"]
+
+    req = MagicMock()
+    req.tool_name = "slack__send_message"
+    assert adapter.request_human_approval(req, "C1") is True
+
+    req.tool_name = "shell__run"
+    assert adapter.request_human_approval(req, "C1") is False
 
 
 def test_tick_default_auto_approve_is_memory():
+    """Default adapter must approve memory__ tools and deny everything else."""
     engine = MagicMock()
     memory = MagicMock()
     memory.read.return_value = "do something"
+    memory.list_files.return_value = []
     scheduler = HeartbeatScheduler(engine, memory, interval=9999)
     scheduler._tick()
     adapter = engine.handle.call_args[0][1]
-    assert adapter._auto_approve == ["memory__"]
+
+    req = MagicMock()
+    req.tool_name = "memory__write"
+    assert adapter.request_human_approval(req, "C1") is True
+
+    req.tool_name = "slack__send_message"
+    assert adapter.request_human_approval(req, "C1") is False
 
 
 def test_tick_reads_heartbeat_file_each_call():
@@ -276,9 +291,13 @@ def test_start_heartbeat_default_interval():
 
 
 def test_start_heartbeat_passes_auto_approve_from_config():
+    """auto_approve from config must gate tool approval in the tick's adapter."""
     from mithai.cli.run_cmd import _start_heartbeat
     engine = MagicMock()
-    engine._memory = MagicMock()
+    memory = MagicMock()
+    memory.read.return_value = "do something"
+    memory.list_files.return_value = []
+    engine._memory = memory
     config = {
         "heartbeat": {
             "enabled": True,
@@ -287,21 +306,43 @@ def test_start_heartbeat_passes_auto_approve_from_config():
     }
     scheduler = _start_heartbeat(config, engine)
     try:
-        assert scheduler._auto_approve == ["memory__", "slack__send_message"]
+        scheduler.stop()  # stop background thread before manual tick
+        scheduler._tick()
     finally:
-        scheduler.stop()
+        pass  # already stopped
+
+    adapter = engine.handle.call_args[0][1]
+    req = MagicMock()
+    req.tool_name = "slack__send_message"
+    assert adapter.request_human_approval(req, "C1") is True
+
+    req.tool_name = "shell__run"
+    assert adapter.request_human_approval(req, "C1") is False
 
 
 def test_start_heartbeat_default_auto_approve_is_memory():
+    """Without explicit auto_approve config, only memory__ tools are auto-approved."""
     from mithai.cli.run_cmd import _start_heartbeat
     engine = MagicMock()
-    engine._memory = MagicMock()
+    memory = MagicMock()
+    memory.read.return_value = "do something"
+    memory.list_files.return_value = []
+    engine._memory = memory
     config = {"heartbeat": {"enabled": True}}
     scheduler = _start_heartbeat(config, engine)
     try:
-        assert scheduler._auto_approve == ["memory__"]
-    finally:
         scheduler.stop()
+        scheduler._tick()
+    finally:
+        pass
+
+    adapter = engine.handle.call_args[0][1]
+    req = MagicMock()
+    req.tool_name = "memory__write"
+    assert adapter.request_human_approval(req, "C1") is True
+
+    req.tool_name = "slack__send_message"
+    assert adapter.request_human_approval(req, "C1") is False
 
 
 # ---------------------------------------------------------------------------

@@ -83,3 +83,98 @@ def test_get_skill_paths_default():
     paths = get_skill_paths({})
     # At minimum includes bundled skills path and default ./skills
     assert len(paths) >= 1
+
+
+def test_schema_valid_minimal_config(tmp_path):
+    config = {
+        "adapter": {"type": "cli"},
+        "llm": {"provider": "anthropic"},
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+    loaded = load_config(config_path)
+    assert loaded["adapter"]["type"] == "cli"
+
+
+def test_schema_unknown_top_level_key_allowed(tmp_path):
+    config = {
+        "adapter": {"type": "cli"},
+        "llm": {"provider": "anthropic"},
+        "unknown_future_key": {"foo": "bar"},
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+    # Should not raise
+    loaded = load_config(config_path)
+    assert loaded["unknown_future_key"]["foo"] == "bar"
+
+
+def test_schema_wrong_type_max_tokens(tmp_path):
+    import pytest
+    config = {
+        "adapter": {"type": "cli"},
+        "llm": {"provider": "anthropic", "max_tokens": "notanint"},
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+    with pytest.raises(ValueError, match=r"llm -> max_tokens"):
+        load_config(config_path)
+
+
+def test_schema_wrong_type_heartbeat_enabled(tmp_path):
+    import pytest
+    config = {
+        "adapter": {"type": "cli"},
+        "llm": {"provider": "anthropic"},
+        "heartbeat": {"enabled": "yes_please"},
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+    with pytest.raises(ValueError, match=r"heartbeat -> enabled"):
+        load_config(config_path)
+
+
+# ---------------------------------------------------------------------------
+# Regression: multi-agent config must load without top-level adapter/llm
+#
+# `_validate_config` and MithaiConfig schema must not reject configs where
+# `adapter` / `llm` are absent at the top level — multi-agent configs define
+# adapters under `agents.<id>.adapter` and may define llm per-agent.
+# ---------------------------------------------------------------------------
+
+def test_load_config_multi_agent_without_top_level_adapter(tmp_path):
+    """A valid multi-agent config has no top-level 'adapter' — must load cleanly."""
+    config = {
+        "llm": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "agents": {
+            "ops": {
+                "adapter": {"slack": {"bot_token": "xoxb-ops", "app_token": "xapp-ops"}},
+            },
+            "dev": {
+                "adapter": {"slack": {"bot_token": "xoxb-dev", "app_token": "xapp-dev"}},
+            },
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+
+    loaded = load_config(config_path)
+    assert "agents" in loaded
+    assert "ops" in loaded["agents"]
+
+
+def test_load_config_multi_agent_without_top_level_llm(tmp_path):
+    """A valid multi-agent config may omit top-level 'llm' — must load cleanly."""
+    config = {
+        "agents": {
+            "ops": {
+                "adapter": {"slack": {"bot_token": "xoxb-ops", "app_token": "xapp-ops"}},
+                "llm": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+            },
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+
+    loaded = load_config(config_path)
+    assert "agents" in loaded

@@ -28,6 +28,14 @@ data:
       anthropic:
         api_key: ${ANTHROPIC_API_KEY}
 
+    # MCP servers — shared infrastructure for tool backends
+    mcp_servers:
+      last9:
+        transport: streamablehttp
+        url: https://mcp.example.com
+        headers:
+          X-API-TOKEN: Bearer ${EXAMPLE_API_TOKEN}
+
     skills:
       paths:
         - /app/skills

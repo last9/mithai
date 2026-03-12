@@ -2,7 +2,7 @@
 mithai has been deployed to namespace {{ .Release.Namespace }}.
 
 1. Bot status:
-   kubectl get pods -n {{ .Release.Namespace }} -l "{{ include "mithai.selectorLabels" . | replace "\n" "," }}"
+   kubectl get pods -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "mithai.name" . }}"
 
 2. View logs:
    kubectl logs -n {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "mithai.name" . }}" -f

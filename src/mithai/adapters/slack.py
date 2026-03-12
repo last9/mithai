@@ -232,8 +232,16 @@ class SlackAdapterBase(Adapter):
             if self._allowed_channels and channel not in self._allowed_channels:
                 return
 
-            # Strip the @mention from the text
-            text = re.sub(r"<@[A-Z0-9]+>\s*", "", event.get("text", "")).strip()
+            # Strip only the bot's own @mention; resolve other user mentions to display names
+            raw_text = event.get("text", "")
+            bot_id = self._bot_user_id or ""
+            other_user_ids = set(re.findall(r"<@([A-Z0-9]+)>", raw_text)) - {bot_id}
+            user_map = self._slack_client.resolve_user_ids(other_user_ids) if other_user_ids else {}
+            text = re.sub(
+                r"<@([A-Z0-9]+)>\s*",
+                lambda m: "" if m.group(1) == bot_id else f"@{user_map.get(m.group(1), m.group(1))} ",
+                raw_text,
+            ).strip()
             if not text:
                 say("How can I help?")
                 return

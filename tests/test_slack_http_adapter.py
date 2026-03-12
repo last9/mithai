@@ -437,6 +437,96 @@ def test_thread_ts_missing_on_new_thread_does_not_raise():
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# app_mention handler: user mention preservation
+# ---------------------------------------------------------------------------
+
+def _capture_app_mention_handler(adapter, on_message, on_bot_reply=None):
+    """Register message handlers and return the captured app_mention handler fn."""
+    captured = {}
+
+    original_event = adapter._app.event.side_effect
+
+    def capture_event(name):
+        def decorator(fn):
+            captured[name] = fn
+            return fn
+        return decorator
+
+    adapter._app.event.side_effect = capture_event
+    adapter._register_message_handlers(on_message, on_bot_reply=on_bot_reply)
+    adapter._app.event.side_effect = original_event
+    return captured.get("app_mention")
+
+
+def test_app_mention_preserves_user_mentions_in_message():
+    """Non-bot @mentions in the message body must be resolved to display names, not stripped.
+
+    Regression: "@REDACTED_INTERNAL_CHANNEL Dream11 is owned by @Mukta" was delivered to the
+    agent as "Dream11 is owned by" because the regex stripped ALL <@USER> tokens.
+    """
+    adapter, mock_app, _ = _build_socket_adapter()[:3]
+
+    received_texts = []
+
+    def on_message(incoming, _adapter):
+        received_texts.append(incoming.text)
+        return "ok"
+
+    # Simulate bot user ID resolved at startup (auth_test is called inside _register_message_handlers)
+    mock_app.client.auth_test.return_value = {"user_id": "UBOT"}
+    # Mock _slack_client.resolve_user_ids so @UMUKTA resolves to "Mukta"
+    adapter._slack_client = MagicMock()
+    adapter._slack_client.resolve_user_ids.return_value = {"UMUKTA": "Mukta"}
+
+    handler = _capture_app_mention_handler(adapter, on_message)
+    assert handler is not None, "app_mention handler was not registered"
+
+    say = MagicMock()
+    event = {
+        "channel": "C1",
+        "user": "UOTHER2",
+        "ts": "111.222",
+        "text": "<@UBOT> Dream11 is owned by <@UMUKTA>",
+    }
+    handler(event, say)
+
+    assert len(received_texts) == 1
+    text = received_texts[0]
+    # Bot mention stripped, but @Mukta must be preserved
+    assert "<@UBOT>" not in text
+    assert "<@UMUKTA>" not in text   # raw ID gone
+    assert "Mukta" in text or "@Mukta" in text  # resolved display name present
+    assert "Dream11 is owned by" in text
+
+
+def test_app_mention_strips_only_bot_mention_when_no_other_mentions():
+    """Plain message with only the bot mention is stripped to just the content."""
+    adapter, mock_app, _ = _build_socket_adapter()[:3]
+
+    received_texts = []
+
+    def on_message(incoming, _adapter):
+        received_texts.append(incoming.text)
+        return "ok"
+
+    mock_app.client.auth_test.return_value = {"user_id": "UBOT"}
+    adapter._slack_client = MagicMock()
+    adapter._slack_client.resolve_user_ids.return_value = {}
+    handler = _capture_app_mention_handler(adapter, on_message)
+
+    say = MagicMock()
+    event = {
+        "channel": "C1",
+        "user": "U1",
+        "ts": "111.222",
+        "text": "<@UBOT> what is the status?",
+    }
+    handler(event, say)
+
+    assert received_texts == ["what is the status?"]
+
+
 def test_run_cmd_unknown_adapter_raises():
     import click
     try:

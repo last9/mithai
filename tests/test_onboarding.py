@@ -76,14 +76,15 @@ class TestHandleChannelJoin:
         assert len(result) > 0
 
     def test_synthetic_prompt_contains_channel_name(self):
-        """Verify the prompt sent to LLM references the channel name."""
+        """Verify the gather prompt sent to LLM references the channel name."""
         config = _base_config(onboarding={"enabled": True, "history_scan": False})
 
         captured = {}
         llm = MagicMock()
 
         def _capture_call(**kwargs):
-            captured["messages"] = kwargs.get("messages", [])
+            if not captured.get("messages"):  # only capture the first (gather) call
+                captured["messages"] = kwargs.get("messages", [])
             resp = MagicMock()
             resp.content = [{"type": "text", "text": "Hi there!"}]
             resp.stop_reason = "end_turn"
@@ -104,14 +105,15 @@ class TestHandleChannelJoin:
         assert "C999" in text
 
     def test_synthetic_prompt_instructs_tool_use(self):
-        """Prompt tells the bot to use its tools — no pre-fetched history injected."""
+        """Gather prompt tells the bot to use its tools — no pre-fetched history injected."""
         config = _base_config(onboarding={"enabled": True})
 
         captured = {}
         llm = MagicMock()
 
         def _capture(**kwargs):
-            captured["messages"] = kwargs.get("messages", [])
+            if not captured.get("messages"):  # only capture the first (gather) call
+                captured["messages"] = kwargs.get("messages", [])
             resp = MagicMock()
             resp.content = [{"type": "text", "text": "Hi!"}]
             resp.stop_reason = "end_turn"
@@ -196,11 +198,15 @@ class TestHandleChannelJoin:
         resp1 = MagicMock()
         resp1.content = [{"type": "tool_use", "id": "t1", "name": "shell__run", "input": {"command": "rm -rf /"}}]
         resp1.stop_reason = "tool_use"
-        # After the denial result, LLM ends turn
+        # After the denial result, LLM ends gather phase
         resp2 = MagicMock()
         resp2.content = [{"type": "text", "text": "Understood, I cannot run that."}]
         resp2.stop_reason = "end_turn"
-        llm.create_message.side_effect = [resp1, resp2]
+        # Phase 2 intro call
+        resp3 = MagicMock()
+        resp3.content = [{"type": "text", "text": "Hi team!"}]
+        resp3.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2, resp3]
 
         config = _base_config(onboarding={"enabled": True, "history_scan": False})
         engine = Engine(
@@ -243,11 +249,15 @@ class TestHandleChannelJoin:
         resp1 = MagicMock()
         resp1.content = [{"type": "tool_use", "id": "t1", "name": "memory__write", "input": {"key": "channel_context", "value": "ops channel"}}]
         resp1.stop_reason = "tool_use"
-        # After the tool result, LLM produces intro text
+        # After the tool result, gather phase ends
         resp2 = MagicMock()
-        resp2.content = [{"type": "text", "text": "Hi team, I've saved context about this channel."}]
+        resp2.content = [{"type": "text", "text": "Done gathering."}]
         resp2.stop_reason = "end_turn"
-        llm.create_message.side_effect = [resp1, resp2]
+        # Phase 2 intro call
+        resp3 = MagicMock()
+        resp3.content = [{"type": "text", "text": "Hi team, great to be here!"}]
+        resp3.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2, resp3]
 
         config = _base_config(onboarding={"enabled": True, "history_scan": False})
         engine = Engine(
@@ -353,14 +363,15 @@ class TestAgentConfigOnboardingMerge:
         assert merged["onboarding"]["enabled"] is False
 
     def test_synthetic_prompt_instructs_member_fetch(self):
-        """Prompt must tell the bot to call slack_get_members for the full roster."""
+        """Gather prompt must tell the bot to call slack_get_members for the full roster."""
         config = _base_config(onboarding={"enabled": True})
 
         captured = {}
         llm = MagicMock()
 
         def _capture(**kwargs):
-            captured["messages"] = kwargs.get("messages", [])
+            if not captured.get("messages"):
+                captured["messages"] = kwargs.get("messages", [])
             resp = MagicMock()
             resp.content = [{"type": "text", "text": "Hi!"}]
             resp.stop_reason = "end_turn"
@@ -377,14 +388,15 @@ class TestAgentConfigOnboardingMerge:
         assert "slack_get_members" in text
 
     def test_synthetic_prompt_instructs_memory_read_first(self):
-        """Prompt must instruct the bot to read MEMORY.md before anything else."""
+        """Gather prompt must instruct the bot to read MEMORY.md before anything else."""
         config = _base_config(onboarding={"enabled": True})
 
         captured = {}
         llm = MagicMock()
 
         def _capture(**kwargs):
-            captured["messages"] = kwargs.get("messages", [])
+            if not captured.get("messages"):
+                captured["messages"] = kwargs.get("messages", [])
             resp = MagicMock()
             resp.content = [{"type": "text", "text": "Hi!"}]
             resp.stop_reason = "end_turn"
@@ -403,14 +415,15 @@ class TestAgentConfigOnboardingMerge:
         assert text.index("MEMORY.md") < text.index("slack_get_members")
 
     def test_synthetic_prompt_acknowledges_multi_channel_context(self):
-        """Prompt must tell the bot it operates across multiple channels."""
+        """Gather prompt must tell the bot it operates across multiple channels."""
         config = _base_config(onboarding={"enabled": True})
 
         captured = {}
         llm = MagicMock()
 
         def _capture(**kwargs):
-            captured["messages"] = kwargs.get("messages", [])
+            if not captured.get("messages"):
+                captured["messages"] = kwargs.get("messages", [])
             resp = MagicMock()
             resp.content = [{"type": "text", "text": "Hi!"}]
             resp.stop_reason = "end_turn"
@@ -461,9 +474,13 @@ class TestAgentConfigOnboardingMerge:
         resp1.content = [{"type": "tool_use", "id": "t1", "name": "slack__slack_get_members", "input": {"channel_id": "C1"}}]
         resp1.stop_reason = "tool_use"
         resp2 = MagicMock()
-        resp2.content = [{"type": "text", "text": "Hi team!"}]
+        resp2.content = [{"type": "text", "text": "Done gathering."}]
         resp2.stop_reason = "end_turn"
-        llm.create_message.side_effect = [resp1, resp2]
+        # Phase 2 intro call
+        resp3 = MagicMock()
+        resp3.content = [{"type": "text", "text": "Hi team!"}]
+        resp3.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2, resp3]
 
         config = _base_config(onboarding={"enabled": True})
         engine = Engine(
@@ -502,7 +519,11 @@ class TestAgentConfigOnboardingMerge:
         resp2 = MagicMock()
         resp2.content = [{"type": "text", "text": "Done."}]
         resp2.stop_reason = "end_turn"
-        llm.create_message.side_effect = [resp1, resp2]
+        # Phase 2 intro call
+        resp3 = MagicMock()
+        resp3.content = [{"type": "text", "text": "Hi team!"}]
+        resp3.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2, resp3]
 
         config = _base_config(onboarding={"enabled": True})
         engine = Engine(

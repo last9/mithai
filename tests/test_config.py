@@ -3,6 +3,7 @@
 import yaml
 
 from mithai.core.config import load_config, get_skill_paths
+from mithai.cli.run_cmd import _parse_id_list
 
 
 def test_load_config(tmp_path):
@@ -178,3 +179,51 @@ def test_load_config_multi_agent_without_top_level_llm(tmp_path):
 
     loaded = load_config(config_path)
     assert "agents" in loaded
+
+
+# ---------------------------------------------------------------------------
+# _parse_id_list — comma-separated env var coercion
+# ---------------------------------------------------------------------------
+
+class TestParseIdList:
+    def test_none_returns_none(self):
+        assert _parse_id_list(None) is None
+
+    def test_list_returned_as_is(self):
+        assert _parse_id_list(["C1", "C2"]) == ["C1", "C2"]
+
+    def test_comma_separated_string_split(self):
+        assert _parse_id_list("C123,C456,C789") == ["C123", "C456", "C789"]
+
+    def test_trims_whitespace(self):
+        assert _parse_id_list("C1, C2 , C3") == ["C1", "C2", "C3"]
+
+    def test_single_id_string_wrapped_in_list(self):
+        assert _parse_id_list("C123") == ["C123"]
+
+    def test_empty_string_returns_empty_list(self):
+        assert _parse_id_list("") == []
+
+    def test_only_commas_returns_empty_list(self):
+        assert _parse_id_list(",,,") == []
+
+    def test_mixed_whitespace_and_commas(self):
+        assert _parse_id_list("  C1  ,  C2  ") == ["C1", "C2"]
+
+    def test_env_var_simulation(self, monkeypatch, tmp_path):
+        """End-to-end: ALLOWED_CHANNELS=C1,C2 in env → list after config load."""
+        monkeypatch.setenv("ALLOWED_CHANNELS", "C1,C2,C3")
+
+        config = {
+            "adapter": {"type": "cli"},
+            "llm": {"provider": "anthropic"},
+            "adapter_slack": {"allowed_channels": "${ALLOWED_CHANNELS}"},
+        }
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.dump(config))
+
+        loaded = load_config(config_path)
+        # After env var resolution the value is a comma-separated string;
+        # _parse_id_list must turn it into a proper list.
+        raw = loaded["adapter_slack"]["allowed_channels"]
+        assert _parse_id_list(raw) == ["C1", "C2", "C3"]

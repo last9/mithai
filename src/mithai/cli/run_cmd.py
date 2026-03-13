@@ -269,6 +269,21 @@ def _create_engines_multi(config: dict, agents_config: dict) -> dict:
     return engines
 
 
+def _parse_id_list(value) -> list | None:
+    """Coerce a config value to a list of strings.
+
+    Handles three forms that can arrive after env-var substitution:
+      - None / missing  → None (no allowlist)
+      - list            → returned as-is
+      - "C1,C2, C3"     → ["C1", "C2", "C3"]  (comma-separated env var)
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
 def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None = None,
                     respond: str = "all"):
     """Create an adapter instance.
@@ -288,7 +303,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
         return SlackAdapter(
             bot_token=adapter_config["bot_token"],
             app_token=adapter_config["app_token"],
-            allowed_channels=adapter_config.get("allowed_channels"),
+            allowed_channels=_parse_id_list(adapter_config.get("allowed_channels")),
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
         )
@@ -297,7 +312,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
         from mithai.adapters.telegram import TelegramAdapter
         return TelegramAdapter(
             bot_token=adapter_config["bot_token"],
-            allowed_chat_ids=adapter_config.get("allowed_chat_ids"),
+            allowed_chat_ids=_parse_id_list(adapter_config.get("allowed_chat_ids")),
         )
 
     elif adapter_type == "slack_http":
@@ -307,7 +322,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             signing_secret=adapter_config["signing_secret"],
             host=adapter_config.get("host", "0.0.0.0"),
             port=adapter_config.get("port", 3000),
-            allowed_channels=adapter_config.get("allowed_channels"),
+            allowed_channels=_parse_id_list(adapter_config.get("allowed_channels")),
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
         )

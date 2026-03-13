@@ -2,9 +2,13 @@
 
 import platform
 import sys
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
-__version__ = "0.2.0"
+try:
+    __version__ = _pkg_version("mithai")
+except Exception:
+    __version__ = "0.0.0-dev"
 
 
 def _platform_tag() -> str:

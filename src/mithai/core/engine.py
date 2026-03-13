@@ -368,7 +368,11 @@ class Engine:
 
         self.handle(fake_message, _NoOpAdapter())
 
-        # Phase 2 — write the intro in a clean no-tools call so there is nothing to narrate
+        # Phase 2 — write the intro in a clean no-tools call so there is nothing to narrate.
+        # Load phase-1 session history so the intro call has full context of what was gathered
+        # (member roster, channel history, tool results) even when memory is absent or incomplete.
+        session = self._sessions.load(session_key)
+        history = self._build_history(session)
         intro_prompt = (
             f"Write a short intro message (3-5 sentences, no bullet points, no emojis) "
             f"for the Slack channel #{channel_name}. "
@@ -378,7 +382,7 @@ class Engine:
         system = self._compose_system_prompt()
         intro_response = self._llm.create_message(
             system=system,
-            messages=[{"role": "user", "content": intro_prompt}],
+            messages=history + [{"role": "user", "content": intro_prompt}],
             tools=None,
             max_tokens=512,
         )

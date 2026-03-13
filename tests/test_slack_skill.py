@@ -21,12 +21,15 @@ def _load_skill_module():
     return mod
 
 
-def _make_slack_client(messages=None, user_map=None):
+def _make_slack_client(messages=None, user_map=None, members=None):
     """Build a mock SlackClient."""
     client = MagicMock()
     client.get_history.return_value = (
         messages if messages is not None else ["alice: hello", "bob: deploy going well"],
         user_map if user_map is not None else {"U1": "alice", "U2": "bob"},
+    )
+    client.get_members.return_value = (
+        members if members is not None else [{"id": "U1", "name": "alice"}, {"id": "U2", "name": "bob"}]
     )
     client.post_message.return_value = {"ok": True, "ts": "123.456", "channel": "C99"}
     return client
@@ -46,9 +49,9 @@ def _make_adapter_with_client(client):
 def test_tools_exported():
     mod = _load_skill_module()
     assert hasattr(mod, "TOOLS")
-    assert len(mod.TOOLS) == 2
     names = [t["name"] for t in mod.TOOLS]
     assert "slack_get_history" in names
+    assert "slack_get_members" in names
     assert "slack_send_message" in names
 
 
@@ -56,6 +59,13 @@ def test_get_history_has_no_human_field():
     """slack_get_history should auto-execute — no approval gate."""
     mod = _load_skill_module()
     tool = next(t for t in mod.TOOLS if t["name"] == "slack_get_history")
+    assert "human" not in tool
+
+
+def test_get_members_has_no_human_field():
+    """slack_get_members is read-only — no approval gate."""
+    mod = _load_skill_module()
+    tool = next(t for t in mod.TOOLS if t["name"] == "slack_get_members")
     assert "human" not in tool
 
 
@@ -110,13 +120,19 @@ def test_handle_send_message_returns_error_when_no_client():
     assert "error" in result
 
 
+def test_handle_get_members_returns_error_when_no_client():
+    mod = _load_skill_module()
+    result = json.loads(mod.handle("slack_get_members", {}, {"channel_id": "C1"}))
+    assert "error" in result
+
+
 # ---------------------------------------------------------------------------
 # handle() — slack_get_history with client
 # ---------------------------------------------------------------------------
 
-def _setup_with_client(messages=None, user_map=None):
+def _setup_with_client(messages=None, user_map=None, members=None):
     mod = _load_skill_module()
-    client = _make_slack_client(messages, user_map)
+    client = _make_slack_client(messages, user_map, members)
     adapter = _make_adapter_with_client(client)
     mod.bind(MagicMock(), adapter)
     return mod, client
@@ -176,6 +192,44 @@ def test_handle_unknown_tool():
     mod, _ = _setup_with_client()
     result = json.loads(mod.handle("slack_does_not_exist", {}, {"channel_id": "C1"}))
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# handle() — slack_get_members with client
+# ---------------------------------------------------------------------------
+
+def test_handle_get_members_returns_member_list():
+    mod, client = _setup_with_client(
+        members=[{"id": "U1", "name": "alice"}, {"id": "U2", "name": "bob"}]
+    )
+    result = json.loads(mod.handle("slack_get_members", {}, {"channel_id": "C99"}))
+    assert result["members"] == [{"id": "U1", "name": "alice"}, {"id": "U2", "name": "bob"}]
+    assert result["count"] == 2
+
+
+def test_handle_get_members_uses_ctx_channel_id():
+    mod, client = _setup_with_client()
+    mod.handle("slack_get_members", {}, {"channel_id": "C_CTX"})
+    client.get_members.assert_called_once_with("C_CTX")
+
+
+def test_handle_get_members_prefers_input_channel_id():
+    mod, client = _setup_with_client()
+    mod.handle("slack_get_members", {"channel_id": "C_INPUT"}, {"channel_id": "C_CTX"})
+    client.get_members.assert_called_once_with("C_INPUT")
+
+
+def test_handle_get_members_returns_error_for_missing_channel_id():
+    mod, _ = _setup_with_client()
+    result = json.loads(mod.handle("slack_get_members", {}, {}))
+    assert "error" in result
+
+
+def test_handle_get_members_returns_empty_list():
+    mod, client = _setup_with_client(members=[])
+    result = json.loads(mod.handle("slack_get_members", {}, {"channel_id": "C1"}))
+    assert result["members"] == []
+    assert result["count"] == 0
 
 
 # ---------------------------------------------------------------------------

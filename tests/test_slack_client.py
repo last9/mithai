@@ -205,3 +205,86 @@ def test_resolve_user_ids_empty_set():
     result = client.resolve_user_ids(set())
     assert result == {}
     client._client.users_info.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_members()
+# ---------------------------------------------------------------------------
+
+def test_get_members_returns_sorted_list():
+    """Members should be returned sorted alphabetically by name."""
+    client = _make_client()
+    client._client.conversations_members.return_value = {
+        "ok": True,
+        "members": ["U1", "U2", "U3"],
+        "response_metadata": {"next_cursor": ""},
+    }
+
+    def users_info(user):
+        names = {"U1": "charlie", "U2": "alice", "U3": "bob"}
+        return {"user": {"profile": {"display_name": names[user]}, "name": names[user]}}
+
+    client._client.users_info.side_effect = users_info
+    members = client.get_members("C1")
+
+    assert len(members) == 3
+    assert members[0]["name"] == "alice"
+    assert members[1]["name"] == "bob"
+    assert members[2]["name"] == "charlie"
+    assert all("id" in m and "name" in m for m in members)
+
+
+def test_get_members_paginates():
+    """get_members must follow next_cursor until exhausted."""
+    client = _make_client()
+    client._client.conversations_members.side_effect = [
+        {"ok": True, "members": ["U1"], "response_metadata": {"next_cursor": "cur1"}},
+        {"ok": True, "members": ["U2"], "response_metadata": {"next_cursor": ""}},
+    ]
+
+    def users_info(user):
+        names = {"U1": "alice", "U2": "bob"}
+        return {"user": {"profile": {"display_name": names[user]}, "name": names[user]}}
+
+    client._client.users_info.side_effect = users_info
+    members = client.get_members("C1")
+
+    assert len(members) == 2
+    assert client._client.conversations_members.call_count == 2
+    # Second call must include the cursor
+    second_call_kwargs = client._client.conversations_members.call_args_list[1][1]
+    assert second_call_kwargs["cursor"] == "cur1"
+
+
+def test_get_members_returns_empty_on_api_error():
+    client = _make_client()
+    client._client.conversations_members.side_effect = Exception("network error")
+    members = client.get_members("C1")
+    assert members == []
+
+
+def test_get_members_returns_empty_on_not_ok():
+    client = _make_client()
+    client._client.conversations_members.return_value = {
+        "ok": False,
+        "error": "channel_not_found",
+    }
+    members = client.get_members("C1")
+    assert members == []
+
+
+def test_get_members_resolves_display_names():
+    """Member dicts must use resolved display names, not raw user IDs."""
+    client = _make_client()
+    client._client.conversations_members.return_value = {
+        "ok": True,
+        "members": ["UABC"],
+        "response_metadata": {"next_cursor": ""},
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "Dana"}, "name": "dana_login"}
+    }
+    members = client.get_members("C1")
+    assert len(members) == 1
+    assert members[0]["id"] == "UABC"
+    assert members[0]["name"] == "Dana"

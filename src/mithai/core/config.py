@@ -16,7 +16,7 @@ class SlackAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     bot_token: str | None = None     # xoxb-... OAuth bot token
     app_token: str | None = None     # xapp-... Socket Mode app-level token
-    allowed_channels: list[str] | None = None  # channel IDs whitelist
+    allowed_channels: str | list[str] | None = None  # channel IDs whitelist; str for comma-separated env var
     approval_timeout: int | None = None        # seconds; default 300
     respond: str | None = None                 # "all" or "mentions"
 
@@ -29,7 +29,7 @@ class SlackHTTPAdapterConfig(BaseModel):
     signing_secret: str | None = None  # HMAC signing secret for request verification
     host: str | None = None
     port: int | None = None
-    allowed_channels: list[str] | None = None
+    allowed_channels: str | list[str] | None = None  # str for comma-separated env var
     approval_timeout: int | None = None
     respond: str | None = None
 
@@ -39,7 +39,7 @@ class SlackHTTPAdapterConfig(BaseModel):
 class TelegramAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     bot_token: str | None = None
-    allowed_chat_ids: list[int] | None = None  # signed int64 per Telegram Bot API
+    allowed_chat_ids: str | list[int] | None = None  # str for comma-separated env var; int list for direct YAML
 
 
 class AdapterConfig(BaseModel):

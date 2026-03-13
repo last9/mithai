@@ -144,6 +144,7 @@ class AgentConfig(BaseModel):
 
 class BotConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
+    name: str | None = None
     system_prompt: str | None = None
 
 
@@ -381,9 +382,14 @@ def get_agent_config(config: dict, agent_id: str) -> dict:
 
     merged = dict(config)
 
-    # Agent-level system_prompt overrides global bot.system_prompt
+    # Agent-level name/system_prompt override global bot fields
+    bot_overrides = {}
+    if "name" in agent:
+        bot_overrides["name"] = agent["name"]
     if "system_prompt" in agent:
-        merged = {**merged, "bot": {**merged.get("bot", {}), "system_prompt": agent["system_prompt"]}}
+        bot_overrides["system_prompt"] = agent["system_prompt"]
+    if bot_overrides:
+        merged = {**merged, "bot": {**merged.get("bot", {}), **bot_overrides}}
 
     # Deep-merge agent-level top-level section overrides
     for key in ("onboarding", "learning", "sessions"):

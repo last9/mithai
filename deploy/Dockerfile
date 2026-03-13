@@ -11,7 +11,7 @@ COPY src/ src/
 
 RUN python -m venv /app/.venv && \
     /app/.venv/bin/pip install --upgrade pip --quiet && \
-    /app/.venv/bin/pip install ".[slack]" --quiet && \
+    /app/.venv/bin/pip install ".[slack,mcp]" --quiet && \
     echo "=== entry point ===" && \
     head -1 /app/.venv/bin/mithai && \
     /app/.venv/bin/mithai --help
@@ -22,7 +22,7 @@ RUN python -m venv /app/.venv && \
 FROM python:3.11-slim AS runtime
 
 ARG KUBECTL_VERSION=v1.29.3
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates jq procps && \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates jq procps cron && \
     curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
          -o /usr/local/bin/kubectl && \
     chmod +x /usr/local/bin/kubectl && \

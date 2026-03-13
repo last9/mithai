@@ -14,3 +14,4 @@ build/
 .ruff_cache/
 *.egg
 deploy/k8s/secret.yaml
+deploy/helm/values-private.yaml

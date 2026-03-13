@@ -30,6 +30,24 @@ TOOLS = [
         },
     },
     {
+        "name": "slack_get_members",
+        "description": (
+            "Fetch all members of a Slack channel with their display names. "
+            "Returns a complete roster — use this during onboarding or when you need "
+            "to know everyone in a channel, not just those who have spoken recently."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "channel_id": {
+                    "type": "string",
+                    "description": "Slack channel ID (e.g. C01234ABC). Defaults to the current channel.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "slack_send_message",
         "description": (
             "Post a message to a Slack channel or thread. "
@@ -93,6 +111,17 @@ def handle(name: str, input: dict, ctx: dict) -> str:
             "user_map": user_map,
             "count": len(messages),
         })
+
+    if name == "slack_get_members":
+        if _client is None:
+            return json.dumps({"error": "Slack adapter not available in this context"})
+
+        channel_id = _resolve_channel_id(input, ctx)
+        if not channel_id:
+            return json.dumps({"error": "channel_id is required — provide a valid Slack channel ID (e.g. C01234ABC)"})
+
+        members = _client.get_members(channel_id)
+        return json.dumps({"members": members, "count": len(members)})
 
     if name == "slack_send_message":
         if _client is None:

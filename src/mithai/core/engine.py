@@ -328,9 +328,23 @@ class Engine:
         self._sessions.delete(session_key)
 
         synthetic_text = (
-            f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n"
-            f"Use your available tools to learn about this channel, save what's useful to memory, "
-            f"and write a short intro message (3-5 sentences, no bullet points, no emojis).\n"
+            f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n\n"
+            f"You serve this organisation across several Slack channels. Each channel is a different "
+            f"facet of the same team — people, projects, and context overlap across channels. "
+            f"All knowledge is shared and cumulative.\n\n"
+            f"Follow these steps in order:\n"
+            f"1. Read your existing MEMORY.md to recall what you already know about this org "
+            f"from other channels.\n"
+            f"2. Call slack_get_members with channel_id={channel_id} to get the full member roster.\n"
+            f"3. Call slack_get_history with channel_id={channel_id} to read recent messages and "
+            f"understand what this channel is used for, recurring topics, and how people work here.\n"
+            f"4. Take an educated and nuanced view: most people you encounter will already be in "
+            f"your memory from other channels. Identify what is genuinely new — new members, new "
+            f"projects, new patterns — and what you already know.\n"
+            f"5. Update MEMORY.md using overwrite mode with a clean merged version: fold in new "
+            f"facts, correct stale entries, remove duplicates. Keep it concise.\n"
+            f"6. Write a short intro message (3-5 sentences, no bullet points, no emojis) that "
+            f"reflects what this channel is for and shows you already know the team.\n\n"
             f"Respond with only the intro message text — nothing else."
         )
 
@@ -343,11 +357,13 @@ class Engine:
             thread_id=f"onboard:{channel_id}",
         )
 
+        _ONBOARD_ALLOWED = ("memory__", "slack__slack_get_history", "slack__slack_get_members")
+
         class _NoOpAdapter:
-            """Minimal adapter stub for onboarding — approves only memory tools."""
+            """Minimal adapter stub for onboarding — approves memory and read-only Slack tools."""
             def request_human_approval(self, request, channel_id):
                 tool_name = getattr(request, "tool_name", "") or ""
-                return tool_name.startswith("memory__")
+                return any(tool_name.startswith(prefix) for prefix in _ONBOARD_ALLOWED)
 
             def on_thinking_start(self): pass
             def on_thinking_end(self, elapsed_s): pass

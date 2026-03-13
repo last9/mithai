@@ -75,6 +75,76 @@ class TestHandleChannelJoin:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    def test_intro_prompt_includes_bot_name_from_config(self):
+        """bot.name is injected into the phase-2 intro prompt."""
+        config = _base_config(onboarding={"enabled": True})
+        config["bot"]["name"] = "Aria"
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            captured["last"] = kwargs
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi, I'm Aria!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        engine = _make_engine(config, llm=llm)
+        engine.handle_channel_join("C700", "ops")
+
+        # Last call is the intro (phase 2) — must mention the bot name
+        last_msg = captured["last"]["messages"][-1]["content"]
+        assert "Aria" in last_msg
+
+    def test_intro_prompt_falls_back_to_agent_id(self):
+        """When bot.name is absent, agent_id is used as the name."""
+        from mithai.core.engine import Engine
+        from mithai.state.memory import MemoryStateBackend
+
+        config = _base_config(onboarding={"enabled": True})
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            captured["last"] = kwargs
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        engine = Engine(
+            config=config, llm=llm, state=MemoryStateBackend(), memory=None,
+            skills={}, agent_id="ops-bot",
+        )
+        engine.handle_channel_join("C701", "infra")
+
+        last_msg = captured["last"]["messages"][-1]["content"]
+        assert "ops-bot" in last_msg
+
+    def test_intro_prompt_omits_name_clause_when_neither_set(self):
+        """When bot.name and agent_id are both absent, no name clause is injected."""
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            captured["last"] = kwargs
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        config = _base_config(onboarding={"enabled": True})
+        llm.create_message.side_effect = _capture
+        engine = _make_engine(config, llm=llm)  # no agent_id set
+        engine.handle_channel_join("C702", "general")
+
+        last_msg = captured["last"]["messages"][-1]["content"]
+        assert "Your name is" not in last_msg
+
     def test_synthetic_prompt_contains_channel_name(self):
         """Verify the gather prompt sent to LLM references the channel name."""
         config = _base_config(onboarding={"enabled": True, "history_scan": False})

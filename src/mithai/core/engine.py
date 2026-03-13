@@ -357,7 +357,7 @@ class Engine:
             thread_id=f"onboard:{channel_id}",
         )
 
-        _ONBOARD_ALLOWED = ("memory__", "slack__get_history", "slack__get_members")
+        _ONBOARD_ALLOWED = ("memory__", "slack__slack_get_history", "slack__slack_get_members")
 
         class _NoOpAdapter:
             """Minimal adapter stub for onboarding — approves memory and read-only Slack tools."""

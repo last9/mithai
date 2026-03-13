@@ -428,7 +428,7 @@ class TestAgentConfigOnboardingMerge:
         assert any(word in text.lower() for word in ("several", "multiple", "channels"))
 
     def test_noop_adapter_approves_slack_read_tools(self):
-        """_NoOpAdapter must approve slack__get_history and slack__get_members during onboarding."""
+        """_NoOpAdapter must approve slack__slack_get_history and slack__slack_get_members during onboarding."""
         from mithai.core.engine import Engine
         from mithai.core.skill_loader import Skill, ToolDefinition
         from mithai.state.memory import MemoryStateBackend
@@ -440,13 +440,13 @@ class TestAgentConfigOnboardingMerge:
             prompt="slack tools",
             tools=[
                 ToolDefinition(
-                    name="get_members",
+                    name="slack_get_members",
                     description="get members",
                     input_schema={"type": "object", "properties": {}},
                     human="approve",
                 ),
                 ToolDefinition(
-                    name="get_history",
+                    name="slack_get_history",
                     description="get history",
                     input_schema={"type": "object", "properties": {}},
                     human="approve",
@@ -458,7 +458,7 @@ class TestAgentConfigOnboardingMerge:
 
         llm = MagicMock()
         resp1 = MagicMock()
-        resp1.content = [{"type": "tool_use", "id": "t1", "name": "slack__get_members", "input": {"channel_id": "C1"}}]
+        resp1.content = [{"type": "tool_use", "id": "t1", "name": "slack__slack_get_members", "input": {"channel_id": "C1"}}]
         resp1.stop_reason = "tool_use"
         resp2 = MagicMock()
         resp2.content = [{"type": "text", "text": "Hi team!"}]
@@ -475,7 +475,7 @@ class TestAgentConfigOnboardingMerge:
         slack_handle.assert_called_once()
 
     def test_noop_adapter_denies_slack_send_message(self):
-        """_NoOpAdapter must deny slack__send_message — bot must not post during onboarding."""
+        """_NoOpAdapter must deny slack__slack_send_message — bot must not post during onboarding."""
         from mithai.core.engine import Engine
         from mithai.core.skill_loader import Skill, ToolDefinition
         from mithai.state.memory import MemoryStateBackend
@@ -486,7 +486,7 @@ class TestAgentConfigOnboardingMerge:
             name="slack",
             prompt="slack tools",
             tools=[ToolDefinition(
-                name="send_message",
+                name="slack_send_message",
                 description="send a message",
                 input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
                 human="approve",
@@ -497,7 +497,7 @@ class TestAgentConfigOnboardingMerge:
 
         llm = MagicMock()
         resp1 = MagicMock()
-        resp1.content = [{"type": "tool_use", "id": "t1", "name": "slack__send_message", "input": {"text": "hi"}}]
+        resp1.content = [{"type": "tool_use", "id": "t1", "name": "slack__slack_send_message", "input": {"text": "hi"}}]
         resp1.stop_reason = "tool_use"
         resp2 = MagicMock()
         resp2.content = [{"type": "text", "text": "Done."}]

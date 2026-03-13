@@ -327,33 +327,27 @@ class Engine:
         session_key = SessionManager.session_key("slack", f"onboard:{channel_id}", agent_id=self._agent_id)
         self._sessions.delete(session_key)
 
-        synthetic_text = (
+        # Phase 1 — gather info via tools (steps 1–5 only, no text output requested)
+        gather_text = (
             f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n\n"
             f"You serve this organisation across several Slack channels. Each channel is a different "
             f"facet of the same team — people, projects, and context overlap across channels. "
             f"All knowledge is shared and cumulative.\n\n"
-            f"Follow these steps in order:\n"
-            f"1. Read your existing MEMORY.md to recall what you already know about this org "
-            f"from other channels.\n"
+            f"Execute these steps using tools. Output no text — only call tools:\n"
+            f"1. Read your existing MEMORY.md to recall what you already know about this org.\n"
             f"2. Call slack_get_members with channel_id={channel_id} to get the full member roster.\n"
-            f"3. Call slack_get_history with channel_id={channel_id} to read recent messages and "
-            f"understand what this channel is used for, recurring topics, and how people work here.\n"
-            f"4. Take an educated and nuanced view: most people you encounter will already be in "
-            f"your memory from other channels. Identify what is genuinely new — new members, new "
-            f"projects, new patterns — and what you already know.\n"
+            f"3. Call slack_get_history with channel_id={channel_id} to read recent messages.\n"
+            f"4. Take a nuanced view: most people will already be in your memory from other channels. "
+            f"Identify what is genuinely new — new members, new projects, new patterns.\n"
             f"5. Update MEMORY.md using overwrite mode with a clean merged version: fold in new "
-            f"facts, correct stale entries, remove duplicates. Keep it concise.\n"
-            f"6. Write a short intro message (3-5 sentences, no bullet points, no emojis) that "
-            f"reflects what this channel is for and shows you already know the team.\n\n"
-            f"Respond with only the intro message text — nothing else."
+            f"facts, correct stale entries, remove duplicates. Keep it concise."
         )
 
         fake_message = IncomingMessage(
-            text=synthetic_text,
+            text=gather_text,
             channel_id=channel_id,
             user_id="system",
             platform="slack",
-            # Isolated session key so onboarding turns don't appear in normal chat history
             thread_id=f"onboard:{channel_id}",
         )
 
@@ -372,7 +366,23 @@ class Engine:
             def on_synthesizing(self): pass
             def fetch_thread_context(self, channel_id, thread_ts): return None
 
-        return self.handle(fake_message, _NoOpAdapter())
+        self.handle(fake_message, _NoOpAdapter())
+
+        # Phase 2 — write the intro in a clean no-tools call so there is nothing to narrate
+        intro_prompt = (
+            f"Write a short intro message (3-5 sentences, no bullet points, no emojis) "
+            f"for the Slack channel #{channel_name}. "
+            f"Reflect what this channel is for and show you already know the team. "
+            f"Output only the intro message — no preamble, no explanation, nothing else."
+        )
+        system = self._compose_system_prompt()
+        intro_response = self._llm.create_message(
+            system=system,
+            messages=[{"role": "user", "content": intro_prompt}],
+            tools=None,
+            max_tokens=512,
+        )
+        return self._extract_text(intro_response)
 
     def _log_to_channel_context(self, message: IncomingMessage) -> None:
         """Append a single message line to channel_context/{channel_id}.md.

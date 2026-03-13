@@ -118,6 +118,36 @@ class SlackClient:
                 lines.append(f"{name}: {text}")
         return lines
 
+    def get_members(self, channel_id: str) -> list[dict]:
+        """Fetch all members of a channel with their display names.
+
+        Returns a list of {id, name} dicts, sorted by name.
+        Handles pagination automatically.
+        """
+        user_ids: set[str] = set()
+        cursor = None
+        try:
+            while True:
+                kwargs: dict = {"channel": channel_id, "limit": 200}
+                if cursor:
+                    kwargs["cursor"] = cursor
+                resp = self._client.conversations_members(**kwargs)
+                if not resp.get("ok"):
+                    logger.warning("conversations_members error for %s: %s", channel_id, resp.get("error"))
+                    break
+                user_ids.update(resp.get("members", []))
+                cursor = resp.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+        except Exception as exc:
+            logger.warning("Failed to fetch members for channel %s: %s", channel_id, exc)
+
+        user_map = self.resolve_user_ids(user_ids)
+        return sorted(
+            [{"id": uid, "name": name} for uid, name in user_map.items()],
+            key=lambda m: m["name"].lower(),
+        )
+
     def resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
         """Return a map of user_id -> display_name for the given set of IDs."""
         result = {}

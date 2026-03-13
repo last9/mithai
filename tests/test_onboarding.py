@@ -125,8 +125,9 @@ class TestHandleChannelJoin:
         text = first_user["content"]
         if not isinstance(text, str):
             text = text[0].get("text", "")
-        # Prompt should tell bot to use tools — not dump raw history
-        assert "tools" in text.lower()
+        # Prompt names specific tools to call — bot must not receive pre-fetched history
+        assert "slack_get_members" in text
+        assert "slack_get_history" in text
         # No pre-fetched history or user map injected by the framework
         assert "Recent channel messages" not in text
         assert "Known Slack users" not in text
@@ -350,6 +351,167 @@ class TestAgentConfigOnboardingMerge:
         }
         merged = get_agent_config(config, "bot3")
         assert merged["onboarding"]["enabled"] is False
+
+    def test_synthetic_prompt_instructs_member_fetch(self):
+        """Prompt must tell the bot to call slack_get_members for the full roster."""
+        config = _base_config(onboarding={"enabled": True})
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            captured["messages"] = kwargs.get("messages", [])
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        engine = _make_engine(config, llm=llm)
+        engine.handle_channel_join("C500", "backend")
+
+        first_user = next(m for m in captured["messages"] if m.get("role") == "user")
+        text = first_user["content"]
+        if not isinstance(text, str):
+            text = text[0].get("text", "")
+        assert "slack_get_members" in text
+
+    def test_synthetic_prompt_instructs_memory_read_first(self):
+        """Prompt must instruct the bot to read MEMORY.md before anything else."""
+        config = _base_config(onboarding={"enabled": True})
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            captured["messages"] = kwargs.get("messages", [])
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        engine = _make_engine(config, llm=llm)
+        engine.handle_channel_join("C501", "frontend")
+
+        first_user = next(m for m in captured["messages"] if m.get("role") == "user")
+        text = first_user["content"]
+        if not isinstance(text, str):
+            text = text[0].get("text", "")
+        assert "MEMORY.md" in text
+        # Read must appear before member fetch in the prompt
+        assert text.index("MEMORY.md") < text.index("slack_get_members")
+
+    def test_synthetic_prompt_acknowledges_multi_channel_context(self):
+        """Prompt must tell the bot it operates across multiple channels."""
+        config = _base_config(onboarding={"enabled": True})
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            captured["messages"] = kwargs.get("messages", [])
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        engine = _make_engine(config, llm=llm)
+        engine.handle_channel_join("C502", "data")
+
+        first_user = next(m for m in captured["messages"] if m.get("role") == "user")
+        text = first_user["content"]
+        if not isinstance(text, str):
+            text = text[0].get("text", "")
+        # Prompt should convey that the bot is already in multiple channels
+        assert any(word in text.lower() for word in ("several", "multiple", "channels"))
+
+    def test_noop_adapter_approves_slack_read_tools(self):
+        """_NoOpAdapter must approve slack__get_history and slack__get_members during onboarding."""
+        from mithai.core.engine import Engine
+        from mithai.core.skill_loader import Skill, ToolDefinition
+        from mithai.state.memory import MemoryStateBackend
+        from pathlib import Path
+
+        slack_handle = MagicMock(return_value='{"members": [], "count": 0}')
+        slack_skill = Skill(
+            name="slack",
+            prompt="slack tools",
+            tools=[
+                ToolDefinition(
+                    name="get_members",
+                    description="get members",
+                    input_schema={"type": "object", "properties": {}},
+                    human="approve",
+                ),
+                ToolDefinition(
+                    name="get_history",
+                    description="get history",
+                    input_schema={"type": "object", "properties": {}},
+                    human="approve",
+                ),
+            ],
+            handle=slack_handle,
+            source_dir=Path("/fake"),
+        )
+
+        llm = MagicMock()
+        resp1 = MagicMock()
+        resp1.content = [{"type": "tool_use", "id": "t1", "name": "slack__get_members", "input": {"channel_id": "C1"}}]
+        resp1.stop_reason = "tool_use"
+        resp2 = MagicMock()
+        resp2.content = [{"type": "text", "text": "Hi team!"}]
+        resp2.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2]
+
+        config = _base_config(onboarding={"enabled": True})
+        engine = Engine(
+            config=config, llm=llm, state=MemoryStateBackend(), memory=None,
+            skills={"slack": slack_skill},
+        )
+        engine.handle_channel_join("C600", "ops")
+
+        slack_handle.assert_called_once()
+
+    def test_noop_adapter_denies_slack_send_message(self):
+        """_NoOpAdapter must deny slack__send_message — bot must not post during onboarding."""
+        from mithai.core.engine import Engine
+        from mithai.core.skill_loader import Skill, ToolDefinition
+        from mithai.state.memory import MemoryStateBackend
+        from pathlib import Path
+
+        slack_handle = MagicMock(return_value='{"ok": true}')
+        slack_skill = Skill(
+            name="slack",
+            prompt="slack tools",
+            tools=[ToolDefinition(
+                name="send_message",
+                description="send a message",
+                input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+                human="approve",
+            )],
+            handle=slack_handle,
+            source_dir=Path("/fake"),
+        )
+
+        llm = MagicMock()
+        resp1 = MagicMock()
+        resp1.content = [{"type": "tool_use", "id": "t1", "name": "slack__send_message", "input": {"text": "hi"}}]
+        resp1.stop_reason = "tool_use"
+        resp2 = MagicMock()
+        resp2.content = [{"type": "text", "text": "Done."}]
+        resp2.stop_reason = "end_turn"
+        llm.create_message.side_effect = [resp1, resp2]
+
+        config = _base_config(onboarding={"enabled": True})
+        engine = Engine(
+            config=config, llm=llm, state=MemoryStateBackend(), memory=None,
+            skills={"slack": slack_skill},
+        )
+        engine.handle_channel_join("C601", "ops")
+
+        slack_handle.assert_not_called()
 
     def test_prompt_has_no_hardcoded_memory_paths(self):
         """Framework onboarding prompt must never dictate specific memory paths."""

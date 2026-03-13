@@ -345,7 +345,10 @@ class Engine:
             f"facts, correct stale entries, remove duplicates. Keep it concise.\n"
             f"6. Write a short intro message (3-5 sentences, no bullet points, no emojis) that "
             f"reflects what this channel is for and shows you already know the team.\n\n"
-            f"Respond with only the intro message text — nothing else."
+            f"IMPORTANT: Execute steps 1\u20135 using tools only \u2014 do not narrate, explain, or output "
+            f"any text while doing them. Do not say 'I will', 'I have', 'Now I\u2019ll', or describe "
+            f"your plan. Your only text output must be the final intro message from step 6. "
+            f"Nothing before it. Nothing after it."
         )
 
         fake_message = IncomingMessage(

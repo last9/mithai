@@ -273,15 +273,23 @@ def _parse_id_list(value) -> list | None:
     """Coerce a config value to a list of strings.
 
     Handles three forms that can arrive after env-var substitution:
-      - None / missing  → None (no allowlist)
-      - list            → returned as-is
-      - "C1,C2, C3"     → ["C1", "C2", "C3"]  (comma-separated env var)
+      - None / missing          → None (no allowlist)
+      - list                    → returned as-is
+      - "C1,C2, C3"             → ["C1", "C2", "C3"]  (comma-separated env var)
+      - "${UNRESOLVED}"         → raises ValueError (unset env var — fail fast)
     """
     if value is None:
         return None
     if isinstance(value, list):
         return value
-    return [item.strip() for item in str(value).split(",") if item.strip()]
+    items = [item.strip() for item in str(value).split(",") if item.strip()]
+    unresolved = [item for item in items if item.startswith("${") and item.endswith("}")]
+    if unresolved:
+        raise ValueError(
+            f"Unresolved env var placeholder in allowlist: {unresolved[0]}. "
+            "Set the environment variable or remove the placeholder."
+        )
+    return items
 
 
 def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None = None,

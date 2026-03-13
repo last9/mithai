@@ -210,6 +210,35 @@ class TestParseIdList:
     def test_mixed_whitespace_and_commas(self):
         assert _parse_id_list("  C1  ,  C2  ") == ["C1", "C2"]
 
+    def test_schema_accepts_comma_string_for_allowed_channels(self, tmp_path, monkeypatch):
+        """Schema validation must not reject a comma-separated string for allowed_channels.
+
+        When ALLOWED_CHANNELS=C1,C2 is set, _resolve_env_vars produces the string
+        "C1,C2" before _parse_id_list() can coerce it. The Pydantic schema must accept
+        str so load_config() doesn't raise before coercion ever runs.
+        """
+        monkeypatch.setenv("ALLOWED_CHANNELS", "C1,C2,C3")
+
+        config = {
+            "adapter": {
+                "type": "slack",
+                "slack": {
+                    "bot_token": "xoxb-test",
+                    "app_token": "xapp-test",
+                    "allowed_channels": "${ALLOWED_CHANNELS}",
+                },
+            },
+            "llm": {"provider": "anthropic"},
+        }
+        config_path = tmp_path / "config.yaml"
+        import yaml as _yaml
+        config_path.write_text(_yaml.dump(config))
+
+        # Must not raise a schema validation error
+        loaded = load_config(config_path)
+        raw = loaded["adapter"]["slack"]["allowed_channels"]
+        assert _parse_id_list(raw) == ["C1", "C2", "C3"]
+
     def test_env_var_simulation(self, monkeypatch, tmp_path):
         """End-to-end: ALLOWED_CHANNELS=C1,C2 in env → list after config load."""
         monkeypatch.setenv("ALLOWED_CHANNELS", "C1,C2,C3")

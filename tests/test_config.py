@@ -239,6 +239,12 @@ class TestParseIdList:
         raw = loaded["adapter"]["slack"]["allowed_channels"]
         assert _parse_id_list(raw) == ["C1", "C2", "C3"]
 
+    def test_unresolved_placeholder_raises(self):
+        """An unset env var leaves the placeholder literal — must raise, not silently allow it."""
+        import pytest
+        with pytest.raises(ValueError, match=r"Unresolved env var"):
+            _parse_id_list("${ALLOWED_CHANNELS}")
+
     def test_env_var_simulation(self, monkeypatch, tmp_path):
         """End-to-end: ALLOWED_CHANNELS=C1,C2 in env → list after config load."""
         monkeypatch.setenv("ALLOWED_CHANNELS", "C1,C2,C3")

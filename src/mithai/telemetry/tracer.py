@@ -85,6 +85,14 @@ def setup_telemetry(config: dict) -> None:
         logger.warning("Unknown telemetry exporter %r — telemetry disabled.", exporter_type)
         return
 
+    # Last9 GenAI span processor — enriches spans with conversation/workflow context
+    try:
+        from last9_genai import Last9SpanProcessor
+        trace_provider.add_span_processor(Last9SpanProcessor())
+        logger.info("Last9 GenAI span processor enabled")
+    except ImportError:
+        logger.debug("last9-genai not installed — skipping Last9 span processor")
+
     trace.set_tracer_provider(trace_provider)
     _tracer = trace.get_tracer("mithai")
 

@@ -118,6 +118,20 @@ ui:
   port: 8420
   auth_token: ${MITHAI_UI_TOKEN}
 
+telemetry:
+  enabled: true
+  service_name: mithai
+  exporter: otlp
+  otlp:
+    endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://otlp-aps1.last9.io:443}
+    headers:
+      Authorization: ${OTEL_EXPORTER_OTLP_HEADERS}
+  sampling:
+    ratio: 1.0
+  logs:
+    enabled: true
+    level: ERROR
+
 state:
   backend: filesystem
   filesystem:

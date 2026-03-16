@@ -701,6 +701,102 @@ class TestAgentConfigOnboardingMerge:
 # SlackAdapter._resolve_user_ids
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# SlackAdapter._decline_and_leave
+# ---------------------------------------------------------------------------
+
+class TestDeclineAndLeave:
+    def _make_adapter(self, allowed_channels=None):
+        """Create a SlackAdapter with mocked internals."""
+        from mithai.adapters.slack import SlackAdapter
+        with patch("slack_bolt.App") as MockApp, \
+             patch("slack_bolt.adapter.socket_mode.SocketModeHandler"):
+            adapter = SlackAdapter(
+                bot_token="xoxb-test", app_token="xapp-test",
+                allowed_channels=allowed_channels,
+            )
+            adapter._app = MockApp.return_value
+            adapter._app.client = MagicMock()
+            return adapter
+
+    def test_sends_message_and_leaves(self):
+        adapter = self._make_adapter(allowed_channels=["C_ALLOWED"])
+        adapter._decline_and_leave("C_OTHER")
+
+        adapter._app.client.chat_postMessage.assert_called_once()
+        call_kwargs = adapter._app.client.chat_postMessage.call_args
+        assert call_kwargs[1]["channel"] == "C_OTHER"
+        assert "not onboarded" in call_kwargs[1]["text"].lower()
+
+        adapter._app.client.conversations_leave.assert_called_once_with(channel="C_OTHER")
+
+    def test_skips_dm_channels(self):
+        adapter = self._make_adapter(allowed_channels=["C_ALLOWED"])
+        adapter._decline_and_leave("D_DIRECT_MSG")
+
+        adapter._app.client.chat_postMessage.assert_not_called()
+        adapter._app.client.conversations_leave.assert_not_called()
+
+    def test_skips_group_dm_channels(self):
+        adapter = self._make_adapter(allowed_channels=["C_ALLOWED"])
+        adapter._decline_and_leave("G_GROUP_DM")
+
+        adapter._app.client.chat_postMessage.assert_not_called()
+        adapter._app.client.conversations_leave.assert_not_called()
+
+    def test_dedup_prevents_double_decline(self):
+        """Concurrent calls for the same channel should only send one message."""
+        import threading
+        adapter = self._make_adapter(allowed_channels=["C_ALLOWED"])
+
+        # Simulate slow chat_postMessage so both threads overlap
+        event = threading.Event()
+
+        def slow_post(**kwargs):
+            event.wait(timeout=2)
+
+        adapter._app.client.chat_postMessage.side_effect = slow_post
+
+        t1 = threading.Thread(target=adapter._decline_and_leave, args=("C_DUP",))
+        t2 = threading.Thread(target=adapter._decline_and_leave, args=("C_DUP",))
+        t1.start()
+        t2.start()
+
+        # Let the slow post complete
+        event.set()
+        t1.join(timeout=3)
+        t2.join(timeout=3)
+
+        # Only one message should have been sent
+        assert adapter._app.client.chat_postMessage.call_count == 1
+
+    def test_leave_still_called_if_post_fails(self):
+        adapter = self._make_adapter(allowed_channels=["C_ALLOWED"])
+        adapter._app.client.chat_postMessage.side_effect = Exception("no permission")
+
+        adapter._decline_and_leave("C_FAIL")
+
+        # Leave should still be attempted even if posting failed
+        adapter._app.client.conversations_leave.assert_called_once_with(channel="C_FAIL")
+
+    def test_clears_dedup_set_after_completion(self):
+        """After decline_and_leave completes, the channel should be removed from the dedup set."""
+        adapter = self._make_adapter(allowed_channels=["C_ALLOWED"])
+        adapter._decline_and_leave("C_CLEAN")
+
+        assert "C_CLEAN" not in adapter._leaving_channels
+
+    def test_clears_dedup_set_even_on_error(self):
+        """Dedup set is cleaned up even if both API calls fail."""
+        adapter = self._make_adapter(allowed_channels=["C_ALLOWED"])
+        adapter._app.client.chat_postMessage.side_effect = Exception("fail")
+        adapter._app.client.conversations_leave.side_effect = Exception("fail")
+
+        adapter._decline_and_leave("C_ERR")
+
+        assert "C_ERR" not in adapter._leaving_channels
+
+
 class TestResolveUserIds:
     def _make_adapter(self):
         """Create a SlackAdapter with mocked Slack Bolt App and SlackClient."""

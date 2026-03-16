@@ -23,7 +23,7 @@ adapter:
 
 llm:
   provider: anthropic
-  model: claude-sonnet-4-6
+  model: claude-opus-4-6
   max_tokens: 16384
   anthropic:
     api_key: ${ANTHROPIC_API_KEY}

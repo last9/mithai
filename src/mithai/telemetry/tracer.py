@@ -145,7 +145,6 @@ def _setup_logs_bridge(*, resource, exporter_type: str, otlp_cfg: dict, level_na
     set_logger_provider(log_provider)
 
     level = getattr(logging, level_name.upper(), logging.WARNING)
-    handler = logging.getLogger().addHandler  # just for reference below
     from opentelemetry.sdk._logs import LoggingHandler as OTELLoggingHandler
     otel_handler = OTELLoggingHandler(level=level, logger_provider=log_provider)
     logging.getLogger().addHandler(otel_handler)

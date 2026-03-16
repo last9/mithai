@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -590,6 +590,19 @@ wheels = [
 ]
 
 [[package]]
+name = "last9-genai"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/cf/0f63bb08aa3788c5563c91619d28680254e539c6943094cecc5396f11d1b/last9_genai-1.0.0.tar.gz", hash = "sha256:18565e8d53eeb759efc0b63e9b8c30cf7fe9981e72fc94b638bae817c26b6550", size = 69866, upload-time = "2026-03-02T13:05:00.833Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/cc/c1b242055c08824f06db194d42a2ac5025a90991b55febba97d2503e2b03/last9_genai-1.0.0-py3-none-any.whl", hash = "sha256:7b954c4b1d062aa79cb8c5228347871a9417e7e835433728f1d237dd978c5821", size = 26084, upload-time = "2026-03-02T13:04:58.738Z" },
+]
+
+[[package]]
 name = "macholib"
 version = "1.16.4"
 source = { registry = "https://pypi.org/simple" }
@@ -764,6 +777,7 @@ telegram = [
     { name = "python-telegram-bot" },
 ]
 telemetry = [
+    { name = "last9-genai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
@@ -782,6 +796,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'ui'", specifier = ">=0.27.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
+    { name = "last9-genai", marker = "extra == 'telemetry'", specifier = ">=0.1.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.20.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'telemetry'", specifier = ">=1.20.0" },

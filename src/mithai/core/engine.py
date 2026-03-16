@@ -151,7 +151,18 @@ class Engine:
         else:
             span_ctx = nullcontext()
 
-        with span_ctx as req_span:
+        # Last9 conversation context — groups all spans under a conversation ID
+        try:
+            from last9_genai import conversation_context
+            conversation_id = message.thread_id or message.channel_id or ""
+            conv_ctx = conversation_context(
+                conversation_id=conversation_id,
+                user_id=message.user_id or "",
+            )
+        except ImportError:
+            conv_ctx = nullcontext()
+
+        with span_ctx as req_span, conv_ctx:
             if req_span is not None:
                 req_span.set_attribute("mithai.platform", message.platform)
                 req_span.set_attribute("mithai.channel_id", message.channel_id or "")
@@ -226,6 +237,20 @@ class Engine:
 
         # Tool-use loop — track tool calls for session logging
         turn_tool_calls = []
+        _wf_active = False
+
+        # Last9 workflow context — groups tool-use rounds as a workflow
+        if response.stop_reason == "tool_use":
+            try:
+                from last9_genai import workflow_context
+                _wf_ctx = workflow_context(
+                    workflow_id=f"{session_key}:{len(session.get('turns', []))}",
+                    workflow_type="tool_use_loop",
+                )
+                _wf_ctx.__enter__()
+                _wf_active = True
+            except ImportError:
+                pass
 
         while response.stop_reason == "tool_use":
             tool_results = []
@@ -342,6 +367,10 @@ class Engine:
             )
             adapter.on_thinking_end(time.monotonic() - t2)
             messages.append({"role": "assistant", "content": response.content})
+
+        # Close Last9 workflow context after tool-use loop
+        if _wf_active:
+            _wf_ctx.__exit__(None, None, None)
 
         # Extract final text, strip any leaked history-format prefix
         response_text = self._extract_text(response)

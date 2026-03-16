@@ -170,6 +170,33 @@ class HumanConfig(BaseModel):
     overrides: dict[str, str | None] | None = None  # tool prefix → "approve"|"confirm"|None
 
 
+class OTLPConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    endpoint: str | None = None              # e.g. http://localhost:4318
+    headers: dict[str, str] | None = None    # e.g. {"Authorization": "Bearer ..."}
+
+
+class TelemetrySamplingConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    ratio: float | None = None   # 0.0–1.0; default 1.0 (sample all)
+
+
+class TelemetryLogsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+    level: str | None = None   # e.g. "WARNING", "ERROR" — min Python log level to bridge
+
+
+class TelemetryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+    service_name: str | None = None
+    exporter: str | None = None   # "otlp" | "stdout" | "none"
+    otlp: OTLPConfig | None = None
+    sampling: TelemetrySamplingConfig | None = None
+    logs: TelemetryLogsConfig | None = None
+
+
 class MithaiConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     bot: BotConfig | None = None
@@ -186,6 +213,7 @@ class MithaiConfig(BaseModel):
     sessions: SessionsConfig | None = None
     onboarding: OnboardingConfig | None = None
     human: HumanConfig | None = None
+    telemetry: TelemetryConfig | None = None
 
 
 def _validate_config_schema(config: dict) -> None:

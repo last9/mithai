@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import time
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime
 
@@ -141,6 +142,29 @@ class Engine:
         Called by adapters for each message. The adapter is passed so
         Human MCP approvals route back to the correct platform.
         """
+        from mithai.telemetry import get_tracer
+        tracer = get_tracer()
+
+        if tracer is not None:
+            from opentelemetry.trace import SpanKind
+            span_ctx = tracer.start_as_current_span("mithai.request", kind=SpanKind.SERVER)
+        else:
+            span_ctx = nullcontext()
+
+        with span_ctx as req_span:
+            if req_span is not None:
+                req_span.set_attribute("mithai.platform", message.platform)
+                req_span.set_attribute("mithai.channel_id", message.channel_id or "")
+                req_span.set_attribute("mithai.user_id", message.user_id or "")
+                if self._agent_id:
+                    req_span.set_attribute("mithai.agent_id", self._agent_id)
+
+            from mithai.telemetry.metrics import record_request
+            record_request(message.platform)
+
+            return self._handle_inner(message, adapter, tracer)
+
+    def _handle_inner(self, message: IncomingMessage, adapter: Adapter, tracer) -> str:
         system = self._compose_system_prompt()
         tools = self._router.collect_tools_for_llm()
 
@@ -243,20 +267,41 @@ class Engine:
                         adapter=adapter,
                     )
 
-                    if approved:
-                        logger.info("Executing tool: %s", prefixed_name)
-                        adapter.on_tool_start(prefixed_name, tool_input)
-                        t1 = time.monotonic()
-                        result = self._router.route(prefixed_name, tool_input, skill_ctx)
-                        tool_elapsed = time.monotonic() - t1
-                        adapter.on_tool_end(prefixed_name, tool_elapsed, True)
+                    if tracer is not None:
+                        from opentelemetry.trace import SpanKind
+                        tool_span_ctx = tracer.start_as_current_span(
+                            "mithai.tool.execute", kind=SpanKind.INTERNAL
+                        )
                     else:
-                        logger.info("Tool denied by human: %s", prefixed_name)
-                        result = json.dumps({
-                            "denied": True,
-                            "reason": "Human denied this action",
-                        })
-                        adapter.on_tool_end(prefixed_name, 0.0, False)
+                        tool_span_ctx = nullcontext()
+
+                    with tool_span_ctx as tool_span:
+                        if tool_span is not None:
+                            tool_span.set_attribute("mithai.tool.name", prefixed_name)
+                            tool_span.set_attribute("mithai.tool.approved", approved)
+                            if effective_def.human is not None:
+                                tool_span.set_attribute(
+                                    "mithai.tool.human_level", str(effective_def.human)
+                                )
+
+                        if approved:
+                            logger.info("Executing tool: %s", prefixed_name)
+                            adapter.on_tool_start(prefixed_name, tool_input)
+                            t1 = time.monotonic()
+                            result = self._router.route(prefixed_name, tool_input, skill_ctx)
+                            tool_elapsed = time.monotonic() - t1
+                            adapter.on_tool_end(prefixed_name, tool_elapsed, True)
+                        else:
+                            tool_elapsed = 0.0
+                            logger.info("Tool denied by human: %s", prefixed_name)
+                            result = json.dumps({
+                                "denied": True,
+                                "reason": "Human denied this action",
+                            })
+                            adapter.on_tool_end(prefixed_name, 0.0, False)
+
+                        from mithai.telemetry.metrics import record_tool_call
+                        record_tool_call(prefixed_name, approved, tool_elapsed)
 
                     turn_tool_calls.append({
                         "tool": prefixed_name,

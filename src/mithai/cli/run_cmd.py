@@ -33,6 +33,9 @@ def run(config_path, adapter_override, verbose):
 
     config = load_config(config_path)
 
+    from mithai.telemetry import setup_telemetry
+    setup_telemetry(config)
+
     try:
         agents_config = get_agents(config)
 

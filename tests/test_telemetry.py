@@ -1,7 +1,7 @@
 """Tests for OTEL telemetry — tracer setup, LLM spans, engine spans, logs bridge."""
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -527,7 +527,6 @@ class TestTokenMetrics:
         reset_metrics()
 
     def test_token_usage_recorded_on_llm_call(self):
-        _make_wired_meter()
         _, reader = _make_wired_meter()
 
         prov = _make_anthropic_provider_with_mock()
@@ -547,7 +546,6 @@ class TestTokenMetrics:
         assert by_type["output"] == 100
 
     def test_operation_duration_recorded(self):
-        _make_wired_meter()
         _, reader = _make_wired_meter()
 
         prov = _make_anthropic_provider_with_mock()

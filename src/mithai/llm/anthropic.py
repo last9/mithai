@@ -24,6 +24,8 @@ class AnthropicProvider(LLMProvider):
         messages: list[dict],
         tools: list[dict] | None = None,
         max_tokens: int = 1024,
+        call_type: str = "initial",
+        after_tools: list[str] | None = None,
     ) -> LLMResponse:
         from mithai.telemetry import get_tracer
         from mithai.telemetry.metrics import record_operation_duration, record_token_usage
@@ -38,6 +40,8 @@ class AnthropicProvider(LLMProvider):
                 messages=messages,
                 tools=tools,
                 max_tokens=max_tokens,
+                call_type=call_type,
+                after_tools=after_tools,
             )
         else:
             response = self._call_api(
@@ -61,6 +65,8 @@ class AnthropicProvider(LLMProvider):
         messages: list[dict],
         tools: list[dict] | None,
         max_tokens: int,
+        call_type: str = "initial",
+        after_tools: list[str] | None = None,
     ) -> LLMResponse:
         from opentelemetry.trace import SpanKind, StatusCode
 
@@ -69,6 +75,9 @@ class AnthropicProvider(LLMProvider):
             span.set_attribute("gen_ai.request.model", self._model)
             span.set_attribute("gen_ai.request.max_tokens", max_tokens)
             span.set_attribute("llm.message_count", len(messages))
+            span.set_attribute("gen_ai.call.type", call_type)
+            if after_tools:
+                span.set_attribute("gen_ai.call.after_tools", after_tools)
             if tools:
                 span.set_attribute("llm.tool_count", len(tools))
 

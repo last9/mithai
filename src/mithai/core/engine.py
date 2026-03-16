@@ -155,9 +155,12 @@ class Engine:
             if req_span is not None:
                 req_span.set_attribute("mithai.platform", message.platform)
                 req_span.set_attribute("mithai.channel_id", message.channel_id or "")
+                req_span.set_attribute("mithai.thread_id", message.thread_id or "")
                 req_span.set_attribute("mithai.user_id", message.user_id or "")
                 if self._agent_id:
                     req_span.set_attribute("mithai.agent_id", self._agent_id)
+                if message.text:
+                    req_span.set_attribute("mithai.message.text", message.text[:500])
 
             from mithai.telemetry.metrics import record_request
             record_request(message.platform)
@@ -210,6 +213,7 @@ class Engine:
             messages=messages,
             tools=tools if tools else None,
             max_tokens=self._llm_config.get("max_tokens", 4096),
+            call_type="initial",
         )
         adapter.on_thinking_end(time.monotonic() - t0)
         messages.append({"role": "assistant", "content": response.content})
@@ -225,6 +229,7 @@ class Engine:
 
         while response.stop_reason == "tool_use":
             tool_results = []
+            round_tool_names = []
 
             for block in response.content:
                 if block["type"] != "tool_use":
@@ -232,6 +237,7 @@ class Engine:
 
                 prefixed_name = block["name"]
                 tool_input = block["input"]
+                round_tool_names.append(prefixed_name)
                 tool_def = self._router.get_definition(prefixed_name)
 
                 if tool_def is None:
@@ -283,6 +289,10 @@ class Engine:
                                 tool_span.set_attribute(
                                     "mithai.tool.human_level", str(effective_def.human)
                                 )
+                            try:
+                                tool_span.set_attribute("mithai.tool.input", json.dumps(tool_input)[:500])
+                            except Exception:
+                                logger.debug("Failed to serialize tool_input for span", exc_info=True)
 
                         if approved:
                             logger.info("Executing tool: %s", prefixed_name)
@@ -327,6 +337,8 @@ class Engine:
                 messages=messages,
                 tools=tools,
                 max_tokens=self._llm_config.get("max_tokens", 4096),
+                call_type="synthesis",
+                after_tools=round_tool_names,
             )
             adapter.on_thinking_end(time.monotonic() - t2)
             messages.append({"role": "assistant", "content": response.content})
@@ -428,6 +440,7 @@ class Engine:
             messages=[{"role": "user", "content": intro_prompt}],
             tools=None,
             max_tokens=512,
+            call_type="synthesis",
         )
         return self._extract_text(intro_response)
 

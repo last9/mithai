@@ -32,6 +32,8 @@ class LLMProvider(ABC):
         messages: list[dict],
         tools: list[dict] | None = None,
         max_tokens: int = 1024,
+        call_type: str = "initial",
+        after_tools: list[str] | None = None,
     ) -> LLMResponse:
         """
         Send a message to the LLM with optional tools.

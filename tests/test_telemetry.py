@@ -156,6 +156,8 @@ class TestAnthropicProviderTracing:
         assert attrs["gen_ai.usage.output_tokens"] == 75
         assert attrs["llm.message_count"] == 1
         assert attrs["llm.tool_count"] == 2
+        assert attrs["gen_ai.call.type"] == "initial"
+        assert "gen_ai.call.after_tools" not in attrs
 
     def test_span_status_error_on_api_failure(self):
         from opentelemetry import trace
@@ -392,6 +394,7 @@ class TestEngineRequestSpan:
             channel_id="C123",
             user_id="U456",
             platform="telegram",
+            thread_id="T789",
         )
         engine.handle(msg, MagicMock())
 
@@ -399,6 +402,7 @@ class TestEngineRequestSpan:
         req = spans["mithai.request"]
         assert req.attributes["mithai.platform"] == "telegram"
         assert req.attributes["mithai.channel_id"] == "C123"
+        assert req.attributes["mithai.thread_id"] == "T789"
         assert req.attributes["mithai.user_id"] == "U456"
 
     def test_gen_ai_chat_is_child_of_request(self, tmp_skill_dir, tmp_path):
@@ -462,6 +466,8 @@ class TestEngineToolSpan:
         tool_span = spans["test_skill__echo"]
         assert tool_span.attributes["mithai.tool.name"] == "test_skill__echo"
         assert tool_span.attributes["mithai.tool.approved"] is True
+        assert "mithai.tool.input" in tool_span.attributes
+        assert tool_span.attributes["mithai.tool.input"] != ""
 
     def test_tool_span_is_child_of_request(self, tmp_skill_dir, tmp_path):
         _, exporter = _make_wired_provider()
@@ -623,6 +629,91 @@ class TestToolMetrics:
         assert len(points) == 1
         assert points[0].value == 1
         assert points[0].attributes["mithai.platform"] == "slack"
+
+
+class TestRequestSpanMessageText:
+    def setup_method(self):
+        reset_tracer()
+
+    def test_request_span_has_message_text(self, tmp_skill_dir, tmp_path):
+        _, exporter = _make_wired_provider()
+        engine, llm = _make_engine(tmp_skill_dir, tmp_path)
+        _stub_llm_end_turn(llm)
+
+        from mithai.adapters.base import IncomingMessage
+        long_text = "x" * 600
+        msg = IncomingMessage(text=long_text, channel_id="C1", user_id="U1", platform="cli")
+        engine.handle(msg, MagicMock())
+
+        spans = {s.name: s for s in exporter.get_finished_spans()}
+        req = spans["mithai.request"]
+        assert "mithai.message.text" in req.attributes
+        # Truncated to 500 chars
+        assert len(req.attributes["mithai.message.text"]) == 500
+
+    def test_request_span_message_text_short(self, tmp_skill_dir, tmp_path):
+        _, exporter = _make_wired_provider()
+        engine, llm = _make_engine(tmp_skill_dir, tmp_path)
+        _stub_llm_end_turn(llm)
+
+        from mithai.adapters.base import IncomingMessage
+        msg = IncomingMessage(text="hello world", channel_id="C1", user_id="U1", platform="cli")
+        engine.handle(msg, MagicMock())
+
+        spans = {s.name: s for s in exporter.get_finished_spans()}
+        req = spans["mithai.request"]
+        assert req.attributes["mithai.message.text"] == "hello world"
+
+
+class TestSynthesisCallRoundAndType:
+    def setup_method(self):
+        reset_tracer()
+
+    def test_synthesis_call_has_round_and_type(self, tmp_skill_dir, tmp_path):
+        """After a tool round, the synthesis LLM call has call_round=1, call_type=synthesis."""
+        _, exporter = _make_wired_provider()
+        anthropic_prov = _make_anthropic_provider_with_mock()
+
+        # First call: tool_use; second call: end_turn (synthesis)
+        raw_tool = MagicMock()
+        raw_tool.model = "claude-test"
+        raw_tool.stop_reason = "tool_use"
+        raw_tool.usage.input_tokens = 20
+        raw_tool.usage.output_tokens = 10
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "tu_1"
+        tool_block.name = "test_skill__echo"
+        tool_block.input = {"message": "hi"}
+        raw_tool.content = [tool_block]
+
+        raw_end = MagicMock()
+        raw_end.model = "claude-test"
+        raw_end.stop_reason = "end_turn"
+        raw_end.usage.input_tokens = 15
+        raw_end.usage.output_tokens = 8
+        end_block = MagicMock()
+        end_block.type = "text"
+        end_block.text = "done"
+        raw_end.content = [end_block]
+
+        anthropic_prov._client.messages.create.side_effect = [raw_tool, raw_end]
+
+        engine, _ = _make_engine(tmp_skill_dir, tmp_path, llm=anthropic_prov)
+
+        from mithai.adapters.base import IncomingMessage
+        msg = IncomingMessage(text="echo hi", channel_id="C1", user_id="U1", platform="cli")
+        engine.handle(msg, MagicMock())
+
+        spans = exporter.get_finished_spans()
+        chat_spans = [s for s in spans if s.name == "gen_ai.chat"]
+        assert len(chat_spans) == 2
+
+        initial = next(s for s in chat_spans if s.attributes["gen_ai.call.type"] == "initial")
+        synthesis = next(s for s in chat_spans if s.attributes["gen_ai.call.type"] == "synthesis")
+
+        assert "gen_ai.call.after_tools" not in initial.attributes
+        assert synthesis.attributes["gen_ai.call.after_tools"] == ("test_skill__echo",)
 
 
 class TestSamplingConfig:

@@ -45,7 +45,7 @@ def setup_telemetry(config: dict) -> None:
     # ------------------------------------------------------------------ traces
     exporter_type = tel.get("exporter", "otlp")
     sampling_cfg = tel.get("sampling") or {}
-    ratio = float(sampling_cfg.get("ratio", 1.0))
+    ratio = float(sampling_cfg.get("ratio") or 1.0)
 
     if ratio < 1.0:
         from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
@@ -115,10 +115,8 @@ def _setup_logs_bridge(*, resource, exporter_type: str, otlp_cfg: dict, level_na
         from opentelemetry.sdk._logs import LoggerProvider
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk._logs.export import ConsoleLogExporter
-        from opentelemetry.instrumentation.logging import LoggingInstrumentor  # noqa: F401
     except ImportError:
-        # Logs bridge needs opentelemetry-instrumentation-logging; skip gracefully.
-        logger.debug("OTEL logs bridge unavailable — opentelemetry-instrumentation-logging not installed.")
+        logger.debug("OTEL logs bridge unavailable — opentelemetry-sdk not installed.")
         return None
 
     log_provider = LoggerProvider(resource=resource)

@@ -56,6 +56,8 @@ class SlackAdapterBase(Adapter):
         self._allowed_channels = set(allowed_channels) if allowed_channels else None
         self._bot_token = bot_token
         self._approval_timeout = approval_timeout
+        self._leaving_channels: set[str] = set()
+        self._leaving_lock = threading.Lock()
 
         self._respond = respond
         self._formatter = SlackBlockFormatter()
@@ -306,6 +308,17 @@ class SlackAdapterBase(Adapter):
 
     def _decline_and_leave(self, channel_id: str) -> None:
         """Send a not-onboarded message to a non-allowed channel and leave it."""
+        # Skip DMs and group DMs — bot can't leave those
+        if channel_id.startswith("D") or channel_id.startswith("G"):
+            return
+
+        # Dedup guard: avoid sending multiple decline messages if concurrent
+        # events (member_joined + app_mention) fire for the same channel
+        with self._leaving_lock:
+            if channel_id in self._leaving_channels:
+                return
+            self._leaving_channels.add(channel_id)
+
         try:
             self._app.client.chat_postMessage(
                 channel=channel_id,
@@ -321,6 +334,9 @@ class SlackAdapterBase(Adapter):
             logger.info("Left non-allowed channel %s", channel_id)
         except Exception:
             logger.warning("Could not leave channel %s", channel_id, exc_info=True)
+        finally:
+            with self._leaving_lock:
+                self._leaving_channels.discard(channel_id)
 
     def _react(self, channel: str, ts: str, emoji: str) -> None:
         """Add a reaction emoji to a message, ignoring errors (e.g. missing scope)."""

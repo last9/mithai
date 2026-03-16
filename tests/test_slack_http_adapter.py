@@ -535,3 +535,135 @@ def test_run_cmd_unknown_adapter_raises():
         assert False, "should have raised"
     except click.ClickException as e:
         assert "ftp" in str(e)
+
+
+# ---------------------------------------------------------------------------
+# handle_message: @mention filtering
+# Only skip messages that @mention the bot; messages mentioning other users
+# must still reach on_observe so pending_observations stays complete.
+# ---------------------------------------------------------------------------
+
+def _capture_message_handler(adapter, mock_app, on_message, on_observe=None, bot_id="UBOT"):
+    """Register handlers and return the captured handle_message function.
+
+    Configures mock auth_test so _register_message_handlers resolves the bot ID
+    to `bot_id` (rather than the default "U123" set at adapter construction).
+    Pass bot_id=None to simulate auth_test failure (unresolved bot ID).
+    """
+    registered = {}
+
+    if bot_id is not None:
+        mock_app.client.auth_test.return_value = {"user_id": bot_id}
+    else:
+        mock_app.client.auth_test.side_effect = Exception("auth failed")
+
+    def capture_message(pattern):
+        def decorator(fn):
+            registered["message"] = fn
+            return fn
+        return decorator
+
+    mock_app.message.side_effect = capture_message
+    adapter._register_message_handlers(on_message, on_observe=on_observe)
+    return registered["message"]
+
+
+def test_message_mentioning_other_user_reaches_observe():
+    """A message like '@alice can you check?' must reach on_observe in mentions mode."""
+    adapter, mock_app, _ = _build_http_adapter()
+    adapter._respond = "mentions"
+
+    on_message = MagicMock(return_value="reply")
+    on_observe = MagicMock()
+    handler = _capture_message_handler(adapter, mock_app, on_message, on_observe=on_observe)
+
+    # Message mentions @alice (UOTHER), not the bot (UBOT)
+    fake_msg = {"channel": "C1", "text": "<@UOTHER> can you check?", "ts": "1.0", "user": "U1", "thread_ts": "1.0"}
+    handler(message=fake_msg, say=MagicMock())
+
+    on_observe.assert_called_once()
+    on_message.assert_not_called()
+
+
+def test_message_mentioning_bot_skipped_by_handle_message():
+    """A message @mentioning the bot is handled by app_mention, not handle_message."""
+    adapter, mock_app, _ = _build_http_adapter()
+    adapter._respond = "mentions"
+
+    on_message = MagicMock(return_value="reply")
+    on_observe = MagicMock()
+    handler = _capture_message_handler(adapter, mock_app, on_message, on_observe=on_observe)
+
+    # Bot ID resolved to "UBOT" by _capture_message_handler
+    fake_msg = {"channel": "C1", "text": "<@UBOT> what is the status?", "ts": "1.0", "user": "U1"}
+    handler(message=fake_msg, say=MagicMock())
+
+    on_message.assert_not_called()
+    on_observe.assert_not_called()
+
+
+def test_message_with_no_mention_reaches_observe_in_mentions_mode():
+    """Plain thread reply with no mentions is observed when respond=mentions."""
+    adapter, mock_app, _ = _build_http_adapter()
+    adapter._respond = "mentions"
+
+    on_message = MagicMock(return_value="reply")
+    on_observe = MagicMock()
+    handler = _capture_message_handler(adapter, mock_app, on_message, on_observe=on_observe)
+
+    fake_msg = {"channel": "C1", "text": "sure, on it", "ts": "2.0", "user": "U2", "thread_ts": "1.0"}
+    handler(message=fake_msg, say=MagicMock())
+
+    on_observe.assert_called_once()
+    on_message.assert_not_called()
+
+
+def test_message_mentioning_multiple_others_reaches_observe():
+    """A message mentioning two other users (not the bot) still reaches on_observe."""
+    adapter, mock_app, _ = _build_http_adapter()
+    adapter._respond = "mentions"
+
+    on_observe = MagicMock()
+    handler = _capture_message_handler(adapter, mock_app, MagicMock(), on_observe=on_observe)
+
+    fake_msg = {
+        "channel": "C1",
+        "text": "<@UOTHER1> and <@UOTHER2> please review",
+        "ts": "3.0", "user": "U3", "thread_ts": "1.0",
+    }
+    handler(message=fake_msg, say=MagicMock())
+
+    on_observe.assert_called_once()
+
+
+def test_message_mentioning_bot_and_other_skipped():
+    """If the bot is mentioned alongside others, app_mention handles it — handle_message skips."""
+    adapter, mock_app, _ = _build_http_adapter()
+    adapter._respond = "mentions"
+
+    on_observe = MagicMock()
+    handler = _capture_message_handler(adapter, mock_app, MagicMock(), on_observe=on_observe)
+
+    fake_msg = {
+        "channel": "C1",
+        "text": "<@UBOT> and <@UOTHER1> please check",
+        "ts": "4.0", "user": "U4",
+    }
+    handler(message=fake_msg, say=MagicMock())
+
+    on_observe.assert_not_called()
+
+
+def test_bot_id_unknown_falls_back_to_skipping_any_mention():
+    """When bot_user_id cannot be resolved, any @mention is skipped (safe fallback)."""
+    adapter, mock_app, _ = _build_http_adapter()
+    adapter._respond = "mentions"
+
+    on_observe = MagicMock()
+    # bot_id=None causes auth_test to raise → _bot_user_id stays None
+    handler = _capture_message_handler(adapter, mock_app, MagicMock(), on_observe=on_observe, bot_id=None)
+
+    fake_msg = {"channel": "C1", "text": "<@UANYONE> hello", "ts": "5.0", "user": "U5"}
+    handler(message=fake_msg, say=MagicMock())
+
+    on_observe.assert_not_called()

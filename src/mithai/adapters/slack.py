@@ -197,8 +197,15 @@ class SlackAdapterBase(Adapter):
 
             raw_text = message.get("text", "")
 
-            # Skip messages with @mentions — app_mention handler covers those
-            if re.search(r"<@[A-Z0-9]+>", raw_text):
+            # Skip messages that @mention the bot — app_mention handler covers those.
+            # Messages mentioning only other users must still be observed so the agent
+            # sees team replies (e.g. "@alice can you check this?") in pending_observations.
+            bot_id = self._bot_user_id or ""
+            if bot_id and re.search(rf"<@{re.escape(bot_id)}>", raw_text):
+                return
+            # If bot ID is unknown, fall back to skipping any @mention to avoid
+            # double-processing until the bot ID is resolved at startup.
+            if not bot_id and re.search(r"<@[A-Z0-9]+>", raw_text):
                 return
 
             incoming = IncomingMessage(

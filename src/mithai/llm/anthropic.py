@@ -1,5 +1,6 @@
 """Anthropic Claude LLM provider."""
 
+import json
 import logging
 import time
 
@@ -81,6 +82,17 @@ class AnthropicProvider(LLMProvider):
             if tools:
                 span.set_attribute("llm.tool_count", len(tools))
 
+            # Record prompt events — system + messages
+            span.add_event("gen_ai.content.prompt", attributes={
+                "gen_ai.prompt": json.dumps(
+                    [{"role": "system", "content": system[:1000]}]
+                    + [
+                        {"role": m.get("role", ""), "content": _summarise_content(m.get("content", ""))}
+                        for m in messages[-4:]  # last 4 messages to bound size
+                    ]
+                ),
+            })
+
             try:
                 response = self._call_api(
                     system=system, messages=messages, tools=tools, max_tokens=max_tokens
@@ -89,6 +101,13 @@ class AnthropicProvider(LLMProvider):
                 span.set_status(StatusCode.ERROR, str(exc))
                 span.record_exception(exc)
                 raise
+
+            # Record completion event — LLM response
+            span.add_event("gen_ai.content.completion", attributes={
+                "gen_ai.completion": json.dumps(
+                    _summarise_content(response.content)
+                ),
+            })
 
             span.set_attribute("gen_ai.response.model", response.model)
             span.set_attribute("gen_ai.response.finish_reasons", [response.stop_reason])
@@ -138,3 +157,31 @@ class AnthropicProvider(LLMProvider):
                 "output_tokens": response.usage.output_tokens,
             },
         )
+
+
+def _summarise_content(content, max_len: int = 1000) -> str | list:
+    """Truncate message content for span events.
+
+    Handles both string content and Anthropic-style block lists
+    (tool_use, tool_result, text).
+    """
+    if isinstance(content, str):
+        return content[:max_len]
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block[:max_len])
+            elif isinstance(block, dict):
+                btype = block.get("type", "")
+                if btype == "text":
+                    parts.append({"type": "text", "text": block.get("text", "")[:max_len]})
+                elif btype == "tool_use":
+                    inp = json.dumps(block.get("input", {}))[:500]
+                    parts.append({"type": "tool_use", "name": block.get("name", ""), "input": inp})
+                elif btype == "tool_result":
+                    parts.append({"type": "tool_result", "content": str(block.get("content", ""))[:500]})
+                else:
+                    parts.append({"type": btype})
+        return parts
+    return str(content)[:max_len]

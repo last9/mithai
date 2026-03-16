@@ -457,10 +457,13 @@ class Engine:
         # Phase 2 — write the intro in a clean no-tools call so there is nothing to narrate.
         # System prompt already contains MEMORY.md (written by phase 1); no need to replay
         # phase-1 history here — that could be huge for active channels and hit context limits.
+        bot_name = self._config.get("bot", {}).get("name") or self._agent_id or "I"
+        name_clause = f"Your name is {bot_name}. " if bot_name != "I" else ""
         intro_prompt = (
+            f"{name_clause}"
             f"Write a short intro message (3-5 sentences, no bullet points, no emojis) "
             f"for the Slack channel #{channel_name}. "
-            f"Reflect what this channel is for and show you already know the team. "
+            f"Introduce yourself by name, reflect what this channel is for, and show you already know the team. "
             f"Output only the intro message — no preamble, no explanation, nothing else."
         )
         system = self._compose_system_prompt()

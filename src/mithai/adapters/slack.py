@@ -168,6 +168,7 @@ class SlackAdapterBase(Adapter):
 
                 channel_id = event.get("channel", "")
                 if self._allowed_channels and channel_id not in self._allowed_channels:
+                    self._decline_and_leave(channel_id)
                     return
 
                 # Resolve channel name
@@ -230,6 +231,7 @@ class SlackAdapterBase(Adapter):
         def handle_app_mention(event, say):
             channel = event.get("channel", "")
             if self._allowed_channels and channel not in self._allowed_channels:
+                self._decline_and_leave(channel)
                 return
 
             # Strip only the bot's own @mention; resolve other user mentions to display names
@@ -301,6 +303,24 @@ class SlackAdapterBase(Adapter):
             except (json.JSONDecodeError, TypeError):
                 pass
             say(text=chunk, thread_ts=thread_ts)
+
+    def _decline_and_leave(self, channel_id: str) -> None:
+        """Send a not-onboarded message to a non-allowed channel and leave it."""
+        try:
+            self._app.client.chat_postMessage(
+                channel=channel_id,
+                text=(
+                    "I'm not onboarded in this channel. "
+                    "Please contact your workspace admin to onboard me here."
+                ),
+            )
+        except Exception:
+            logger.warning("Could not send decline message to %s", channel_id, exc_info=True)
+        try:
+            self._app.client.conversations_leave(channel=channel_id)
+            logger.info("Left non-allowed channel %s", channel_id)
+        except Exception:
+            logger.warning("Could not leave channel %s", channel_id, exc_info=True)
 
     def _react(self, channel: str, ts: str, emoji: str) -> None:
         """Add a reaction emoji to a message, ignoring errors (e.g. missing scope)."""

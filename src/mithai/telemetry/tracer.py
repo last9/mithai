@@ -45,7 +45,8 @@ def setup_telemetry(config: dict) -> None:
     # ------------------------------------------------------------------ traces
     exporter_type = tel.get("exporter", "otlp")
     sampling_cfg = tel.get("sampling") or {}
-    ratio = float(sampling_cfg.get("ratio") or 1.0)
+    _ratio = sampling_cfg.get("ratio")
+    ratio = float(_ratio if _ratio is not None else 1.0)
 
     if ratio < 1.0:
         from opentelemetry.sdk.trace.sampling import TraceIdRatioBased

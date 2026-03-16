@@ -447,7 +447,7 @@ class TestEngineToolSpan:
         engine.handle(msg, MagicMock())
 
         span_names = [s.name for s in exporter.get_finished_spans()]
-        assert "mithai.tool.execute" in span_names
+        assert "test_skill__echo" in span_names
 
     def test_tool_span_attributes(self, tmp_skill_dir, tmp_path):
         _, exporter = _make_wired_provider()
@@ -459,7 +459,7 @@ class TestEngineToolSpan:
         engine.handle(msg, MagicMock())
 
         spans = {s.name: s for s in exporter.get_finished_spans()}
-        tool_span = spans["mithai.tool.execute"]
+        tool_span = spans["test_skill__echo"]
         assert tool_span.attributes["mithai.tool.name"] == "test_skill__echo"
         assert tool_span.attributes["mithai.tool.approved"] is True
 
@@ -474,7 +474,7 @@ class TestEngineToolSpan:
 
         spans = {s.name: s for s in exporter.get_finished_spans()}
         req_ctx = spans["mithai.request"].context
-        tool_parent = spans["mithai.tool.execute"].parent
+        tool_parent = spans["test_skill__echo"].parent
         assert tool_parent is not None
         assert tool_parent.span_id == req_ctx.span_id
 

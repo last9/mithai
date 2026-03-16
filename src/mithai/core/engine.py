@@ -270,7 +270,7 @@ class Engine:
                     if tracer is not None:
                         from opentelemetry.trace import SpanKind
                         tool_span_ctx = tracer.start_as_current_span(
-                            "mithai.tool.execute", kind=SpanKind.INTERNAL
+                            prefixed_name, kind=SpanKind.INTERNAL
                         )
                     else:
                         tool_span_ctx = nullcontext()

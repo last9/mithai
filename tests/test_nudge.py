@@ -15,9 +15,7 @@ Scenarios covered:
   5. Whitespace-only text after tool chain → treated as silent, nudge fires
 """
 
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock
 
 from mithai.adapters.base import IncomingMessage
 from mithai.core.engine import Engine

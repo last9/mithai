@@ -372,9 +372,26 @@ class Engine:
         if _wf_active:
             _wf_ctx.__exit__(None, None, None)
 
-        # Extract final text, strip any leaked history-format prefix
-        response_text = self._extract_text(response)
+        # Extract raw text first (no fallback yet) so the nudge check sees "" not "(no response)"
+        response_text = self._extract_raw_text(response)
         response_text = re.sub(r"^\[Tools called:.*?\]\n?", "", response_text).strip()
+
+        # If the model went silent after a tool chain, nudge it to produce a reply.
+        # Pass tools so it can take corrective action (e.g. memory_write after reading a gap)
+        # rather than narrating intent it cannot execute.
+        if not response_text and turn_tool_calls:
+            logger.debug("LLM produced no text after tool chain — nudging for summary")
+            messages.append({"role": "user", "content": "Please reply to the user now."})
+            nudge_response = self._llm.create_message(
+                system=system,
+                messages=messages,
+                tools=tools if tools else None,
+                max_tokens=self._llm_config.get("max_tokens", 4096),
+                call_type="synthesis",
+            )
+            response_text = self._extract_raw_text(nudge_response).strip()
+
+        response_text = response_text or "(no response)"
 
         # Record turn to session
         turn = SessionManager.build_turn(
@@ -613,13 +630,18 @@ class Engine:
         return "\n".join(parts)
 
     @staticmethod
-    def _extract_text(response) -> str:
-        """Extract text content from LLM response."""
+    def _extract_raw_text(response) -> str:
+        """Extract text content from LLM response, returning '' when empty."""
         parts = []
         for block in response.content:
             if block.get("type") == "text":
                 parts.append(block["text"])
-        return "\n".join(parts).strip() or "(no response)"
+        return "\n".join(parts).strip()
+
+    @staticmethod
+    def _extract_text(response) -> str:
+        """Extract text content from LLM response."""
+        return Engine._extract_raw_text(response) or "(no response)"
 
     def stop(self) -> None:
         """Clean up resources (MCP server connections, etc.)."""

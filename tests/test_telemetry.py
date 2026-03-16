@@ -8,6 +8,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 from mithai.telemetry.tracer import get_tracer, reset_tracer, setup_telemetry
+from mithai.telemetry.metrics import reset_metrics
 from mithai.llm.anthropic import AnthropicProvider
 from mithai.llm.base import LLMResponse
 
@@ -481,8 +482,6 @@ class TestEngineToolSpan:
 # ---------------------------------------------------------------------------
 # v2 — Metrics
 # ---------------------------------------------------------------------------
-
-from mithai.telemetry.metrics import reset_metrics
 
 
 def _make_wired_meter():

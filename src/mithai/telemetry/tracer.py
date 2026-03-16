@@ -69,7 +69,7 @@ def setup_telemetry(config: dict) -> None:
             )
             return
         otlp = tel.get("otlp") or {}
-        endpoint = otlp.get("endpoint", "http://localhost:4318")
+        endpoint = otlp.get("endpoint") or "http://localhost:4318"
         headers = otlp.get("headers") or {}
         trace_provider.add_span_processor(BatchSpanProcessor(
             OTLPSpanExporter(
@@ -143,7 +143,7 @@ def _setup_logs_bridge(*, resource, exporter_type: str, otlp_cfg: dict, level_na
 
     set_logger_provider(log_provider)
 
-    level = getattr(logging, level_name.upper(), logging.WARNING)
+    level = getattr(logging, (level_name or "WARNING").upper(), logging.WARNING)
     from opentelemetry.sdk._logs import LoggingHandler as OTELLoggingHandler
     otel_handler = OTELLoggingHandler(level=level, logger_provider=log_provider)
     logging.getLogger().addHandler(otel_handler)

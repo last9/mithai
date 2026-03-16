@@ -48,7 +48,7 @@ def setup_metrics(*, resource, exporter_type: str, otlp_cfg: dict) -> None:
         except ImportError:
             logger.debug("OTLP metric exporter not installed — skipping metrics.")
             return
-        endpoint = otlp_cfg.get("endpoint", "http://localhost:4318")
+        endpoint = otlp_cfg.get("endpoint") or "http://localhost:4318"
         headers = otlp_cfg.get("headers") or {}
         reader = PeriodicExportingMetricReader(
             OTLPMetricExporter(

@@ -2,6 +2,8 @@
 
 AI agent framework for infrastructure operations.
 
+**[Documentation →](https://docs.mithai.dev)**
+
 mithai gives your team an AI-powered ops agent that lives in Slack, Telegram, and a terminal — simultaneously. It can query your infrastructure, take actions, and ask a human before doing anything dangerous.
 
 ## How it works

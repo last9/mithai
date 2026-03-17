@@ -65,6 +65,8 @@ jobs:
         include:
           - runner: macos-14
             platform: darwin-arm64
+          - runner: macos-13
+            platform: darwin-amd64
           - runner: ubuntu-latest
             platform: linux-amd64
 

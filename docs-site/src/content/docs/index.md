@@ -3,8 +3,6 @@ title: "mithai documentation"
 description: "A framework for building AI agents for your organization."
 ---
 
-
-
 **A framework for building AI agents for your organization.**
 
 ---

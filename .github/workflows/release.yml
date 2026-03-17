@@ -65,10 +65,13 @@ jobs:
         include:
           - runner: macos-14
             platform: darwin-arm64
-          - runner: macos-13
+            target_arch: ""
+          - runner: macos-14
             platform: darwin-amd64
+            target_arch: x86_64
           - runner: ubuntu-latest
             platform: linux-amd64
+            target_arch: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -88,11 +91,14 @@ jobs:
         run: uv run pytest tests/ -v
 
       - name: Build binary
+        env:
+          MITHAI_TARGET_ARCH: ${{ matrix.target_arch }}
         run: |
           uv run pyinstaller mithai.spec --noconfirm
           ls -lh dist/mithai-*
 
       - name: Smoke test binary
+        if: matrix.target_arch == ''
         shell: bash
         run: |
           BINARY=$(ls dist/mithai-*)

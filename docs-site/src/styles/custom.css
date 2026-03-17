@@ -1,0 +1,24 @@
+/* mithai brand colors */
+:root {
+  --sl-color-accent-low: #e0e7ff;
+  --sl-color-accent: #6366f1;
+  --sl-color-accent-high: #4f46e5;
+}
+
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #1e1b4b;
+  --sl-color-accent: #818cf8;
+  --sl-color-accent-high: #a5b4fc;
+}
+
+/* Tighten up code blocks */
+.sl-markdown-content pre {
+  border-radius: 6px;
+}
+
+/* Style the ASCII diagrams */
+.sl-markdown-content pre:not([class]) {
+  background: var(--sl-color-gray-6);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}

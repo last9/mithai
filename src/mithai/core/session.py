@@ -143,12 +143,21 @@ class SessionManager:
         user_message: str,
         tool_calls: list[dict],
         assistant_response: str,
+        images: list[dict] | None = None,
     ) -> dict:
-        """Build a turn dict from the components of a single interaction."""
-        return {
+        """Build a turn dict from the components of a single interaction.
+
+        *images* is an optional list of ``{"data": "<base64>", "media_type": "image/png"}``
+        dicts persisted so that ``_build_history`` can reconstruct multi-modal
+        messages for recent turns.
+        """
+        turn: dict = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_id": user_id,
             "user_message": user_message,
             "tool_calls": tool_calls,
             "assistant_response": assistant_response,
         }
+        if images:
+            turn["images"] = images
+        return turn

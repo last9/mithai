@@ -1,5 +1,6 @@
 """SlackClient — low-level Slack Web API access for integrations and skills."""
 
+import base64
 import logging
 import re
 
@@ -14,6 +15,7 @@ class SlackClient:
 
     def __init__(self, bot_token: str):
         from slack_sdk import WebClient
+        self._token = bot_token
         self._client = WebClient(token=bot_token)
 
     def get_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
@@ -147,6 +149,42 @@ class SlackClient:
             [{"id": uid, "name": name} for uid, name in user_map.items()],
             key=lambda m: m["name"].lower(),
         )
+
+    # Slack image MIME types accepted by Claude's vision API
+    _SUPPORTED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+    def download_images(self, files: list[dict]) -> list[dict]:
+        """Download image files from a Slack message and return base64-encoded dicts.
+
+        Each returned dict has keys: data (base64 str), media_type (str).
+        Non-image files and unsupported types are silently skipped.
+        """
+        import urllib.request
+
+        results = []
+        for f in files:
+            mimetype = f.get("mimetype", "")
+            if mimetype not in self._SUPPORTED_IMAGE_TYPES:
+                continue
+            url = f.get("url_private")
+            if not url:
+                continue
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    raw = resp.read()
+                encoded = base64.b64encode(raw).decode("ascii")
+                logger.info("Downloaded image %s (%s, %d bytes)", mimetype, url[:80], len(raw))
+                results.append({
+                    "data": encoded,
+                    "media_type": mimetype,
+                })
+            except Exception as exc:
+                logger.warning("Failed to download Slack image %s: %s", url, exc)
+        return results
 
     def resolve_user_ids(self, user_ids: set[str]) -> dict[str, str]:
         """Return a map of user_id -> display_name for the given set of IDs."""

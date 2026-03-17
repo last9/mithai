@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 
-from mithai.adapters.base import Adapter, BotReplyHandler, ChannelJoinHandler, ChannelObserveHandler, IncomingMessage, MessageHandler, OutgoingMessage
+from mithai.adapters.base import Adapter, BotReplyHandler, ChannelJoinHandler, ChannelObserveHandler, ImageAttachment, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
 from mithai.human.mcp import HumanRequest
 from mithai.integrations.slack import SlackClient
@@ -211,6 +211,23 @@ class SlackAdapterBase(Adapter):
             if not bot_id and re.search(r"<@[A-Z0-9]+>", raw_text):
                 return
 
+            if self._respond == "mentions":
+                if on_observe:
+                    # Download images for thread replies so the bot has visual
+                    # context when it is next @mentioned in that thread.
+                    thread_ts = message.get("thread_ts")
+                    images, _skipped = self._extract_images(message) if thread_ts else ([], [])
+                    on_observe(IncomingMessage(
+                        text=raw_text.strip(),
+                        channel_id=channel,
+                        user_id=message.get("user", "unknown"),
+                        platform="slack",
+                        message_id=message.get("ts", ""),
+                        thread_id=thread_ts or message.get("ts", ""),
+                        images=images,
+                    ))
+                return
+
             incoming = IncomingMessage(
                 text=raw_text.strip(),
                 channel_id=channel,
@@ -218,12 +235,8 @@ class SlackAdapterBase(Adapter):
                 platform="slack",
                 message_id=message.get("ts", ""),
                 thread_id=message.get("thread_ts") or message.get("ts", ""),
+                images=self._extract_images(message)[0],
             )
-
-            if self._respond == "mentions":
-                if on_observe:
-                    on_observe(incoming)
-                return
 
             ts = message.get("ts", "")
             self._local.thread_ts = ts
@@ -253,9 +266,19 @@ class SlackAdapterBase(Adapter):
                 lambda m: "" if m.group(1) == bot_id else f"@{user_map.get(m.group(1), m.group(1))} ",
                 raw_text,
             ).strip()
-            if not text:
-                say("How can I help?")
+            images, skipped_files = self._extract_images(event)
+            if not text and not images:
+                if skipped_files:
+                    say(f"I can only read images right now — I can't process files like {', '.join(skipped_files)}. "
+                        "Try sharing a screenshot or image instead!")
+                else:
+                    say("How can I help?")
                 return
+
+            # Inform the LLM about non-image files it can't see
+            if skipped_files:
+                text = (f"[Note: the user also shared non-image file(s) that you cannot read: "
+                        f"{', '.join(skipped_files)}. Let them know you can only process images.]\n\n{text}")
 
             incoming = IncomingMessage(
                 text=text,
@@ -264,6 +287,7 @@ class SlackAdapterBase(Adapter):
                 platform="slack",
                 message_id=event.get("ts", ""),
                 thread_id=event.get("thread_ts") or event.get("ts", ""),
+                images=images,
             )
 
             ts = event.get("ts", "")
@@ -282,9 +306,31 @@ class SlackAdapterBase(Adapter):
 
         @self._app.event("message")
         def handle_message_subtype_events(body):
-            # Silently acknowledge message subtypes (channel_join, message_changed,
-            # bot_message, etc.) that @app.message("") does not match.
-            pass
+            # Catch message subtypes that @app.message("") doesn't match.
+            # Most subtypes (channel_join, message_changed, bot_message) are
+            # silently acknowledged.  file_share thread replies are routed to
+            # the observe path so images are captured for pending observations.
+            event = body.get("event", {})
+            if event.get("subtype") != "file_share":
+                return
+            if not on_observe or self._respond != "mentions":
+                return
+            thread_ts = event.get("thread_ts")
+            if not thread_ts:
+                return
+            channel = event.get("channel", "")
+            if self._allowed_channels and channel not in self._allowed_channels:
+                return
+            images, _skipped = self._extract_images(event)
+            on_observe(IncomingMessage(
+                text=event.get("text", "").strip(),
+                channel_id=channel,
+                user_id=event.get("user", "unknown"),
+                platform="slack",
+                message_id=event.get("ts", ""),
+                thread_id=thread_ts,
+                images=images,
+            ))
 
     def fetch_thread_context(self, channel_id: str, thread_ts: str) -> list[str] | None:
         """Fetch prior thread messages for backfill context. Delegates to SlackClient."""
@@ -453,6 +499,53 @@ class SlackAdapterBase(Adapter):
 
         finally:
             self._pending_approvals.pop(request.request_id, None)
+
+    def _extract_images(self, event: dict) -> tuple[list[ImageAttachment], list[str]]:
+        """Download image files and return (images, skipped_filenames).
+
+        Slack event payloads (``app_mention``, Socket Mode ``message``) often
+        omit the ``files`` array.  When ``files`` is missing we fall back to
+        fetching the canonical message via the Slack API.  Thread replies use
+        ``conversations.replies``; top-level messages use ``conversations.history``.
+        """
+        files = event.get("files")
+        if files is None:
+            channel = event.get("channel", "")
+            ts = event.get("ts", "")
+            thread_ts = event.get("thread_ts")
+            if channel and ts:
+                try:
+                    if thread_ts:
+                        # Thread reply — conversations.history can't see these
+                        resp = self._app.client.conversations_replies(
+                            channel=channel, ts=thread_ts, latest=ts, inclusive=True, limit=1,
+                        )
+                    else:
+                        resp = self._app.client.conversations_history(
+                            channel=channel, latest=ts, inclusive=True, limit=1,
+                        )
+                    msgs = resp.get("messages", [])
+                    # conversations.replies may return multiple; find the exact one
+                    for m in msgs:
+                        if m.get("ts") == ts:
+                            files = m.get("files", [])
+                            break
+                    if files is None and msgs:
+                        files = msgs[0].get("files", [])
+                except Exception:
+                    logger.warning("Failed to fetch message for file extraction", exc_info=True)
+            files = files or []
+        if not files:
+            return [], []
+        raw = self._slack_client.download_images(files)
+        images = [ImageAttachment(data=r["data"], media_type=r["media_type"]) for r in raw]
+        # Collect filenames of non-image files that were skipped
+        image_types = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+        skipped = [
+            f.get("name", f.get("title", "unknown"))
+            for f in files if f.get("mimetype", "") not in image_types
+        ]
+        return images, skipped
 
 
 class SlackAdapter(SlackAdapterBase):

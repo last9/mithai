@@ -288,3 +288,100 @@ def test_get_members_resolves_display_names():
     assert len(members) == 1
     assert members[0]["id"] == "UABC"
     assert members[0]["name"] == "Dana"
+
+
+# ---------------------------------------------------------------------------
+# download_images()
+# ---------------------------------------------------------------------------
+
+def _make_client_with_token():
+    """Create a SlackClient with a mocked WebClient and a real token."""
+    from mithai.integrations.slack import SlackClient
+    client = SlackClient.__new__(SlackClient)
+    client._client = MagicMock()
+    client._token = "xoxb-test"
+    return client
+
+
+def test_download_images_returns_base64_for_supported_type(monkeypatch):
+    """PNG files are downloaded and returned as base64."""
+    import urllib.request
+    import base64
+
+    client = _make_client_with_token()
+    fake_bytes = b"\x89PNG\r\n"
+
+    class FakeResp:
+        def read(self): return fake_bytes
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: FakeResp())
+
+    files = [{"mimetype": "image/png", "url_private": "https://files.slack.com/img.png"}]
+    result = client.download_images(files)
+
+    assert len(result) == 1
+    assert result[0]["media_type"] == "image/png"
+    assert result[0]["data"] == base64.b64encode(fake_bytes).decode("ascii")
+
+
+def test_download_images_skips_non_image_files(monkeypatch):
+    """PDF and other non-image files are silently skipped."""
+    client = _make_client_with_token()
+    files = [
+        {"mimetype": "application/pdf", "url_private": "https://files.slack.com/doc.pdf"},
+        {"mimetype": "text/plain", "url_private": "https://files.slack.com/notes.txt"},
+    ]
+    result = client.download_images(files)
+    assert result == []
+
+
+def test_download_images_skips_missing_url():
+    """Files without url_private are skipped without error."""
+    client = _make_client_with_token()
+    files = [{"mimetype": "image/png"}]  # no url_private
+    result = client.download_images(files)
+    assert result == []
+
+
+def test_download_images_handles_download_error(monkeypatch):
+    """Network errors are swallowed — returns empty list, does not raise."""
+    import urllib.request
+    client = _make_client_with_token()
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: (_ for _ in ()).throw(OSError("timeout")))
+
+    files = [{"mimetype": "image/jpeg", "url_private": "https://files.slack.com/img.jpg"}]
+    result = client.download_images(files)
+    assert result == []
+
+
+def test_download_images_handles_multiple_images(monkeypatch):
+    """Multiple image files are downloaded and base64-encoded independently."""
+    import base64
+    import urllib.request
+
+    client = _make_client_with_token()
+
+    png_bytes = b"\x89PNG\r\n\x1a\nfake-png-data"
+    jpg_bytes = b"\xff\xd8\xff\xe0fake-jpg-data"
+
+    responses = iter([png_bytes, jpg_bytes])
+
+    class FakeResp:
+        def __init__(self, data): self._data = data
+        def read(self): return self._data
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: FakeResp(next(responses)))
+
+    files = [
+        {"mimetype": "image/png", "url_private": "https://files.slack.com/a.png"},
+        {"mimetype": "image/jpeg", "url_private": "https://files.slack.com/b.jpg"},
+    ]
+    result = client.download_images(files)
+    assert len(result) == 2
+    assert result[0] == {"media_type": "image/png", "data": base64.b64encode(png_bytes).decode("ascii")}
+    assert result[1] == {"media_type": "image/jpeg", "data": base64.b64encode(jpg_bytes).decode("ascii")}

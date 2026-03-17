@@ -24,6 +24,13 @@ BotReplyHandler = Callable[[str, str, str, str], None]
 
 
 @dataclass
+class ImageAttachment:
+    """A base64-encoded image attached to a message."""
+    data: str          # base64-encoded bytes
+    media_type: str    # e.g. "image/png", "image/jpeg"
+
+
+@dataclass
 class IncomingMessage:
     """Platform-agnostic incoming message."""
 
@@ -33,6 +40,8 @@ class IncomingMessage:
     platform: str = ""
     message_id: str = field(default_factory=lambda: uuid4().hex[:12])
     thread_id: str | None = None  # Slack thread_ts, etc.
+    images: list[ImageAttachment] = field(default_factory=list)
+    non_image_files: list[str] = field(default_factory=list)  # filenames of skipped non-image attachments
 
 
 @dataclass

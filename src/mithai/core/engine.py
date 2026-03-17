@@ -204,15 +204,40 @@ class Engine:
 
         # Drain any thread observations accumulated since the last agent response
         pending = self._sessions.pop_observations(session_key)
+        observation_images: list[dict] = []
         if pending:
             context_lines = "\n".join(f"  {o['user_id']}: {o['text']}" for o in pending)
-            user_content = (
+            text_content = (
                 f"{backfill_prefix}"
                 f"[Thread context — messages since your last response:]\n{context_lines}\n\n"
                 f"{message.text}"
             )
+            # Collect images from observations so the LLM can see what was shared
+            for o in pending:
+                observation_images.extend(o.get("images", []))
         else:
-            user_content = f"{backfill_prefix}{message.text}"
+            text_content = f"{backfill_prefix}{message.text}"
+
+        # Build user content — plain string or multi-modal blocks if images are attached
+        all_images = observation_images + [
+            {"data": img.data, "media_type": img.media_type}
+            for img in message.images
+        ]
+        if all_images:
+            logger.info("Building multi-modal content with %d image(s)", len(all_images))
+            user_content: str | list = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img["media_type"],
+                        "data": img["data"],
+                    },
+                }
+                for img in all_images
+            ] + [{"type": "text", "text": text_content}]
+        else:
+            user_content = text_content
 
         messages = history + [{"role": "user", "content": user_content}]
 
@@ -393,12 +418,13 @@ class Engine:
 
         response_text = response_text or "(no response)"
 
-        # Record turn to session
+        # Record turn to session (include images so history can replay them)
         turn = SessionManager.build_turn(
             user_id=message.user_id,
             user_message=message.text,
             tool_calls=turn_tool_calls,
             assistant_response=response_text,
+            images=all_images if all_images else None,
         )
         self._sessions.append_turn(session_key, turn)
 
@@ -543,23 +569,61 @@ class Engine:
                 # in the session history and doesn't need to be shown again as context.
                 last_turn = session["turns"][-1]
                 if last_turn.get("user_message") != message.text:
-                    self._sessions.append_observation(key, {
+                    obs: dict = {
                         "user_id": message.user_id,
                         "text": message.text,
-                    })
+                    }
+                    if message.images:
+                        obs["images"] = [
+                            {"data": img.data, "media_type": img.media_type}
+                            for img in message.images
+                        ]
+                    self._sessions.append_observation(key, obs)
+
+    # How many of the most recent turns can include images in history replay.
+    # Older turns get text-only to bound context size.
+    _MAX_IMAGE_HISTORY_TURNS = 2
 
     def _build_history(self, session: dict) -> list[dict]:
         """Convert recent session turns into LLM message pairs.
 
         Uses the native Anthropic tool_use/tool_result format so the LLM
         sees its own calling convention rather than a text summary it might mimic.
+
+        Images are included for the most recent ``_MAX_IMAGE_HISTORY_TURNS``
+        turns that have them, keeping older turns text-only to avoid context bloat.
         """
         turns = session.get("turns", [])
         recent = turns[-self._max_history:] if turns else []
 
+        # Find which turns may carry images (only the last N)
+        image_budget = self._MAX_IMAGE_HISTORY_TURNS
+        image_turn_indices: set[int] = set()
+        for idx in range(len(recent) - 1, -1, -1):
+            if recent[idx].get("images") and image_budget > 0:
+                image_turn_indices.add(idx)
+                image_budget -= 1
+
         messages = []
         for turn_idx, turn in enumerate(recent):
-            messages.append({"role": "user", "content": turn["user_message"]})
+            # Reconstruct multi-modal content if this turn had images
+            images = turn.get("images", [])
+            if images and turn_idx in image_turn_indices:
+                user_content: str | list = [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img["media_type"],
+                            "data": img["data"],
+                        },
+                    }
+                    for img in images
+                ] + [{"type": "text", "text": turn["user_message"]}]
+            else:
+                user_content = turn["user_message"]
+
+            messages.append({"role": "user", "content": user_content})
 
             tool_calls = turn.get("tool_calls", [])
             if tool_calls:

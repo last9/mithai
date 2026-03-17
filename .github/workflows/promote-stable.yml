@@ -1,0 +1,87 @@
+name: Promote to Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to promote as stable (e.g. v0.4.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.tag }} to stable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag exists
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG does not exist"
+            exit 1
+          fi
+
+      - name: Validate release exists
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::No GitHub release found for $TAG. Run the release workflow first."
+            exit 1
+          fi
+
+      - name: Download assets from tagged release
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p stable-assets/
+          gh release download "$TAG" --dir stable-assets/
+          echo "=== Downloaded assets ==="
+          ls -lh stable-assets/
+
+      - name: Create or update stable release
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Get the tagged release notes
+          ORIGINAL_NOTES=$(gh release view "$TAG" --json body --jq .body)
+
+          # Build stable release notes
+          STABLE_NOTES=$(cat <<EOF
+          ## Stable Release
+
+          Promoted from [\`$TAG\`](https://github.com/$REPO/releases/tag/$TAG).
+
+          ---
+
+          $ORIGINAL_NOTES
+          EOF
+          )
+
+          # Delete existing stable release if present
+          gh release delete stable --yes 2>/dev/null || true
+          git push origin :refs/tags/stable 2>/dev/null || true
+
+          # Create stable tag pointing to the same commit as the source tag
+          TAG_SHA=$(git rev-parse "refs/tags/$TAG")
+          git tag -f stable "$TAG_SHA"
+          git push origin stable --force
+
+          # Create the stable release with the same assets
+          gh release create stable \
+            --title "stable ($TAG)" \
+            --notes "$STABLE_NOTES" \
+            --latest \
+            stable-assets/*

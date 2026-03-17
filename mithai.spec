@@ -164,8 +164,12 @@ a = Analysis(
 
 pyz = PYZ(a.pure, cipher=block_cipher)
 
-# Determine platform suffix for binary name
-arch = platform.machine()
+# Determine platform suffix for binary name.
+# MITHAI_TARGET_ARCH overrides the detected arch for cross-compilation
+# (e.g. building x86_64 binary on ARM macOS).
+import os
+_target_arch = os.environ.get('MITHAI_TARGET_ARCH', '').strip()
+arch = _target_arch or platform.machine()
 if arch == 'x86_64':
     arch = 'amd64'
 system = platform.system().lower()
@@ -187,7 +191,7 @@ exe = EXE(
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
+    target_arch=_target_arch or None,
     codesign_identity=None,
     entitlements_file=None,
 )

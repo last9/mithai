@@ -1,0 +1,49 @@
+display_information:
+  name: mithai
+  description: AI agent for your organization — answers questions, takes actions, asks before doing anything sensitive.
+  background_color: "#1a1a2e"
+
+features:
+  bot_user:
+    display_name: mithai
+    always_online: true
+  slash_commands: []
+
+oauth_config:
+  scopes:
+    bot:
+      # Read messages
+      - app_mentions:read       # receive events when the bot is @mentioned
+      - channels:history        # read messages in public channels
+      - groups:history          # read messages in private channels
+      - im:history              # read direct messages
+      - mpim:history            # read group direct messages
+
+      # Read metadata
+      - channels:read           # list channels and get channel info
+      - groups:read             # list private channels the bot is in
+      - users:read              # look up user names for approval tracking
+      - users:read.email        # (optional) look up users by email
+
+      # Write messages
+      - chat:write              # send messages as the bot
+      - chat:write.customize    # send with custom username/avatar (optional)
+
+      # Reactions and interactions
+      - reactions:write         # add emoji reactions (e.g. 👀 while thinking)
+
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention             # @mithai in any channel
+      - message.channels        # messages in public channels (if respond: all)
+      - message.groups          # messages in private channels (if respond: all)
+      - message.im              # direct messages
+      - message.mpim            # group direct messages
+
+  interactivity:
+    is_enabled: true            # required for Approve/Deny buttons
+
+  org_deploy_enabled: false
+  socket_mode_enabled: true     # mithai uses Socket Mode — no public URL needed
+  token_rotation_enabled: false

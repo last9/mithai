@@ -15,3 +15,11 @@ build/
 *.egg
 deploy/k8s/secret.yaml
 deploy/helm/values-last9.yaml
+ideas/
+
+# Docs site
+docs-site/node_modules/
+docs-site/.astro/
+docs-site/dist/
+docs-site/src/content/docs/
+.DS_Store

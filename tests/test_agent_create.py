@@ -1,6 +1,5 @@
 """Tests for mithai agent create command."""
 
-import os
 import tempfile
 from pathlib import Path
 

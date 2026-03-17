@@ -18,33 +18,40 @@ from mithai.core.skill_loader import filter_skills, load_skills
 
 # ── Agent templates ──────────────────────────────────────────────────────────
 
-AGENT_SYSTEM_PROMPT_TEMPLATE = """You are {name}, a helpful operations assistant.
-You have access to skills that let you interact with infrastructure.
-Be concise and precise. Explain before acting.
-"""
+AGENT_SYSTEM_PROMPT_TEMPLATE = (
+    "You are {name}, a helpful operations assistant.\n"
+    "You have access to skills that let you interact with infrastructure.\n"
+    "Be concise and precise. Explain before acting.\n"
+)
 
-AGENT_ENV_TEMPLATE = """# {agent_id} agent credentials
-# Slack bot — create at https://api.slack.com/apps
-{prefix}_SLACK_BOT_TOKEN=xoxb-...
-{prefix}_SLACK_APP_TOKEN=xapp-...
-"""
+AGENT_ENV_TEMPLATE = (
+    "# {agent_id} agent credentials\n"
+    "# Slack bot — create at https://api.slack.com/apps\n"
+    "{prefix}_SLACK_BOT_TOKEN=xoxb-...\n"
+    "{prefix}_SLACK_APP_TOKEN=xapp-...\n"
+)
 
-AGENT_CONFIG_SNIPPET = """
-  {agent_id}:
-    name: "{name}"
-    system_prompt: |
-      You are {name}, a helpful operations assistant.
-      You have access to skills that let you interact with infrastructure.
-      Be concise and precise. Explain before acting.
-    skills:
-      allowed: [{skills_csv}]
-    memory:
-      path: ./{agent_dir}/memory
-    adapter:
-      slack:
-        bot_token: ${{{prefix}_SLACK_BOT_TOKEN}}
-        app_token: ${{{prefix}_SLACK_APP_TOKEN}}
-"""
+
+def _build_config_snippet(agent_id: str, name: str, skills_csv: str,
+                          agent_dir: str, prefix: str) -> str:
+    """Build the YAML snippet for an agent config entry."""
+    prompt_indented = "\n".join(
+        f"      {line}" for line in AGENT_SYSTEM_PROMPT_TEMPLATE.format(name=name).strip().split("\n")
+    )
+    return (
+        f"\n  {agent_id}:\n"
+        f"    name: \"{name}\"\n"
+        f"    system_prompt: |\n"
+        f"{prompt_indented}\n"
+        f"    skills:\n"
+        f"      allowed: [{skills_csv}]\n"
+        f"    memory:\n"
+        f"      path: ./{agent_dir}/memory\n"
+        f"    adapter:\n"
+        f"      slack:\n"
+        f"        bot_token: ${{{prefix}_SLACK_BOT_TOKEN}}\n"
+        f"        app_token: ${{{prefix}_SLACK_APP_TOKEN}}\n"
+    )
 
 
 @click.group()
@@ -81,8 +88,6 @@ def create_agent(agent_id, name, skills_csv, config_path, agent_dir):
         )
 
     agent_path = Path(agent_dir) if agent_dir else Path("agents") / agent_id
-    if agent_path.exists():
-        raise click.ClickException(f"Directory already exists: {agent_path}")
 
     display_name = name or agent_id.replace("_", " ").title()
     prefix = agent_id.upper()
@@ -91,8 +96,11 @@ def create_agent(agent_id, name, skills_csv, config_path, agent_dir):
     banner_small(f"agent · create {agent_id}")
     console.print()
 
-    # ── Create directory structure ──
-    agent_path.mkdir(parents=True)
+    # ── Create directory structure (atomic — no pre-check race) ──
+    try:
+        agent_path.mkdir(parents=True)
+    except FileExistsError:
+        raise click.ClickException(f"Directory already exists: {agent_path}")
     (agent_path / "memory").mkdir()
 
     # System prompt
@@ -109,27 +117,26 @@ def create_agent(agent_id, name, skills_csv, config_path, agent_dir):
     config_file = Path(config_path)
     if config_file.exists():
         config_text = config_file.read_text()
+        config_lines = config_text.split("\n")
 
-        snippet = AGENT_CONFIG_SNIPPET.format(
+        snippet = _build_config_snippet(
             agent_id=agent_id,
             name=display_name,
             skills_csv=", ".join(skills_list),
-            agent_dir=agent_path,
+            agent_dir=str(agent_path),
             prefix=prefix,
         )
 
         # Check for an active (non-commented) agents: line
-        has_agents_section = any(
-            line.rstrip() == "agents:" for line in config_text.split("\n")
-        )
+        has_agents_section = any(line.rstrip() == "agents:" for line in config_lines)
         if has_agents_section:
-            config_text = _append_to_agents_section(config_text, snippet)
+            config_text = _append_to_agents_section(config_lines, snippet)
             ok(f"Added [bright_cyan]{agent_id}[/] to existing agents section")
         else:
             # Add agents section before state: or at end of file
             agents_block = f"\nagents:{snippet}\n  default_agent: {agent_id}\n"
             if "\nstate:" in config_text:
-                config_text = config_text.replace("\nstate:", f"{agents_block}\nstate:")
+                config_text = config_text.replace("\nstate:", f"{agents_block}\nstate:", 1)
             else:
                 config_text += agents_block
             ok(f"Added [bright_cyan]agents:[/] section with [bright_cyan]{agent_id}[/]")
@@ -150,13 +157,14 @@ def create_agent(agent_id, name, skills_csv, config_path, agent_dir):
     console.print()
 
 
-def _append_to_agents_section(config_text: str, snippet: str) -> str:
-    """Append an agent snippet to an existing agents: section in YAML text.
+def _append_to_agents_section(lines: list[str], snippet: str) -> str:
+    """Append an agent snippet to an existing agents: section.
 
+    Accepts pre-split lines (to avoid splitting the config text twice).
     Finds the end of the agents block (next non-indented line or EOF) and
     inserts the snippet just before it.
     """
-    lines = config_text.split("\n")
+    lines = list(lines)  # copy to avoid mutating caller's list
     in_agents = False
     insert_idx = len(lines)
 
@@ -408,7 +416,6 @@ def validate_agents(config_path):
         # Check memory
         memory_path = agent_def.get("memory", {}).get("path")
         if memory_path:
-            from pathlib import Path
             p = Path(memory_path)
             if p.exists():
                 ok(f"  Memory: {memory_path}")

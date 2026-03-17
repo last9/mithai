@@ -17,32 +17,7 @@ from mithai.core.skill_loader import load_skills, validate_skill
 # Skills that ship inside the binary and are always loaded
 CORE_SKILLS = {"shell", "memory", "sessions", "http_checker"}
 
-# Runtime dependency checks for optional skills.
-# Each entry maps a skill name to a list of checks.
-# Each check is: {"command": "...", "label": "...", "install_hint": "..."}
-SKILL_DEPS = {
-    "github": [
-        {
-            "command": "gh --version",
-            "label": "GitHub CLI (gh)",
-            "install_hint": "Install gh: https://cli.github.com/ or `brew install gh`",
-        },
-    ],
-    "kubernetes": [
-        {
-            "command": "kubectl version --client -o json",
-            "label": "kubectl",
-            "install_hint": "Install kubectl: https://kubernetes.io/docs/tasks/tools/",
-        },
-    ],
-    "aws": [
-        {
-            "command": "aws --version",
-            "label": "AWS CLI",
-            "install_hint": "Install AWS CLI: https://aws.amazon.com/cli/",
-        },
-    ],
-}
+SKILL_DEPS: dict[str, list[dict]] = {}
 
 
 SKILL_PROMPT_TEMPLATE = """Describe what this skill does.

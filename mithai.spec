@@ -26,18 +26,6 @@ datas = []
 for skill in CORE_SKILLS:
     datas.append((f'skills/{skill}', f'skills/{skill}'))
 
-# All optional skills are bundled as installable archives
-OPTIONAL_SKILLS = [
-    'aws',
-    'code_review',
-    'exception_fixer',
-    'github',
-    'kubernetes',
-    'last9',
-]
-for skill in OPTIONAL_SKILLS:
-    datas.append((f'skills/{skill}', f'_optional_skills/{skill}'))
-
 # Bundle UI templates and static assets
 datas.append(('src/mithai/ui/templates', 'mithai/ui/templates'))
 datas.append(('src/mithai/ui/static', 'mithai/ui/static'))

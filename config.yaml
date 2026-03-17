@@ -30,40 +30,16 @@ llm:
 
 # MCP servers — shared infrastructure for tool backends
 # Skills declare which MCP tools they need in their tools.py (MCP_TOOLS)
-mcp_servers:
-  linear:
-    transport: sse
-    url: https://mcp.linear.app/sse
-    headers:
-      Authorization: Bearer ${LINEAR_API_KEY}
-  last9:
-    transport: streamablehttp
-    url: https://app.last9.io/api/v4/organizations/last9/mcp
-    headers:
-      X-LAST9-API-TOKEN: Bearer ${LAST9_API_TOKEN}
+# mcp_servers:
+#   last9:
+#     transport: streamablehttp
+#     url: https://app.last9.io/api/v4/organizations/last9/mcp
+#     headers:
+#       X-LAST9-API-TOKEN: Bearer ${LAST9_API_TOKEN}
 
 skills:
   paths:
     - ./skills
-  config:
-    kubernetes:
-      default_namespace: default
-      context: ""
-      kubeconfig: "/tmp/kubeconfig/alpha.last9.io_parallel/platform"
-      alert_channel: ""
-      poll_interval_minutes: 5
-      cooldown_minutes: 30
-      namespaces: []
-      auto_investigate: true
-      exclude_namespaces:
-        - kube-system
-        - kube-public
-        - kube-node-lease
-
-    aws_costs:
-      region: us-east-1
-      profile: ""
-      account_id: ""
 
 learning:
   enabled: true
@@ -88,7 +64,7 @@ heartbeat:
 #       You have access to skills that let you interact with infrastructure.
 #       Be concise and precise. Explain before acting.
 #     skills:
-#       allowed: [shell, kubernetes, memory, http_checker, aws_costs, parrot]
+#       allowed: [shell, memory, http_checker, sessions]
 #     memory:
 #       path: ./memory/devops
 #     adapter:

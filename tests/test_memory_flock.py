@@ -6,7 +6,6 @@ are safe under advisory file locking.
 
 import multiprocessing
 import os
-import time
 
 import pytest
 
@@ -97,10 +96,9 @@ class TestLockedReadWrite:
 # Multiprocess concurrency tests
 # ---------------------------------------------------------------------------
 
-def _writer(base_path: str, key: str, value: str, delay: float):
-    """Write *value* to *key* via a fresh backend instance, with a delay to widen the race window."""
+def _writer(base_path: str, key: str, value: str):
+    """Write *value* to *key* via a fresh backend instance."""
     b = FilesystemMemoryBackend(base_path)
-    time.sleep(delay)
     b.write(key, value)
 
 
@@ -124,8 +122,8 @@ class TestConcurrentWrites:
         b = FilesystemMemoryBackend(base)
         b.write("shared.md", "")
 
-        p1 = multiprocessing.Process(target=_writer, args=(base, "shared.md", "AAAA" * 1000, 0))
-        p2 = multiprocessing.Process(target=_writer, args=(base, "shared.md", "BBBB" * 1000, 0))
+        p1 = multiprocessing.Process(target=_writer, args=(base, "shared.md", "AAAA" * 1000))
+        p2 = multiprocessing.Process(target=_writer, args=(base, "shared.md", "BBBB" * 1000))
         p1.start()
         p2.start()
         p1.join(timeout=5)
@@ -172,6 +170,8 @@ class TestConcurrentReads:
             p.start()
         for p in procs:
             p.join(timeout=5)
+        for i, p in enumerate(procs):
+            assert p.exitcode == 0, f"reader {i} failed with {p.exitcode}"
 
         results = [q.get_nowait() for _ in range(5)]
         assert all(r == "snapshot" for r in results)
@@ -187,7 +187,7 @@ class TestConcurrentReadWrite:
         b.write("data.md", old)
 
         q = multiprocessing.Queue()
-        writer = multiprocessing.Process(target=_writer, args=(base, "data.md", new, 0))
+        writer = multiprocessing.Process(target=_writer, args=(base, "data.md", new))
         reader = multiprocessing.Process(target=_reader, args=(base, "data.md", q))
         writer.start()
         reader.start()

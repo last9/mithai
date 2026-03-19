@@ -1,7 +1,6 @@
 """mithai init — interactive setup wizard."""
 
 import os
-import subprocess
 
 import click
 import yaml
@@ -67,40 +66,6 @@ def _validate_telegram_token(bot_token: str) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
-
-def _discover_k8s_contexts(kubeconfig: str) -> list[dict]:
-    """List available kubectl contexts from kubeconfig paths."""
-    env = dict(os.environ)
-    env["KUBECONFIG"] = kubeconfig
-    try:
-        result = subprocess.run(
-            ["kubectl", "config", "get-contexts", "-o", "name"],
-            capture_output=True, text=True, timeout=10, env=env,
-        )
-        if result.returncode != 0:
-            return []
-        contexts = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
-        return contexts
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return []
-
-
-def _validate_k8s_context(kubeconfig: str, context: str) -> tuple[bool, str]:
-    """Validate a kubectl context by running cluster-info."""
-    env = dict(os.environ)
-    env["KUBECONFIG"] = kubeconfig
-    try:
-        result = subprocess.run(
-            ["kubectl", "cluster-info", "--context", context],
-            capture_output=True, text=True, timeout=15, env=env,
-        )
-        if result.returncode == 0:
-            return True, "reachable"
-        return False, result.stderr.strip()[:100]
-    except subprocess.TimeoutExpired:
-        return False, "connection timed out"
-    except FileNotFoundError:
-        return False, "kubectl not found"
 
 
 @click.command()
@@ -372,29 +337,7 @@ def init(target_dir):
                 for dep in deps:
                     ok(dep["label"])
 
-            # Skill-specific config prompts
-            if skill_name == "kubernetes":
-                _configure_kubernetes(config, skills_config)
-
     config.setdefault("skills", {})["config"] = skills_config
-
-    # Kubernetes KUBECONFIG validation
-    k8s_config = skills_config.get("kubernetes", {})
-    kubeconfig = k8s_config.get("kubeconfig", "")
-    if kubeconfig and "kubernetes" in installed_skills:
-        console.print()
-        info("Validating Kubernetes clusters...")
-        contexts = _discover_k8s_contexts(kubeconfig)
-        for ctx_name in contexts:
-            validated_ok, msg = _validate_k8s_context(kubeconfig, ctx_name)
-            if validated_ok:
-                ok(f"{ctx_name}: {msg}")
-            else:
-                fail(f"{ctx_name}: {msg}")
-
-    # MCP server config
-    if any(s in installed_skills for s in ("last9", "github", "exception_fixer")):
-        _configure_mcp_servers(config, installed_skills, new_secrets)
 
     # ─── Step 4: Write Files ─────────────────────────────────────────
     step += 1
@@ -474,71 +417,3 @@ def init(target_dir):
     console.print()
 
 
-def _configure_kubernetes(config: dict, skills_config: dict):
-    """Prompt for Kubernetes-specific configuration."""
-    existing = skills_config.get("kubernetes", {})
-
-    console.print()
-    console.print("      [header]Kubernetes Configuration[/]")
-
-    kubeconfig = Prompt.ask(
-        "      KUBECONFIG paths (colon-separated)",
-        default=existing.get("kubeconfig", str(Path.home() / ".kube" / "config")),
-        console=console,
-    )
-
-    default_ns = Prompt.ask(
-        "      Default namespace",
-        default=existing.get("default_namespace", "default"),
-        console=console,
-    )
-
-    skills_config["kubernetes"] = {
-        "kubeconfig": kubeconfig,
-        "default_namespace": default_ns,
-        "context": existing.get("context", ""),
-        "alert_channel": existing.get("alert_channel", ""),
-        "poll_interval_minutes": existing.get("poll_interval_minutes", 5),
-        "cooldown_minutes": existing.get("cooldown_minutes", 30),
-        "namespaces": existing.get("namespaces", []),
-        "auto_investigate": existing.get("auto_investigate", True),
-        "exclude_namespaces": existing.get("exclude_namespaces", [
-            "kube-system", "kube-public", "kube-node-lease",
-        ]),
-    }
-
-
-def _configure_mcp_servers(config: dict, installed_skills: list, new_secrets: dict):
-    """Prompt for MCP server configuration."""
-    console.print()
-    console.print("    [header]MCP Server Configuration[/]")
-    console.print()
-
-    mcp_servers = config.get("mcp_servers", {})
-
-    if "last9" in installed_skills or "exception_fixer" in installed_skills:
-        if Confirm.ask(
-            "    Configure [bright_cyan]Last9[/] MCP?",
-            default=True,
-            console=console,
-        ):
-            existing_last9 = mcp_servers.get("last9", {})
-            last9_token = Prompt.ask(
-                "    Last9 API Token",
-                default="(existing)" if existing_last9 else "",
-                password=True,
-                console=console,
-            )
-            mcp_servers["last9"] = {
-                "transport": "streamablehttp",
-                "url": "https://app.last9.io/api/v4/organizations/last9/mcp",
-                "headers": {"X-LAST9-API-TOKEN": "Bearer ${LAST9_API_TOKEN}"},
-            }
-            if last9_token and last9_token != "(existing)":
-                new_secrets["LAST9_API_TOKEN"] = last9_token
-
-    # GitHub uses `gh` CLI directly — no MCP server needed.
-    # `gh auth login` handles authentication.
-
-    if mcp_servers:
-        config["mcp_servers"] = mcp_servers

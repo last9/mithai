@@ -5,7 +5,6 @@ are safe under advisory file locking.
 """
 
 import multiprocessing
-import os
 
 import pytest
 

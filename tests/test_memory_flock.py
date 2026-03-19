@@ -100,7 +100,6 @@ class TestLockedReadWrite:
 def _writer(base_path: str, key: str, value: str, delay: float):
     """Write *value* to *key* via a fresh backend instance, with a delay to widen the race window."""
     b = FilesystemMemoryBackend(base_path)
-    # Touch to create file before locking in write() if it doesn't exist
     time.sleep(delay)
     b.write(key, value)
 
@@ -131,6 +130,8 @@ class TestConcurrentWrites:
         p2.start()
         p1.join(timeout=5)
         p2.join(timeout=5)
+        assert p1.exitcode == 0, f"writer 1 failed with {p1.exitcode}"
+        assert p2.exitcode == 0, f"writer 2 failed with {p2.exitcode}"
 
         content = b.read("shared.md")
         # One of the two values must win cleanly — no interleaving.
@@ -149,6 +150,8 @@ class TestConcurrentWrites:
         p2.start()
         p1.join(timeout=10)
         p2.join(timeout=10)
+        assert p1.exitcode == 0, f"appender 1 failed with {p1.exitcode}"
+        assert p2.exitcode == 0, f"appender 2 failed with {p2.exitcode}"
 
         content = b.read("log.md")
         assert content.count("A") == n
@@ -190,6 +193,8 @@ class TestConcurrentReadWrite:
         reader.start()
         writer.join(timeout=5)
         reader.join(timeout=5)
+        assert writer.exitcode == 0, f"writer failed with {writer.exitcode}"
+        assert reader.exitcode == 0, f"reader failed with {reader.exitcode}"
 
         result = q.get_nowait()
         assert result in (old, new)

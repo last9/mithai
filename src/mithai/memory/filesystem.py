@@ -22,15 +22,18 @@ def _flock(filepath: Path, exclusive: bool):
 
     The lock is always released in the finally block, even on error.
     """
-    mode = "r+" if filepath.exists() else "w+"
-    fd = open(filepath, mode, encoding="utf-8")  # noqa: SIM115
+    # "a+" creates the file atomically (O_CREAT) and never truncates,
+    # avoiding the TOCTOU race of checking exists() then opening.
+    fd = open(filepath, "a+", encoding="utf-8")  # noqa: SIM115
     try:
         fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
         yield fd
     finally:
-        fd.flush()
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        fd.close()
+        try:
+            fd.flush()
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            fd.close()
 
 
 class FilesystemMemoryBackend(MemoryBackend):
@@ -49,7 +52,7 @@ class FilesystemMemoryBackend(MemoryBackend):
         if not self.validate_path(path):
             return None
         target = (self._base / path).resolve()
-        if not str(target).startswith(str(self._base)):
+        if target != self._base and not str(target).startswith(str(self._base) + os.sep):
             return None
         return target
 
@@ -66,9 +69,6 @@ class FilesystemMemoryBackend(MemoryBackend):
         if target is None:
             raise ValueError(f"Invalid path: {path}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        # Ensure the file exists before locking (flock needs a file descriptor).
-        if not target.exists():
-            target.touch()
         with _flock(target, exclusive=True) as fh:
             if append:
                 fh.seek(0, os.SEEK_END)

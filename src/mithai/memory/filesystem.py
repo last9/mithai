@@ -1,9 +1,36 @@
-"""Filesystem memory backend — the default."""
+"""Filesystem memory backend — the default.
 
+Uses fcntl.flock() advisory locking to prevent data corruption when
+multiple processes (e.g. main agent + scheduled tasks) share the same
+memory directory.  Writes acquire LOCK_EX, reads acquire LOCK_SH.
+"""
+
+import fcntl
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 from mithai.memory.base import MemoryBackend, SearchMatch, SearchResult
+
+
+@contextmanager
+def _flock(filepath: Path, exclusive: bool):
+    """Acquire an advisory flock on *filepath*, then yield the open file handle.
+
+    ``exclusive=True``  → LOCK_EX  (for writes)
+    ``exclusive=False`` → LOCK_SH  (for reads)
+
+    The lock is always released in the finally block, even on error.
+    """
+    mode = "r+" if filepath.exists() else "w+"
+    fd = open(filepath, mode, encoding="utf-8")  # noqa: SIM115
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        yield fd
+    finally:
+        fd.flush()
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
 
 
 class FilesystemMemoryBackend(MemoryBackend):
@@ -30,18 +57,26 @@ class FilesystemMemoryBackend(MemoryBackend):
         target = self._resolve(path)
         if target is None or not target.exists():
             return None
-        return target.read_text(encoding="utf-8")
+        with _flock(target, exclusive=False) as fh:
+            fh.seek(0)
+            return fh.read()
 
     def write(self, path: str, content: str, *, append: bool = False) -> None:
         target = self._resolve(path)
         if target is None:
             raise ValueError(f"Invalid path: {path}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        if append:
-            with open(target, "a", encoding="utf-8") as f:
-                f.write(content)
-        else:
-            target.write_text(content, encoding="utf-8")
+        # Ensure the file exists before locking (flock needs a file descriptor).
+        if not target.exists():
+            target.touch()
+        with _flock(target, exclusive=True) as fh:
+            if append:
+                fh.seek(0, os.SEEK_END)
+                fh.write(content)
+            else:
+                fh.seek(0)
+                fh.truncate()
+                fh.write(content)
 
     def exists(self, path: str) -> bool:
         target = self._resolve(path)
@@ -59,7 +94,9 @@ class FilesystemMemoryBackend(MemoryBackend):
             if not file_path.is_file():
                 continue
             try:
-                content = file_path.read_text(encoding="utf-8")
+                with _flock(file_path, exclusive=False) as fh:
+                    fh.seek(0)
+                    content = fh.read()
             except Exception:
                 continue
             if query_lower not in content.lower():

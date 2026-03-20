@@ -112,6 +112,139 @@ def test_get_history_returns_empty_list_for_no_messages():
     assert user_map == {}
 
 
+def test_get_history_uses_block_text_for_messages_with_section_blocks():
+    """A message with Block Kit section blocks must use block text, not truncated msg['text']."""
+    client = _make_client()
+    full_text = "Deployment complete:\n- service-a: ok\n- service-b: ok\n- All health checks passed."
+    truncated_text = "Deployment complete:\n- service-a: ok..."
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "user": "U1",
+                "text": truncated_text,
+                "blocks": [
+                    {"type": "section", "text": {"type": "mrkdwn", "text": full_text}},
+                ],
+            }
+        ],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    messages, _ = client.get_history("C1", 10)
+    assert len(messages) == 1
+    assert full_text in messages[0]
+    assert truncated_text not in messages[0]
+
+
+def test_get_history_falls_back_to_text_when_no_blocks():
+    """Messages without blocks must still use msg['text'] as before."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [{"user": "U1", "text": "plain message, no blocks"}],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    messages, _ = client.get_history("C1", 10)
+    assert messages == ["alice: plain message, no blocks"]
+
+
+def test_get_history_resolves_mentions_in_block_text():
+    """User mentions (<@U123>) inside block text must be resolved to display names."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "user": "U1",
+                "text": "hey <@U2> truncated...",
+                "blocks": [
+                    {"type": "section", "text": {"type": "mrkdwn", "text": "hey <@U2> can you review this?"}},
+                ],
+            }
+        ],
+    }
+    client._client.users_info.side_effect = lambda user: {
+        "user": {"profile": {"display_name": user.lower()}, "name": user.lower()}
+    }
+
+    messages, _ = client.get_history("C1", 10)
+    assert len(messages) == 1
+    assert "@u2" in messages[0]
+    assert "<@U2>" not in messages[0]
+
+
+def test_get_history_regular_rich_text_blocks_use_msg_text():
+    """Modern Slack stores user messages with rich_text blocks (uses 'elements', not 'text').
+    Must fall back to msg['text'] which is full and untruncated for human messages."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "user": "U1",
+                "text": "can you check the logs?",
+                "blocks": [
+                    {
+                        "type": "rich_text",
+                        "elements": [
+                            {
+                                "type": "rich_text_section",
+                                "elements": [{"type": "text", "text": "can you check the logs?"}],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "bob"}, "name": "bob"}
+    }
+
+    messages, _ = client.get_history("C1", 10)
+    assert messages == ["bob: can you check the logs?"]
+
+
+def test_get_history_extracts_section_fields_when_no_text():
+    """Section blocks may carry content in 'fields' instead of 'text' (e.g. status/approval cards).
+    _extract_message_text must include fields text so get_history doesn't fall back to truncated fallback."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "user": "U1",
+                "text": "Approval request...",  # truncated fallback
+                "blocks": [
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": "*Status:*\nPending"},
+                            {"type": "mrkdwn", "text": "*Reviewer:*\nalice"},
+                        ],
+                        # no 'text' key — fields only
+                    }
+                ],
+            }
+        ],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "bot"}, "name": "bot"}
+    }
+
+    messages, _ = client.get_history("C1", 10)
+    assert len(messages) == 1
+    assert "*Status:*" in messages[0]
+    assert "*Reviewer:*" in messages[0]
+    assert "Pending" in messages[0]
+
+
 # ---------------------------------------------------------------------------
 # post_message()
 # ---------------------------------------------------------------------------

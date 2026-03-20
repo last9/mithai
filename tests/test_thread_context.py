@@ -405,6 +405,206 @@ def test_slack_client_get_thread_replies_returns_empty_when_not_ok():
     assert client.get_thread_replies("C1", "111.000") == []
 
 
+def test_slack_client_get_thread_replies_uses_block_text_for_bot_messages():
+    """Bot messages use Block Kit; msg['text'] is a truncated notification fallback.
+    get_thread_replies must extract full text from blocks instead."""
+    from mithai.integrations.slack import SlackClient
+    client = SlackClient.__new__(SlackClient)
+    client._client = MagicMock()
+
+    full_text = "Here is the full deployment summary:\n- Step 1: done\n- Step 2: done\n- All checks passed."
+    truncated_text = "Here is the full deployment summary:\n- Step 1: done..."
+
+    client._client.conversations_replies.return_value = {
+        "ok": True,
+        "messages": [
+            # Human message — no blocks, text is authoritative
+            {"user": "U1", "text": "deploy the app"},
+            # Bot reply — text is truncated, full content is in blocks
+            {
+                "bot_id": "B123",
+                "text": truncated_text,
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": full_text},
+                    }
+                ],
+            },
+        ],
+    }
+    client._client.users_info.side_effect = lambda user: {
+        "user": {"profile": {"display_name": user.lower()}, "name": user.lower()}
+    }
+
+    lines = client.get_thread_replies("C1", "111.000")
+
+    assert len(lines) == 2
+    assert lines[0] == "u1: deploy the app"
+    # Must use block text, not the truncated msg['text']
+    assert full_text in lines[1]
+    assert truncated_text not in lines[1]
+
+
+def test_slack_client_get_thread_replies_falls_back_to_text_when_no_blocks():
+    """When a bot message has no blocks, fall back to msg['text'] as before."""
+    from mithai.integrations.slack import SlackClient
+    client = SlackClient.__new__(SlackClient)
+    client._client = MagicMock()
+
+    client._client.conversations_replies.return_value = {
+        "ok": True,
+        "messages": [
+            {"bot_id": "B123", "user": "UBOT1", "text": "simple bot reply without blocks"},
+        ],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "mybot"}, "name": "mybot"}
+    }
+
+    lines = client.get_thread_replies("C1", "111.000")
+    assert lines == ["mybot: simple bot reply without blocks"]
+
+
+def test_slack_client_get_thread_replies_concatenates_multiple_section_blocks():
+    """A bot message may have multiple section blocks; all text should be included."""
+    from mithai.integrations.slack import SlackClient
+    client = SlackClient.__new__(SlackClient)
+    client._client = MagicMock()
+
+    client._client.conversations_replies.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "bot_id": "B123",
+                "text": "truncated...",
+                "blocks": [
+                    {"type": "section", "text": {"type": "mrkdwn", "text": "Part one."}},
+                    {"type": "divider"},  # no text — must be skipped
+                    {"type": "section", "text": {"type": "mrkdwn", "text": "Part two."}},
+                ],
+            }
+        ],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": ""}, "name": "bot"}
+    }
+
+    lines = client.get_thread_replies("C1", "111.000")
+    assert len(lines) == 1
+    assert "Part one." in lines[0]
+    assert "Part two." in lines[0]
+
+
+def test_slack_client_get_thread_replies_regular_message_with_rich_text_blocks():
+    """Modern Slack stores every user message with rich_text blocks (not section blocks).
+    rich_text blocks use 'elements', not 'text', so _extract_message_text must fall back
+    to msg['text'] and return the full message unchanged."""
+    from mithai.integrations.slack import SlackClient
+    client = SlackClient.__new__(SlackClient)
+    client._client = MagicMock()
+
+    client._client.conversations_replies.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "user": "U1",
+                "text": "can you check disk usage?",
+                "blocks": [
+                    {
+                        "type": "rich_text",
+                        "elements": [
+                            {
+                                "type": "rich_text_section",
+                                "elements": [{"type": "text", "text": "can you check disk usage?"}],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    client._client.users_info.side_effect = lambda user: {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    lines = client.get_thread_replies("C1", "111.000")
+    assert lines == ["alice: can you check disk usage?"]
+
+
+def test_slack_client_get_thread_replies_extracts_section_fields():
+    """Section blocks may use 'fields' instead of 'text'. Both must be included in output."""
+    from mithai.integrations.slack import SlackClient
+    client = SlackClient.__new__(SlackClient)
+    client._client = MagicMock()
+
+    client._client.conversations_replies.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "bot_id": "B123",
+                "user": "UBOT1",
+                "text": "Approval request...",  # truncated fallback
+                "blocks": [
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": "*Status:*\nPending"},
+                            {"type": "mrkdwn", "text": "*Reviewer:*\nalice"},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "mybot"}, "name": "mybot"}
+    }
+
+    lines = client.get_thread_replies("C1", "111.000")
+    assert len(lines) == 1
+    assert "*Status:*" in lines[0]
+    assert "*Reviewer:*" in lines[0]
+
+
+def test_slack_client_get_thread_replies_mixed_header_and_rich_text_uses_msg_text():
+    """A message with header + rich_text blocks must NOT return just the header.
+    rich_text presence signals the full content is in msg['text'] (or its elements),
+    so we fall back to msg['text'] rather than returning partial block text."""
+    from mithai.integrations.slack import SlackClient
+    client = SlackClient.__new__(SlackClient)
+    client._client = MagicMock()
+
+    body_text = "Full deployment summary with all details intact."
+    client._client.conversations_replies.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "bot_id": "B123",
+                "user": "UBOT1",
+                "text": body_text,
+                "blocks": [
+                    {"type": "header", "text": {"type": "plain_text", "text": "Deployment"}},
+                    {
+                        "type": "rich_text",
+                        "elements": [
+                            {"type": "rich_text_section", "elements": [{"type": "text", "text": body_text}]}
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "mybot"}, "name": "mybot"}
+    }
+
+    lines = client.get_thread_replies("C1", "111.000")
+    assert len(lines) == 1
+    # Must not return just "Deployment" (the header); full body must be present
+    assert body_text in lines[0]
+
+
 # ---------------------------------------------------------------------------
 # SessionManager — append_observation / pop_observations
 # ---------------------------------------------------------------------------

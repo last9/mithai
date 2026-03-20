@@ -63,13 +63,17 @@ class Adapter(ABC):
 
     @abstractmethod
     def start(self, on_message: MessageHandler, on_channel_join: "ChannelJoinHandler | None" = None,
-              on_observe: "ChannelObserveHandler | None" = None) -> None:
+              on_observe: "ChannelObserveHandler | None" = None,
+              on_bot_reply: "BotReplyHandler | None" = None) -> None:
         """
         Start listening for messages.
 
         on_message(message, adapter) is called for each incoming message.
         The adapter passes itself so the engine can route Human MCP
         approvals back through the correct platform.
+
+        on_bot_reply is called after the bot sends a reply (used by Slack
+        adapters to log outgoing messages to channel context).
         """
         ...
 

@@ -148,9 +148,12 @@ def _flush_stdin():
 
 class CLIAdapter(Adapter):
     """
-    Interactive terminal REPL.
+    Interactive terminal REPL, with piped-stdin support.
 
-    Useful for testing skills and the engine without a chat platform.
+    When stdin is a TTY the adapter runs an interactive REPL.
+    When stdin is piped (e.g. ``echo "msg" | mithai run``) it reads one
+    message, runs the full conversation loop, writes the final plain-text
+    response to stdout, and exits.
     """
 
     _SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -161,16 +164,49 @@ class CLIAdapter(Adapter):
         self._formatter = CLIFormatter()
         self._thinking_start: float | None = None
         self._live: Live | None = None
-        self._prompt_session = PromptSession(
-            completer=_SlashCompleter(),
-            complete_while_typing=True,
-        )
+        self._piped = not sys.stdin.isatty()
+        if not self._piped:
+            self._prompt_session = PromptSession(
+                completer=_SlashCompleter(),
+                complete_while_typing=True,
+            )
 
     def set_engine(self, engine) -> None:
         """Give the adapter a reference to the engine for slash commands."""
         self._engine = engine
 
-    def start(self, on_message: MessageHandler, on_channel_join=None, on_observe=None) -> None:
+    def start(self, on_message: MessageHandler, on_channel_join=None, on_observe=None,
+              on_bot_reply=None) -> None:
+        if self._piped:
+            self._start_piped(on_message)
+        else:
+            self._start_interactive(on_message)
+
+    def _start_piped(self, on_message: MessageHandler) -> None:
+        """Read one message from stdin, process through the full conversation loop,
+        write the final plain-text response to stdout, and exit."""
+        text = sys.stdin.read().strip()
+        if not text:
+            return
+
+        message = IncomingMessage(
+            text=text,
+            channel_id="cli",
+            user_id="local",
+            platform="cli",
+        )
+
+        try:
+            response = on_message(message, self)
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+
+        if response:
+            print(response, flush=True)
+
+    def _start_interactive(self, on_message: MessageHandler) -> None:
+        """Run the interactive REPL (original behavior)."""
         self._running = True
         _console.print(
             "\n  [bright_magenta bold]mithai[/] [muted]ready · type [white]quit[/white] to exit · [white]/help[/white] for commands[/]\n"
@@ -238,6 +274,10 @@ class CLIAdapter(Adapter):
         self._running = False
 
     def send(self, message: OutgoingMessage) -> None:
+        if self._piped:
+            # In piped mode, write plain text to stdout (no Rich formatting)
+            print(message.text, flush=True)
+            return
         for chunk in self._formatter.format(message.text):
             try:
                 md = Markdown(chunk)
@@ -251,6 +291,13 @@ class CLIAdapter(Adapter):
                 _console.print(f"[bright_magenta]mithai>[/] {chunk}")
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
+        if self._piped:
+            print(
+                f"Error: tool '{request.tool_name}' requires human approval "
+                "but stdin is not a terminal — auto-denying.",
+                file=sys.stderr,
+            )
+            return False
         # Stop any active spinner before showing approval dialog
         self._stop_live()
         # Flush buffered keystrokes so stale Enter presses don't auto-deny
@@ -294,6 +341,8 @@ class CLIAdapter(Adapter):
     # ── Status callbacks for progress feedback ──
 
     def on_thinking_start(self) -> None:
+        if self._piped:
+            return
         self._thinking_start = time.monotonic()
         self._live = Live(
             Text("  ● thinking...", style="bright_magenta"),
@@ -336,6 +385,8 @@ class CLIAdapter(Adapter):
         self._stop_live()
 
     def on_tool_start(self, tool_name: str, tool_input: dict) -> None:
+        if self._piped:
+            return
         self._stop_live()
         # Show a compact preview of what's being called
         preview = ""
@@ -349,12 +400,16 @@ class CLIAdapter(Adapter):
         self._thinking_start = time.monotonic()
 
     def on_tool_end(self, tool_name: str, elapsed_s: float, approved: bool) -> None:
+        if self._piped:
+            return
         if approved:
             _console.print(f"  [green]✓[/] [dim]{tool_name}[/] [muted]({elapsed_s:.1f}s)[/]")
         else:
             _console.print(f"  [red]✗[/] [dim]{tool_name} denied[/]")
 
     def on_synthesizing(self) -> None:
+        if self._piped:
+            return
         self._thinking_start = time.monotonic()
         self._live = Live(
             Text("  ● synthesizing response...", style="bright_magenta"),

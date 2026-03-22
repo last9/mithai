@@ -1,4 +1,7 @@
-"""mithai agent — inspect and validate multi-agent configuration."""
+"""mithai agent — create, inspect, and validate multi-agent configuration."""
+
+import re
+from pathlib import Path
 
 import click
 from rich.table import Table
@@ -13,10 +16,174 @@ from mithai.core.config import (
 from mithai.core.skill_loader import filter_skills, load_skills
 
 
+# ── Agent templates ──────────────────────────────────────────────────────────
+
+AGENT_SYSTEM_PROMPT_TEMPLATE = (
+    "You are {name}, a helpful operations assistant.\n"
+    "You have access to skills that let you interact with infrastructure.\n"
+    "Be concise and precise. Explain before acting.\n"
+)
+
+AGENT_ENV_TEMPLATE = (
+    "# {agent_id} agent credentials\n"
+    "# Slack bot — create at https://api.slack.com/apps\n"
+    "{prefix}_SLACK_BOT_TOKEN=xoxb-...\n"
+    "{prefix}_SLACK_APP_TOKEN=xapp-...\n"
+)
+
+
+def _build_config_snippet(agent_id: str, name: str, skills_csv: str,
+                          agent_dir: str, prefix: str) -> str:
+    """Build the YAML snippet for an agent config entry."""
+    prompt_indented = "\n".join(
+        f"      {line}" for line in AGENT_SYSTEM_PROMPT_TEMPLATE.format(name=name).strip().split("\n")
+    )
+    return (
+        f"\n  {agent_id}:\n"
+        f"    name: \"{name}\"\n"
+        f"    system_prompt: |\n"
+        f"{prompt_indented}\n"
+        f"    skills:\n"
+        f"      allowed: [{skills_csv}]\n"
+        f"    memory:\n"
+        f"      path: ./{agent_dir}/memory\n"
+        f"    adapter:\n"
+        f"      slack:\n"
+        f"        bot_token: ${{{prefix}_SLACK_BOT_TOKEN}}\n"
+        f"        app_token: ${{{prefix}_SLACK_APP_TOKEN}}\n"
+    )
+
+
 @click.group()
 def agent():
-    """Inspect and validate multi-agent configuration."""
+    """Create, inspect, and validate multi-agent configuration."""
     pass
+
+
+@agent.command("create")
+@click.argument("agent_id")
+@click.option("--name", default=None, help="Display name (defaults to agent_id titlecased)")
+@click.option("--skills", "skills_csv", default="shell,memory,sessions",
+              help="Comma-separated skill allowlist")
+@click.option("--config", "config_path", default="config.yaml", help="Path to config.yaml")
+@click.option("--dir", "agent_dir", default=None,
+              help="Agent directory (defaults to ./agents/<agent_id>)")
+def create_agent(agent_id, name, skills_csv, config_path, agent_dir):
+    """Create a new agent with directory structure and config entry.
+
+    Generates:
+
+    \b
+      agents/<agent_id>/
+        memory/           — persistent memory for this agent
+        .env.example      — credential template
+        system_prompt.md  — editable system prompt
+
+    Also appends the agent config to config.yaml and runs validation.
+    """
+    # Validate agent_id
+    if not re.match(r'^[a-z][a-z0-9_]*$', agent_id):
+        raise click.ClickException(
+            f"Invalid agent ID '{agent_id}'. Use lowercase letters, numbers, and underscores (e.g. 'devops', 'sre_bot')."
+        )
+
+    agent_path = Path(agent_dir) if agent_dir else Path("agents") / agent_id
+
+    display_name = name or agent_id.replace("_", " ").title()
+    prefix = agent_id.upper()
+    skills_list = [s.strip() for s in skills_csv.split(",") if s.strip()]
+
+    banner_small(f"agent · create {agent_id}")
+    console.print()
+
+    # ── Create directory structure (atomic — no pre-check race) ──
+    try:
+        agent_path.mkdir(parents=True)
+    except FileExistsError:
+        raise click.ClickException(f"Directory already exists: {agent_path}")
+    (agent_path / "memory").mkdir()
+
+    # System prompt
+    prompt_path = agent_path / "system_prompt.md"
+    prompt_path.write_text(AGENT_SYSTEM_PROMPT_TEMPLATE.format(name=display_name))
+    ok(f"Created [white]{prompt_path}[/]")
+
+    # .env.example
+    env_path = agent_path / ".env.example"
+    env_path.write_text(AGENT_ENV_TEMPLATE.format(agent_id=agent_id, prefix=prefix))
+    ok(f"Created [white]{env_path}[/]")
+
+    # ── Update config.yaml ──
+    config_file = Path(config_path)
+    if config_file.exists():
+        config_text = config_file.read_text()
+        config_lines = config_text.split("\n")
+
+        snippet = _build_config_snippet(
+            agent_id=agent_id,
+            name=display_name,
+            skills_csv=", ".join(skills_list),
+            agent_dir=str(agent_path),
+            prefix=prefix,
+        )
+
+        # Check for an active (non-commented) agents: line
+        has_agents_section = any(line.rstrip() == "agents:" for line in config_lines)
+        if has_agents_section:
+            config_text = _append_to_agents_section(config_lines, snippet)
+            ok(f"Added [bright_cyan]{agent_id}[/] to existing agents section")
+        else:
+            # Add agents section before state: or at end of file
+            agents_block = f"\nagents:{snippet}\n  default_agent: {agent_id}\n"
+            if "\nstate:" in config_text:
+                config_text = config_text.replace("\nstate:", f"{agents_block}\nstate:", 1)
+            else:
+                config_text += agents_block
+            ok(f"Added [bright_cyan]agents:[/] section with [bright_cyan]{agent_id}[/]")
+
+        config_file.write_text(config_text)
+        ok(f"Updated [white]{config_file}[/]")
+    else:
+        warn(f"Config file not found: {config_file} — skipping config update")
+
+    console.print()
+
+    # ── Summary ──
+    section("Next steps")
+    console.print(f"    1. Copy [white]{env_path}[/] to [white].env[/] and fill in your Slack tokens")
+    console.print(f"    2. Edit [white]{prompt_path}[/] to customize the system prompt")
+    console.print("    3. Run [white]mithai agent validate[/] to check the configuration")
+    console.print("    4. Run [white]mithai run[/] to start all agents")
+    console.print()
+
+
+def _append_to_agents_section(lines: list[str], snippet: str) -> str:
+    """Append an agent snippet to an existing agents: section.
+
+    Accepts pre-split lines (to avoid splitting the config text twice).
+    Finds the end of the agents block (next non-indented line or EOF) and
+    inserts the snippet just before it.
+    """
+    lines = list(lines)  # copy to avoid mutating caller's list
+    in_agents = False
+    insert_idx = len(lines)
+
+    for i, line in enumerate(lines):
+        if line.rstrip() == "agents:":
+            in_agents = True
+            continue
+        if in_agents:
+            # A non-empty line that isn't indented means a new top-level key
+            if line and not line[0].isspace() and line[0] != "#":
+                insert_idx = i
+                break
+
+    # Insert before the next top-level key (or at EOF)
+    snippet_lines = snippet.rstrip("\n").split("\n")
+    for j, sl in enumerate(snippet_lines):
+        lines.insert(insert_idx + j, sl)
+
+    return "\n".join(lines)
 
 
 @agent.command("list")
@@ -249,7 +416,6 @@ def validate_agents(config_path):
         # Check memory
         memory_path = agent_def.get("memory", {}).get("path")
         if memory_path:
-            from pathlib import Path
             p = Path(memory_path)
             if p.exists():
                 ok(f"  Memory: {memory_path}")

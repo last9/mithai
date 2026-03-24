@@ -2,6 +2,9 @@
 
 import logging
 import threading
+import time
+
+logger = logging.getLogger(__name__)
 
 import click
 
@@ -46,6 +49,42 @@ def run(config_path, adapter_override, verbose):
     except (RuntimeError, ImportError) as exc:
         console.print(f"\n  [red bold]Error:[/] {exc}\n")
         raise SystemExit(1) from None
+
+
+def _startup_onboard_channels(engine, adapter, on_join: callable) -> None:
+    """Run onboarding for allowed channels not yet onboarded.
+
+    Called in a daemon thread before adapter.start() so it fires after the
+    socket connects. Skips channels already marked done in engine state.
+    """
+    allowed = getattr(adapter, "_allowed_channels", None)
+    if not allowed or not on_join:
+        return
+
+    time.sleep(3)  # Let socket mode complete its handshake
+
+    for channel_id in allowed:
+        if engine.is_channel_onboarded(channel_id):
+            continue
+
+        try:
+            info = adapter._app.client.conversations_info(channel=channel_id)
+            channel_name = info["channel"].get("name", channel_id)
+        except Exception:
+            channel_name = channel_id
+
+        logger.info("Startup onboarding for #%s (%s)", channel_name, channel_id)
+        try:
+            # Join the channel so the bot can post (no-op if already a member).
+            try:
+                adapter._app.client.conversations_join(channel=channel_id)
+            except Exception:
+                pass  # Private channel or already a member — proceed anyway
+            intro = on_join(channel_id, channel_name)
+            if intro:
+                adapter._app.client.chat_postMessage(channel=channel_id, text=intro)
+        except Exception:
+            logger.exception("Startup onboarding failed for #%s", channel_name)
 
 
 def _run_single_agent(config: dict, adapter_override: str | None):
@@ -96,6 +135,12 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
         on_observe = engine.observe
         on_bot_reply = engine.log_outgoing if name in ("slack", "slack_http") else None
+        if on_join:
+            threading.Thread(
+                target=_startup_onboard_channels,
+                args=(engine, adapter, on_join),
+                daemon=True,
+            ).start()
         try:
             adapter.start(on_message=engine.handle, on_channel_join=on_join, on_observe=on_observe,
                           on_bot_reply=on_bot_reply)
@@ -182,6 +227,12 @@ def _run_multi_agent(config: dict, agents_config: dict):
         on_join = engine.handle_channel_join if adapter_type in ("slack", "slack_http") else None
         on_observe = engine.observe
         on_bot_reply = engine.log_outgoing if adapter_type in ("slack", "slack_http") else None
+        if on_join:
+            threading.Thread(
+                target=_startup_onboard_channels,
+                args=(engine, adapter, on_join),
+                daemon=True,
+            ).start()
         t = threading.Thread(
             target=_run_adapter,
             args=(label, adapter, engine.handle, on_join, on_observe, on_bot_reply),

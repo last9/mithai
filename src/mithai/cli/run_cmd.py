@@ -2,7 +2,6 @@
 
 import logging
 import threading
-import time
 
 import click
 
@@ -51,46 +50,14 @@ def run(config_path, adapter_override, verbose):
         raise SystemExit(1) from None
 
 
-def _startup_onboard_channels(engine, adapter, on_join: callable) -> None:
-    """Run onboarding for allowed channels not yet onboarded.
-
-    Called in a daemon thread before adapter.start() so it fires after the
-    socket connects. Skips channels already marked done in engine state.
-    """
-    allowed = getattr(adapter, "_allowed_channels", None)
-    if not allowed or not on_join:
-        return
-
-    time.sleep(3)  # Let socket mode complete its handshake
-
-    for channel_id in allowed:
-        if engine.is_channel_onboarded(channel_id):
-            continue
-
-        try:
-            info = adapter._app.client.conversations_info(channel=channel_id)
-            channel_name = info["channel"].get("name", channel_id)
-            is_member = info["channel"].get("is_member", False)
-        except Exception:
-            channel_name = channel_id
-            is_member = False
-
-        logger.info("Startup onboarding for #%s (%s)", channel_name, channel_id)
-        if not is_member:
-            # Not yet in the channel — join and let the member_joined_channel event
-            # trigger onboarding via the normal handler (avoids double-onboarding).
-            try:
-                adapter._app.client.conversations_join(channel=channel_id)
-            except Exception:
-                logger.warning("Could not join #%s — skipping startup onboarding", channel_name)
-        else:
-            # Already a member — no event will fire, run onboarding directly.
-            try:
-                intro = on_join(channel_id, channel_name)
-                if intro:
-                    adapter._app.client.chat_postMessage(channel=channel_id, text=intro)
-            except Exception:
-                logger.exception("Startup onboarding failed for #%s", channel_name)
+def _maybe_startup_onboard(engine, adapter, on_join) -> None:
+    """Start onboarding daemon thread if the adapter supports it."""
+    if on_join and hasattr(adapter, "startup_onboard"):
+        threading.Thread(
+            target=adapter.startup_onboard,
+            args=(engine.is_channel_onboarded, on_join),
+            daemon=True,
+        ).start()
 
 
 def _run_single_agent(config: dict, adapter_override: str | None):
@@ -141,12 +108,7 @@ def _run_single_agent(config: dict, adapter_override: str | None):
         on_join = engine.handle_channel_join if name in ("slack", "slack_http") else None
         on_observe = engine.observe
         on_bot_reply = engine.log_outgoing if name in ("slack", "slack_http") else None
-        if on_join:
-            threading.Thread(
-                target=_startup_onboard_channels,
-                args=(engine, adapter, on_join),
-                daemon=True,
-            ).start()
+        _maybe_startup_onboard(engine, adapter, on_join)
         try:
             adapter.start(on_message=engine.handle, on_channel_join=on_join, on_observe=on_observe,
                           on_bot_reply=on_bot_reply)
@@ -233,12 +195,7 @@ def _run_multi_agent(config: dict, agents_config: dict):
         on_join = engine.handle_channel_join if adapter_type in ("slack", "slack_http") else None
         on_observe = engine.observe
         on_bot_reply = engine.log_outgoing if adapter_type in ("slack", "slack_http") else None
-        if on_join:
-            threading.Thread(
-                target=_startup_onboard_channels,
-                args=(engine, adapter, on_join),
-                daemon=True,
-            ).start()
+        _maybe_startup_onboard(engine, adapter, on_join)
         t = threading.Thread(
             target=_run_adapter,
             args=(label, adapter, engine.handle, on_join, on_observe, on_bot_reply),

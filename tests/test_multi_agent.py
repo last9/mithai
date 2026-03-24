@@ -309,7 +309,7 @@ class TestPerAgentAdapters:
             assert adapters_created[0][0] == "devops"
             assert adapters_created[1][0] == "support"
 
-            # Four threads started — _startup_onboard_channels + _run_adapter per adapter
+            # Four threads started — startup_onboard + _run_adapter per adapter
             assert mock_threading.Thread.call_count == 4
 
             # Each engine got late_bind with its own adapter
@@ -326,10 +326,11 @@ class TestPerAgentAdapters:
             assert len(support_adapters) == 1
             assert support_adapters[0] == ("slack", mock_support_adapter)
 
-            # Verify each thread is wired to the correct engine's handle method
+            # Verify each _run_adapter thread is wired to the correct engine's handle method
             thread_calls = mock_threading.Thread.call_args_list
-            thread_targets = {call.kwargs.get("args", call[1].get("args", ()))[1]: call.kwargs.get("args", call[1].get("args", ()))[2] for call in thread_calls}
-            # The adapter → engine.handle mapping must be correct
+            # Filter to _run_adapter threads (args tuple has 6 elements: label, adapter, handle, on_join, on_observe, on_bot_reply)
+            adapter_threads = [c for c in thread_calls if len(c.kwargs.get("args", c[1].get("args", ()))) == 6]
+            thread_targets = {call.kwargs.get("args", call[1].get("args", ()))[1]: call.kwargs.get("args", call[1].get("args", ()))[2] for call in adapter_threads}
             assert thread_targets[mock_devops_adapter] == devops_engine.handle
             assert thread_targets[mock_support_adapter] == support_engine.handle
 

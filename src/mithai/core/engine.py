@@ -519,12 +519,12 @@ class Engine:
         )
         intro = self._extract_text(intro_response)
         # Mark channel as onboarded so startup check skips it on next boot.
-        self._state.set("onboarding", f"done:{channel_id}", True)
+        self._state.set("onboarding", f"done_{channel_id}", True)
         return intro
 
     def is_channel_onboarded(self, channel_id: str) -> bool:
         """Return True if this channel has already been through onboarding."""
-        return bool(self._state.get("onboarding", f"done:{channel_id}"))
+        return bool(self._state.get("onboarding", f"done_{channel_id}"))
 
     def _log_to_channel_context(self, message: IncomingMessage) -> None:
         """Append a single message line to channel_context/{channel_id}.md.

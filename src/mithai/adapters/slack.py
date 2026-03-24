@@ -3,6 +3,7 @@
 import json
 import logging
 import threading
+import time
 
 from mithai.adapters.base import Adapter, BotReplyHandler, ChannelJoinHandler, ChannelObserveHandler, ImageAttachment, IncomingMessage, MessageHandler, OutgoingMessage
 from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
@@ -358,6 +359,51 @@ class SlackAdapterBase(Adapter):
             except (json.JSONDecodeError, TypeError):
                 pass
             say(text=chunk, thread_ts=thread_ts)
+
+    def startup_onboard(self, is_onboarded, on_join) -> None:
+        """Onboard allowed channels that haven't been onboarded yet.
+
+        Runs after socket connect. Joins channels if needed, or runs
+        on_join directly for channels the bot is already in.
+        """
+        if not self._allowed_channels or not on_join:
+            return
+
+        time.sleep(3)  # Let socket mode complete its handshake
+
+        for channel_id in self._allowed_channels:
+            if is_onboarded(channel_id):
+                continue
+
+            try:
+                resp = self._app.client.conversations_info(channel=channel_id)
+                channel_name = resp["channel"].get("name", channel_id)
+                is_member = resp["channel"].get("is_member", False)
+            except Exception:
+                logger.warning("conversations_info failed for %s — skipping", channel_id, exc_info=True)
+                continue
+
+            logger.info("Startup onboarding for #%s (%s)", channel_name, channel_id)
+            if not is_member:
+                try:
+                    self._app.client.conversations_join(channel=channel_id)
+                    time.sleep(2)
+                    verify = self._app.client.conversations_info(channel=channel_id)
+                    if not verify.get("channel", {}).get("is_member", False):
+                        logger.warning(
+                            "Joined #%s but was auto-removed (workspace admin policy) — "
+                            "invite the bot manually with /invite @<botname>",
+                            channel_name,
+                        )
+                except Exception:
+                    logger.warning("Could not join #%s — skipping startup onboarding", channel_name)
+            else:
+                try:
+                    intro = on_join(channel_id, channel_name)
+                    if intro:
+                        self._slack_client.post_message(channel_id, intro)
+                except Exception:
+                    logger.exception("Startup onboarding failed for #%s", channel_name)
 
     def _decline_and_leave(self, channel_id: str) -> None:
         """Send a not-onboarded message to a non-allowed channel and leave it."""

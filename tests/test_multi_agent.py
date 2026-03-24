@@ -309,8 +309,8 @@ class TestPerAgentAdapters:
             assert adapters_created[0][0] == "devops"
             assert adapters_created[1][0] == "support"
 
-            # Two threads started — one per adapter
-            assert mock_threading.Thread.call_count == 2
+            # Four threads started — _startup_onboard_channels + _run_adapter per adapter
+            assert mock_threading.Thread.call_count == 4
 
             # Each engine got late_bind with its own adapter
             devops_engine.late_bind.assert_called_once()

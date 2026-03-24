@@ -4,8 +4,6 @@ import logging
 import threading
 import time
 
-logger = logging.getLogger(__name__)
-
 import click
 
 from mithai.cli.style import banner_small, console, info, kv, ok, section, setup_logging
@@ -18,6 +16,8 @@ from mithai.core.config import (
     get_skill_paths,
     load_config,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @click.command()

@@ -75,6 +75,41 @@ class TestHandleChannelJoin:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    def test_marks_channel_as_onboarded(self):
+        """After onboarding, is_channel_onboarded returns True."""
+        config = _base_config(onboarding={"enabled": True, "history_scan": False})
+        engine = _make_engine(config)
+        assert not engine.is_channel_onboarded("C999")
+        engine.handle_channel_join("C999", "test-channel")
+        assert engine.is_channel_onboarded("C999")
+
+    def test_skips_already_onboarded_channel(self):
+        """If a channel is already onboarded, handle_channel_join still returns
+        an intro (the engine doesn't short-circuit), but is_channel_onboarded
+        is True before and after — the startup check uses this to skip."""
+        config = _base_config(onboarding={"enabled": True, "history_scan": False})
+        engine = _make_engine(config)
+        engine.handle_channel_join("C888", "first-run")
+        assert engine.is_channel_onboarded("C888")
+        # Simulate restart: same state backend, check persists
+        assert engine.is_channel_onboarded("C888")
+
+    def test_onboarding_state_key_uses_colon(self):
+        """State key must be done:{id} (colon), not done_{id} (underscore).
+        Underscore was briefly introduced for Windows compat but broke
+        re-onboarding detection on restart (existing files use colon)."""
+        from mithai.state.memory import MemoryStateBackend
+        config = _base_config(onboarding={"enabled": True, "history_scan": False})
+        state = MemoryStateBackend()
+        engine = _make_engine(config)
+        # Override state to inspect directly
+        engine._state = state
+        engine.handle_channel_join("C777", "key-test")
+        # Verify colon format
+        assert state.get("onboarding", "done:C777") is True
+        # Verify underscore format is NOT used
+        assert state.get("onboarding", "done_C777") is None
+
     def test_intro_prompt_includes_bot_name_from_config(self):
         """bot.name is injected into the phase-2 intro prompt."""
         config = _base_config(onboarding={"enabled": True})

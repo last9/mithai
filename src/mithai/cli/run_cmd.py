@@ -70,21 +70,27 @@ def _startup_onboard_channels(engine, adapter, on_join: callable) -> None:
         try:
             info = adapter._app.client.conversations_info(channel=channel_id)
             channel_name = info["channel"].get("name", channel_id)
+            is_member = info["channel"].get("is_member", False)
         except Exception:
             channel_name = channel_id
+            is_member = False
 
         logger.info("Startup onboarding for #%s (%s)", channel_name, channel_id)
-        try:
-            # Join the channel so the bot can post (no-op if already a member).
+        if not is_member:
+            # Not yet in the channel — join and let the member_joined_channel event
+            # trigger onboarding via the normal handler (avoids double-onboarding).
             try:
                 adapter._app.client.conversations_join(channel=channel_id)
             except Exception:
-                pass  # Private channel or already a member — proceed anyway
-            intro = on_join(channel_id, channel_name)
-            if intro:
-                adapter._app.client.chat_postMessage(channel=channel_id, text=intro)
-        except Exception:
-            logger.exception("Startup onboarding failed for #%s", channel_name)
+                logger.warning("Could not join #%s — skipping startup onboarding", channel_name)
+        else:
+            # Already a member — no event will fire, run onboarding directly.
+            try:
+                intro = on_join(channel_id, channel_name)
+                if intro:
+                    adapter._app.client.chat_postMessage(channel=channel_id, text=intro)
+            except Exception:
+                logger.exception("Startup onboarding failed for #%s", channel_name)
 
 
 def _run_single_agent(config: dict, adapter_override: str | None):

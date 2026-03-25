@@ -163,6 +163,43 @@ skills:
 
 When using `types`, each adapter runs in its own thread sharing the same engine and skills. Human MCP approvals route back through whichever platform the message came from.
 
+## Onboarding
+
+When the bot is added to a Slack channel, it can run an onboarding flow — learning who's in the channel, what it's used for, and introducing itself.
+
+Enable it in `config.yaml`:
+
+```yaml
+onboarding:
+  enabled: true
+```
+
+**What it does:**
+
+1. Reads its existing memory (`MEMORY.md`) to recall what it already knows about the org from other channels
+2. Fetches the full channel member roster via `slack_get_members`
+3. Reads recent channel history via `slack_get_history`
+4. Merges any new facts into `MEMORY.md` — updating or correcting existing entries rather than duplicating them
+5. Posts a short intro message to the channel
+
+**Customising the onboarding prompt:**
+
+Drop an `onboarding.md` file in your project root (alongside `config.yaml`). The engine loads it instead of the built-in prompt. Two placeholders are available:
+
+```markdown
+You just joined #{channel_name} (ID: {channel_id}).
+
+This team uses a monorepo. Start by reading memory, fetching the member
+roster, and scanning the last 50 messages. Then update MEMORY.md and
+write a one-paragraph intro. No bullet points, no emojis.
+```
+
+Literal `{` and `}` in the template (e.g. JSON examples) are safe — only `{channel_id}` and `{channel_name}` are substituted.
+
+**Memory model:**
+
+mithai serves one organisation across multiple Slack channels. Knowledge is shared — facts learned in `#infra` are available in `#backend`. `MEMORY.md` is the single source of truth. The onboarding flow reads before writing and merges rather than appends, so joining a new channel enriches the shared knowledge without duplicating it.
+
 ## CLI
 
 ```

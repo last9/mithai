@@ -9,11 +9,11 @@ import json
 import logging
 import re
 import time
+import threading
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime
-
-import threading
+from pathlib import Path
 
 from mithai.adapters.base import Adapter, IncomingMessage
 from mithai.core.config import get_human_config, get_llm_config, get_mcp_config, get_skill_config, get_skill_paths
@@ -457,20 +457,31 @@ class Engine:
         self._sessions.delete(session_key)
 
         # Phase 1 — gather info via tools (steps 1–5 only, no text output requested)
-        gather_text = (
-            f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n\n"
-            f"You serve this organisation across several Slack channels. Each channel is a different "
-            f"facet of the same team — people, projects, and context overlap across channels. "
-            f"All knowledge is shared and cumulative.\n\n"
-            f"Execute these steps using tools. Output no text — only call tools:\n"
-            f"1. Read your existing MEMORY.md to recall what you already know about this org.\n"
-            f"2. Call slack_get_members with channel_id={channel_id} to get the full member roster.\n"
-            f"3. Call slack_get_history with channel_id={channel_id} to read recent messages.\n"
-            f"4. Take a nuanced view: most people will already be in your memory from other channels. "
-            f"Identify what is genuinely new — new members, new projects, new patterns.\n"
-            f"5. Update MEMORY.md using overwrite mode with a clean merged version: fold in new "
-            f"facts, correct stale entries, remove duplicates. Keep it concise."
-        )
+        onboarding_md = Path.cwd() / "onboarding.md"
+        if onboarding_md.exists():
+            template = onboarding_md.read_text(encoding="utf-8")
+            gather_text = template.replace("{channel_id}", channel_id).replace("{channel_name}", channel_name)
+        else:
+            gather_text = (
+                f"You were just added to the Slack channel #{channel_name} (ID: {channel_id}).\n\n"
+                f"You serve this organisation across several Slack channels. Each channel is a different "
+                f"facet of the same team — people, projects, and context overlap across channels. "
+                f"All knowledge is shared and cumulative.\n\n"
+                f"Execute these steps using tools. Output no text — only call tools:\n"
+                f"1. Read your existing MEMORY.md to recall what you already know about this org.\n"
+                f"2. Call slack_get_members with channel_id={channel_id} to get the full member roster.\n"
+                f"3. Call slack_get_history with channel_id={channel_id} to read recent messages.\n"
+                f"4. Take a nuanced view: most people will already be in your memory from other channels. "
+                f"Identify what is genuinely new — new members, new projects, new patterns.\n"
+                f"5. Update MEMORY.md using overwrite mode with a clean merged version: fold in new "
+                f"facts, correct stale entries, remove duplicates. Keep it concise.\n"
+                f"6. Write a short intro message that reflects what this channel is for and shows "
+                f"you already know the team.\n\n"
+                f"Execute steps 1–5 using your tools without narrating them. "
+                f"When all tool calls are complete, your final text response must be exactly the intro message — "
+                f"3–5 sentences, no bullet points, no emojis, no preamble, no reasoning. "
+                f"Do not explain what you did. Do not list what is new. Just write the intro."
+            )
 
         fake_message = IncomingMessage(
             text=gather_text,

@@ -332,6 +332,64 @@ class TestHandleChannelJoin:
         # Normal channel session should NOT exist
         assert not any(k == "CXYZ" for k in session_keys)
 
+    def test_custom_onboarding_md_used_when_present(self, tmp_path, monkeypatch):
+        """If onboarding.md exists in cwd, its content is used as the prompt template."""
+        monkeypatch.chdir(tmp_path)
+        # Template includes literal braces (JSON-like) — must not crash
+        (tmp_path / "onboarding.md").write_text(
+            'Custom onboarding for #{channel_name} ({channel_id}). Example: {"key": "value"}.'
+        )
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            if "messages" not in captured:
+                captured["messages"] = kwargs.get("messages", [])
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        config = _base_config(onboarding={"enabled": True})
+        engine = _make_engine(config, llm=llm)
+        engine.handle_channel_join("C700", "custom-channel")
+
+        first_user = next(m for m in captured["messages"] if m.get("role") == "user")
+        text = first_user["content"]
+        if not isinstance(text, str):
+            text = text[0].get("text", "")
+        assert "Custom onboarding" in text
+        assert "custom-channel" in text
+        assert "C700" in text
+
+    def test_default_prompt_used_when_no_onboarding_md(self, tmp_path, monkeypatch):
+        """Falls back to hardcoded prompt when onboarding.md is absent."""
+        monkeypatch.chdir(tmp_path)  # tmp_path has no onboarding.md
+
+        captured = {}
+        llm = MagicMock()
+
+        def _capture(**kwargs):
+            if "messages" not in captured:
+                captured["messages"] = kwargs.get("messages", [])
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm.create_message.side_effect = _capture
+        config = _base_config(onboarding={"enabled": True})
+        engine = _make_engine(config, llm=llm)
+        engine.handle_channel_join("C800", "default-channel")
+
+        first_user = next(m for m in captured["messages"] if m.get("role") == "user")
+        text = first_user["content"]
+        if not isinstance(text, str):
+            text = text[0].get("text", "")
+        assert "MEMORY.md" in text  # hardcoded prompt contains this
+
     def test_no_approval_required(self):
         """Smoke test: onboarding completes without hanging when no tools are called."""
         config = _base_config(onboarding={"enabled": True, "history_scan": False})

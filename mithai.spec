@@ -19,6 +19,7 @@ CORE_SKILLS = [
     'memory',
     'sessions',
     'http_checker',
+    'scheduling',
 ]
 
 # Build datas list from core skills

@@ -15,8 +15,8 @@ You (in Slack/Telegram/CLI)
   Adapter  -->  Engine  -->  LLM (Claude)
                   |              |
               Skills         Tool calls
-           (k8s, AWS,        (namespaced as
-            shell, etc.)      skill__tool)
+           (shell, memory,    (namespaced as
+            scheduling, etc.)  skill__tool)
                   |
              Human MCP
           (approve/confirm
@@ -93,10 +93,10 @@ That's it. Drop the folder in `skills/`, restart mithai, and the AI can use it.
 | Skill | What it does | Human MCP |
 |-------|-------------|-----------|
 | `http_checker` | Check URL health, status codes, response times | auto |
-| `shell` | Run allowlisted shell commands | approve |
-| `kubernetes` | Pods, logs, restart deployments | restart: approve |
-| `aws` | EC2, S3, costs, stop instances | stop: approve |
-| `cicd` | GitHub Actions runs, re-run failed | rerun: approve |
+| `shell` | Run allowlisted shell commands | dynamic |
+| `memory` | Persistent memory across conversations (MEMORY.md) | auto |
+| `sessions` | Inspect past conversation sessions per channel | auto |
+| `scheduling` | Create recurring cron-based tasks via Slack | confirm |
 
 ## Human MCP
 
@@ -117,6 +117,26 @@ human:
   overrides:
     shell__run_command: confirm    # escalate
     kubernetes__get_pods: null     # de-escalate
+```
+
+## Scheduling
+
+The scheduling skill lets the agent create recurring tasks. A cron job posts a Slack message mentioning the bot — the bot processes it like any other @mention.
+
+Two backends:
+
+| Backend | Config | Storage |
+|---------|--------|---------|
+| `crontab` (default) | No config needed | Local crontab |
+| `agent_cloud_platform` | URL + token | Central platform, survives restarts |
+
+```yaml
+skills:
+  config:
+    scheduling:
+      backend: agent_cloud_platform
+      scheduling_backend_url: https://your-platform/api
+      scheduling_backend_token: ${SCHEDULING_BACKEND_TOKEN}
 ```
 
 ## Configuration
@@ -155,17 +175,17 @@ skills:
   paths:
     - ./skills
   config:
-    kubernetes:
-      default_namespace: production
     shell:
       allowed_commands: ["df -h", "free -h", "uptime"]
+    scheduling:
+      backend: crontab  # or agent_cloud_platform
 ```
 
 When using `types`, each adapter runs in its own thread sharing the same engine and skills. Human MCP approvals route back through whichever platform the message came from.
 
 ## Onboarding
 
-When the bot is added to a Slack channel, it can run an onboarding flow — learning who's in the channel, what it's used for, and introducing itself.
+When the bot is added to a Slack channel — or on startup for channels in `allowed_channels` — it runs an onboarding flow: learning who's in the channel, what it's used for, and introducing itself.
 
 Enable it in `config.yaml`:
 
@@ -181,6 +201,8 @@ onboarding:
 3. Reads recent channel history via `slack_get_history`
 4. Merges any new facts into `MEMORY.md` — updating or correcting existing entries rather than duplicating them
 5. Posts a short intro message to the channel
+
+On startup, channels listed in `allowed_channels` that haven't been onboarded yet are onboarded automatically (one per thread, concurrently).
 
 **Customising the onboarding prompt:**
 
@@ -210,7 +232,23 @@ mithai chat                    # CLI REPL for development
 mithai skill create <name>     # create a new skill
 mithai skill list              # list loaded skills
 mithai skill validate          # validate all skills
+mithai agent create <id>       # scaffold a new agent (multi-agent mode)
+mithai agent list              # list configured agents
+mithai agent info <id>         # show agent details
+mithai agent validate          # validate all agent configs
 ```
+
+### Multi-agent scaffolding
+
+`mithai agent create` generates the directory structure and config for a new agent:
+
+```bash
+mithai agent create devops --name "DevOps Agent" --skills shell,memory,http_checker
+```
+
+This creates `agents/devops/` with `memory/`, `.env.example`, and `system_prompt.md`, and appends the agent config block to `config.yaml`.
+
+To customize the onboarding flow for all agents, drop an `onboarding.md` in the project root (see [Onboarding](#onboarding)).
 
 ## License
 

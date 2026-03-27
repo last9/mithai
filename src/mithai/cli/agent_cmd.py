@@ -152,8 +152,9 @@ def create_agent(agent_id, name, skills_csv, config_path, agent_dir):
     section("Next steps")
     console.print(f"    1. Copy [white]{env_path}[/] to [white].env[/] and fill in your Slack tokens")
     console.print(f"    2. Edit [white]{prompt_path}[/] to customize the system prompt")
-    console.print("    3. Run [white]mithai agent validate[/] to check the configuration")
-    console.print("    4. Run [white]mithai run[/] to start all agents")
+    console.print("    3. Drop an [white]onboarding.md[/] in the project root to customize the onboarding flow")
+    console.print("    4. Run [white]mithai agent validate[/] to check the configuration")
+    console.print("    5. Run [white]mithai run[/] to start all agents")
     console.print()
 
 

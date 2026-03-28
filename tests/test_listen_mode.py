@@ -53,7 +53,7 @@ def _capture_message_handler(adapter, mock_app, on_message, on_observe=None):
 # ---------------------------------------------------------------------------
 
 def test_respond_mentions_calls_on_observe_not_on_message():
-    adapter, mock_app = _build_adapter(respond="mentions")
+    adapter, mock_app = _build_adapter(respond="mentions", allowed_channels=["C1"])
     on_message = MagicMock(return_value="reply")
     on_observe = MagicMock()
 
@@ -88,7 +88,7 @@ def test_respond_mentions_no_say():
 # ---------------------------------------------------------------------------
 
 def test_respond_all_calls_on_message():
-    adapter, mock_app = _build_adapter(respond="all")
+    adapter, mock_app = _build_adapter(respond="all", allowed_channels=["C1"])
     on_message = MagicMock(return_value="reply")
     handle_message = _capture_message_handler(adapter, mock_app, on_message)
 
@@ -104,7 +104,7 @@ def test_respond_all_calls_on_message():
 # ---------------------------------------------------------------------------
 
 def test_mention_always_calls_on_message():
-    adapter, mock_app = _build_adapter(respond="mentions")
+    adapter, mock_app = _build_adapter(respond="mentions", allowed_channels=["C1"])
     on_message = MagicMock(return_value="reply")
 
     # Capture app_mention handler
@@ -131,7 +131,7 @@ def test_mention_always_calls_on_message():
 
 def test_mention_also_calls_on_observe():
     """After responding to an @mention, on_observe is called so it lands in channel_context."""
-    adapter, mock_app = _build_adapter(respond="mentions")
+    adapter, mock_app = _build_adapter(respond="mentions", allowed_channels=["C1"])
     on_message = MagicMock(return_value="reply")
     on_observe = MagicMock()
 
@@ -323,7 +323,7 @@ def test_run_cmd_on_observe_always_passed_in_all_mode():
 def test_on_bot_reply_called_after_handle_message():
     """on_bot_reply must be called with (channel, bot_user_id, response, ts)
     after a message is handled — this logs the reply to channel_context."""
-    adapter, mock_app = _build_adapter(respond="all")
+    adapter, mock_app = _build_adapter(respond="all", allowed_channels=["C1"])
     on_bot_reply = MagicMock()
 
     captured = {}
@@ -347,7 +347,7 @@ def test_on_bot_reply_called_after_handle_message():
 
 def test_on_bot_reply_called_after_app_mention():
     """on_bot_reply must be called after an app_mention is handled."""
-    adapter, mock_app = _build_adapter(respond="all")
+    adapter, mock_app = _build_adapter(respond="all", allowed_channels=["C2"])
     on_bot_reply = MagicMock()
 
     captured = {}
@@ -413,7 +413,7 @@ def _capture_app_mention_handler(adapter, mock_app, on_message):
 def test_handle_message_thread_id_equals_ts_when_no_thread_ts():
     """First message in a channel has no thread_ts.
     thread_id must be set to ts so that the reply (thread_ts=ts) hits the same session."""
-    adapter, mock_app = _build_adapter(respond="all")
+    adapter, mock_app = _build_adapter(respond="all", allowed_channels=["C1"])
     captured_incoming = {}
 
     def on_message(incoming, adapter):
@@ -433,7 +433,7 @@ def test_handle_message_thread_id_equals_ts_when_no_thread_ts():
 
 def test_handle_message_thread_id_equals_thread_ts_for_reply():
     """A reply carries thread_ts; thread_id must equal thread_ts."""
-    adapter, mock_app = _build_adapter(respond="all")
+    adapter, mock_app = _build_adapter(respond="all", allowed_channels=["C1"])
     captured_incoming = {}
 
     def on_message(incoming, adapter):
@@ -452,7 +452,7 @@ def test_handle_message_thread_id_equals_thread_ts_for_reply():
 def test_handle_app_mention_thread_id_equals_ts_when_no_thread_ts():
     """First @mention in a channel has no thread_ts.
     thread_id must be set to ts so replies hit the same session."""
-    adapter, mock_app = _build_adapter(respond="all")
+    adapter, mock_app = _build_adapter(respond="all", allowed_channels=["C1"])
     captured_incoming = {}
 
     def on_message(incoming, adapter):

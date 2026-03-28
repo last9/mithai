@@ -54,7 +54,7 @@ class SlackAdapterBase(Adapter):
                 ) from None
             raise
 
-        self._allowed_channels = set(allowed_channels) if allowed_channels else None
+        self._allowed_channels = set(allowed_channels) if allowed_channels is not None else set()
         self._bot_token = bot_token
         self._approval_timeout = approval_timeout
         self._leaving_channels: set[str] = set()
@@ -170,7 +170,7 @@ class SlackAdapterBase(Adapter):
                     return
 
                 channel_id = event.get("channel", "")
-                if self._allowed_channels and channel_id not in self._allowed_channels:
+                if channel_id not in self._allowed_channels:
                     self._decline_and_leave(channel_id)
                     return
 
@@ -196,7 +196,7 @@ class SlackAdapterBase(Adapter):
         @self._app.message("")
         def handle_message(message, say):
             channel = message.get("channel", "")
-            if self._allowed_channels and channel not in self._allowed_channels:
+            if channel not in self._allowed_channels:
                 return
 
             raw_text = message.get("text", "")
@@ -253,7 +253,7 @@ class SlackAdapterBase(Adapter):
         @self._app.event("app_mention")
         def handle_app_mention(event, say):
             channel = event.get("channel", "")
-            if self._allowed_channels and channel not in self._allowed_channels:
+            if channel not in self._allowed_channels:
                 self._decline_and_leave(channel)
                 return
 
@@ -320,7 +320,7 @@ class SlackAdapterBase(Adapter):
             if not thread_ts:
                 return
             channel = event.get("channel", "")
-            if self._allowed_channels and channel not in self._allowed_channels:
+            if channel not in self._allowed_channels:
                 return
             images, _skipped = self._extract_images(event)
             on_observe(IncomingMessage(

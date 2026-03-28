@@ -290,8 +290,9 @@ def _parse_id_list(value) -> list | None:
     """Coerce a config value to a list of strings.
 
     Handles three forms that can arrive after env-var substitution:
-      - None / missing          → None (no allowlist)
-      - list                    → returned as-is
+      - None / missing          → None (no allowlist — accept all channels)
+      - []                      → []   (not activated — bot must not listen)
+      - ["C1", "C2"]            → ["C1", "C2"]  (restrict to these channels)
       - "C1,C2, C3"             → ["C1", "C2", "C3"]  (comma-separated env var)
       - "${UNRESOLVED}"         → raises ValueError (unset env var — fail fast)
     """

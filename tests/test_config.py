@@ -192,6 +192,11 @@ class TestParseIdList:
     def test_list_returned_as_is(self):
         assert _parse_id_list(["C1", "C2"]) == ["C1", "C2"]
 
+    def test_empty_list_returned_as_is(self):
+        # [] means "not activated" — bot must not listen to any channel.
+        # procmgr writes allowed_channels: [] when no channels are assigned yet.
+        assert _parse_id_list([]) == []
+
     def test_comma_separated_string_split(self):
         assert _parse_id_list("C123,C456,C789") == ["C123", "C456", "C789"]
 

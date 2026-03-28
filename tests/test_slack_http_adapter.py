@@ -143,23 +143,11 @@ def test_register_message_handlers_skips_channel_join_when_none():
 def test_allowed_channels_drops_messages_from_other_channels():
     """on_message must NOT be called when the channel is not in allowed_channels."""
     adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C_ALLOWED"])
-
     on_message = MagicMock(return_value="reply")
-    # Capture the handler registered with @app.message("")
-    registered_handler = {}
+    handler = _capture_message_handler(adapter, mock_app, on_message)
 
-    def capture_decorator(pattern):
-        def decorator(fn):
-            registered_handler["fn"] = fn
-            return fn
-        return decorator
-
-    mock_app.message.side_effect = capture_decorator
-    adapter._register_message_handlers(on_message)
-
-    # Simulate a message from a disallowed channel
     fake_message = {"channel": "C_OTHER", "text": "hello", "ts": "1234", "user": "U1"}
-    registered_handler["fn"](message=fake_message, say=MagicMock())
+    handler(message=fake_message, say=MagicMock())
 
     on_message.assert_not_called()
 
@@ -167,24 +155,50 @@ def test_allowed_channels_drops_messages_from_other_channels():
 def test_allowed_channels_passes_messages_from_allowed_channel():
     """on_message IS called when the channel is in allowed_channels."""
     adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C_ALLOWED"])
-
     on_message = MagicMock(return_value="reply")
-    registered_handler = {}
-
-    def capture_decorator(pattern):
-        def decorator(fn):
-            registered_handler["fn"] = fn
-            return fn
-        return decorator
-
-    mock_app.message.side_effect = capture_decorator
-    adapter._register_message_handlers(on_message)
+    handler = _capture_message_handler(adapter, mock_app, on_message)
 
     fake_message = {"channel": "C_ALLOWED", "text": "hello", "ts": "1234", "user": "U1"}
-    mock_say = MagicMock()
-    registered_handler["fn"](message=fake_message, say=mock_say)
+    handler(message=fake_message, say=MagicMock())
 
     on_message.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Bug: allowed_channels=[] (empty list) must block all channels, not allow all.
+# An empty list is falsy in Python, so `set([]) if [] else None` yields None,
+# which disables filtering entirely. The fix is to check `is not None`.
+# ---------------------------------------------------------------------------
+
+def test_empty_allowed_channels_blocks_all_channels():
+    """allowed_channels=[] must reject every channel, not accept all of them.
+
+    Regression test: procmgr writes `allowed_channels: []` when no channels are
+    configured, and the adapter must treat an empty list as "block all", not "no restriction".
+    """
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=[])
+    on_message = MagicMock(return_value="reply")
+    handler = _capture_message_handler(adapter, mock_app, on_message)
+
+    fake_message = {"channel": "C_ANY", "text": "hello", "ts": "1234", "user": "U1"}
+    handler(message=fake_message, say=MagicMock())
+
+    on_message.assert_not_called()
+
+
+def test_allowed_channels_always_a_set():
+    """_allowed_channels is always a set — never None — regardless of input."""
+    # [] → empty set (not activated, block all)
+    adapter_empty, _, _ = _build_http_adapter(allowed_channels=[])
+    assert adapter_empty._allowed_channels == set()
+
+    # None (key absent) → empty set (block all until channels are configured)
+    adapter_none, _, _ = _build_http_adapter(allowed_channels=None)
+    assert adapter_none._allowed_channels == set()
+
+    # non-empty list → set of those channels
+    adapter_set, _, _ = _build_http_adapter(allowed_channels=["C1", "C2"])
+    assert adapter_set._allowed_channels == {"C1", "C2"}
 
 
 # ---------------------------------------------------------------------------
@@ -462,10 +476,10 @@ def _capture_app_mention_handler(adapter, on_message, on_bot_reply=None):
 def test_app_mention_preserves_user_mentions_in_message():
     """Non-bot @mentions in the message body must be resolved to display names, not stripped.
 
-    Regression: "@engineer9 Dream11 is owned by @Mukta" was delivered to the
-    agent as "Dream11 is owned by" because the regex stripped ALL <@USER> tokens.
+    Regression: "@bot Acme Corp is owned by @Alice" was delivered to the
+    agent as "Acme Corp is owned by" because the regex stripped ALL <@USER> tokens.
     """
-    adapter, mock_app, _ = _build_socket_adapter()[:3]
+    adapter, mock_app, _ = _build_socket_adapter(allowed_channels=["C1"])[:3]
 
     received_texts = []
 
@@ -475,9 +489,9 @@ def test_app_mention_preserves_user_mentions_in_message():
 
     # Simulate bot user ID resolved at startup (auth_test is called inside _register_message_handlers)
     mock_app.client.auth_test.return_value = {"user_id": "UBOT"}
-    # Mock _slack_client.resolve_user_ids so @UMUKTA resolves to "Mukta"
+    # Mock _slack_client.resolve_user_ids so @UALICE resolves to "Alice"
     adapter._slack_client = MagicMock()
-    adapter._slack_client.resolve_user_ids.return_value = {"UMUKTA": "Mukta"}
+    adapter._slack_client.resolve_user_ids.return_value = {"UALICE": "Alice"}
 
     handler = _capture_app_mention_handler(adapter, on_message)
     assert handler is not None, "app_mention handler was not registered"
@@ -485,24 +499,24 @@ def test_app_mention_preserves_user_mentions_in_message():
     say = MagicMock()
     event = {
         "channel": "C1",
-        "user": "UPRATHAMESH",
+        "user": "UBOB",
         "ts": "111.222",
-        "text": "<@UBOT> Dream11 is owned by <@UMUKTA>",
+        "text": "<@UBOT> Acme Corp is owned by <@UALICE>",
     }
     handler(event, say)
 
     assert len(received_texts) == 1
     text = received_texts[0]
-    # Bot mention stripped, but @Mukta must be preserved
+    # Bot mention stripped, but @Alice must be preserved
     assert "<@UBOT>" not in text
-    assert "<@UMUKTA>" not in text   # raw ID gone
-    assert "Mukta" in text or "@Mukta" in text  # resolved display name present
-    assert "Dream11 is owned by" in text
+    assert "<@UALICE>" not in text   # raw ID gone
+    assert "Alice" in text or "@Alice" in text  # resolved display name present
+    assert "Acme Corp is owned by" in text
 
 
 def test_app_mention_strips_only_bot_mention_when_no_other_mentions():
     """Plain message with only the bot mention is stripped to just the content."""
-    adapter, mock_app, _ = _build_socket_adapter()[:3]
+    adapter, mock_app, _ = _build_socket_adapter(allowed_channels=["C1"])[:3]
 
     received_texts = []
 
@@ -570,7 +584,7 @@ def _capture_message_handler(adapter, mock_app, on_message, on_observe=None, bot
 
 def test_message_mentioning_other_user_reaches_observe():
     """A message like '@Kapil can you check?' must reach on_observe in mentions mode."""
-    adapter, mock_app, _ = _build_http_adapter()
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
     adapter._respond = "mentions"
 
     on_message = MagicMock(return_value="reply")
@@ -587,7 +601,7 @@ def test_message_mentioning_other_user_reaches_observe():
 
 def test_message_mentioning_bot_skipped_by_handle_message():
     """A message @mentioning the bot is handled by app_mention, not handle_message."""
-    adapter, mock_app, _ = _build_http_adapter()
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
     adapter._respond = "mentions"
 
     on_message = MagicMock(return_value="reply")
@@ -604,7 +618,7 @@ def test_message_mentioning_bot_skipped_by_handle_message():
 
 def test_message_with_no_mention_reaches_observe_in_mentions_mode():
     """Plain thread reply with no mentions is observed when respond=mentions."""
-    adapter, mock_app, _ = _build_http_adapter()
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
     adapter._respond = "mentions"
 
     on_message = MagicMock(return_value="reply")
@@ -620,7 +634,7 @@ def test_message_with_no_mention_reaches_observe_in_mentions_mode():
 
 def test_message_mentioning_multiple_others_reaches_observe():
     """A message mentioning two other users (not the bot) still reaches on_observe."""
-    adapter, mock_app, _ = _build_http_adapter()
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
     adapter._respond = "mentions"
 
     on_observe = MagicMock()
@@ -638,7 +652,7 @@ def test_message_mentioning_multiple_others_reaches_observe():
 
 def test_message_mentioning_bot_and_other_skipped():
     """If the bot is mentioned alongside others, app_mention handles it — handle_message skips."""
-    adapter, mock_app, _ = _build_http_adapter()
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
     adapter._respond = "mentions"
 
     on_observe = MagicMock()

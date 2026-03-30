@@ -624,6 +624,18 @@ class SlackAdapter(SlackAdapterBase):
     def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None,
               on_observe: ChannelObserveHandler | None = None,
               on_bot_reply: BotReplyHandler | None = None) -> None:
+        if not self._allowed_channels:
+            logger.warning(
+                "No allowed_channels configured — Slack adapter will not connect to Socket Mode. "
+                "Set allowed_channels in config.yaml to enable this agent. "
+                "Skipping connection to avoid competing with other agents on the same token."
+            )
+            # Block indefinitely without opening a Socket Mode connection.
+            # An unconfigured agent must not hold a WebSocket — Slack distributes
+            # events across all connections sharing a token, so a competing
+            # connection from an unconfigured agent steals ~50% of events.
+            threading.Event().wait()
+            return
         self._register_message_handlers(on_message, on_channel_join, on_observe, on_bot_reply)
         logger.info("Starting Slack adapter (Socket Mode)")
         self._handler.start()

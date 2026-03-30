@@ -681,3 +681,74 @@ def test_bot_id_unknown_falls_back_to_skipping_any_mention():
     handler(message=fake_msg, say=MagicMock())
 
     on_observe.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# SlackAdapter.start(): no connection when allowed_channels is empty
+#
+# Regression: an unconfigured agent (allowed_channels=[]) was opening a Socket
+# Mode WebSocket and stealing ~50% of events from a sibling configured agent
+# sharing the same app token. The fix skips handler.start() entirely and blocks
+# on a threading.Event instead, keeping the process alive without connecting.
+# ---------------------------------------------------------------------------
+
+def test_socket_adapter_start_skips_connection_when_no_allowed_channels():
+    """handler.start() must NOT be called when allowed_channels is empty."""
+    import threading
+
+    adapter, _mock_app, _mock_app_cls, mock_handler = _build_socket_adapter(
+        allowed_channels=[]
+    )
+
+    t = threading.Thread(
+        target=adapter.start,
+        args=(MagicMock(),),
+        daemon=True,
+    )
+    t.start()
+    t.join(timeout=0.2)  # give it time to reach Event().wait() or handler.start()
+
+    mock_handler.start.assert_not_called()
+
+
+def test_socket_adapter_start_skips_connection_when_allowed_channels_none():
+    """handler.start() must NOT be called when allowed_channels is None (absent from config)."""
+    import threading
+
+    adapter, _mock_app, _mock_app_cls, mock_handler = _build_socket_adapter(
+        allowed_channels=None
+    )
+
+    t = threading.Thread(target=adapter.start, args=(MagicMock(),), daemon=True)
+    t.start()
+    t.join(timeout=0.2)
+
+    mock_handler.start.assert_not_called()
+
+
+def test_socket_adapter_start_connects_when_channels_configured():
+    """handler.start() IS called when allowed_channels is non-empty."""
+    adapter, mock_app, _mock_app_cls, mock_handler = _build_socket_adapter(
+        allowed_channels=["C_PROD"]
+    )
+    # mock_handler.start() returns immediately (it's a MagicMock), so no thread needed
+    adapter.start(on_message=MagicMock())
+
+    mock_handler.start.assert_called_once()
+
+
+def test_socket_adapter_start_logs_warning_when_no_allowed_channels(caplog):
+    """A warning must be logged when the adapter skips connecting due to empty channels."""
+    import logging
+    import threading
+
+    adapter, _mock_app, _mock_app_cls, _mock_handler = _build_socket_adapter(
+        allowed_channels=[]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mithai.adapters.slack"):
+        t = threading.Thread(target=adapter.start, args=(MagicMock(),), daemon=True)
+        t.start()
+        t.join(timeout=0.2)
+
+    assert any("allowed_channels" in r.message for r in caplog.records)

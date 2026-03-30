@@ -250,6 +250,7 @@ def test_run_cmd_on_observe_passed_when_mentions_mode():
         adapter = SlackAdapter(
             bot_token="xoxb-test",
             app_token="xapp-test",
+            allowed_channels=["C_TEST"],
             respond="mentions",
         )
 

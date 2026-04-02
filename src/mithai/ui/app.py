@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 from pathlib import Path
+from urllib.parse import urlencode
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,6 +17,7 @@ from mithai.ui.data import ControlRoomData
 
 logger = logging.getLogger(__name__)
 
+_COOKIE_NAME = "mithai_session"
 _UI_DIR = Path(__file__).parent
 _TEMPLATE_DIR = _UI_DIR / "templates"
 _STATIC_DIR = _UI_DIR / "static"
@@ -35,26 +37,21 @@ def create_app(config: dict) -> Starlette:
 
     auth_token = config.get("ui", {}).get("auth_token", "")
 
-    _COOKIE_NAME = "mithai_session"
-
     async def _check_auth(request: Request) -> Response | None:
         """Return a 401 response if auth is required and not provided.
 
         Token sources (checked in order):
-          1. ?token= query param — if valid, sets a session cookie and redirects
-             to the same path without the token in the URL.
+          1. ?token= query param — sets a session cookie and redirects to a clean URL.
           2. Session cookie (set by step 1).
           3. Authorization: Bearer header (for API clients).
         """
         if not auth_token or auth_token.startswith("${"):
             return None  # No auth configured or unresolved env var
 
-        # 1. Query-param token → set cookie and redirect to clean URL
         query_token = request.query_params.get("token", "")
         if query_token and hmac.compare_digest(query_token, auth_token):
-            # Build a clean URL without the token param
-            params = {k: v for k, v in request.query_params.items() if k != "token"}
-            qs = "&".join(f"{k}={v}" for k, v in params.items())
+            remaining = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
+            qs = urlencode(remaining)
             clean_url = request.url.path + (f"?{qs}" if qs else "")
             response = RedirectResponse(url=clean_url, status_code=302)
             response.set_cookie(
@@ -63,12 +60,10 @@ def create_app(config: dict) -> Starlette:
             )
             return response
 
-        # 2. Session cookie
         cookie_token = request.cookies.get(_COOKIE_NAME, "")
         if cookie_token and hmac.compare_digest(cookie_token, auth_token):
             return None
 
-        # 3. Bearer header (API clients)
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
             bearer_token = auth_header[7:]

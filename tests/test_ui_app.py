@@ -260,13 +260,42 @@ class TestAuth:
         resp = client.get("/")
         assert resp.status_code == 401
 
-    def test_auth_via_query_param(self, config):
+    def test_auth_via_query_param_sets_cookie_and_redirects(self, config):
+        config["ui"] = {"auth_token": "my-secret-token"}
+        app = create_app(config)
+        client = TestClient(app, follow_redirects=False)
+
+        resp = client.get("/?token=my-secret-token")
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/"
+        assert "mithai_session" in resp.cookies
+
+    def test_auth_via_query_param_preserves_other_params(self, config):
+        config["ui"] = {"auth_token": "my-secret-token"}
+        app = create_app(config)
+        client = TestClient(app, follow_redirects=False)
+
+        resp = client.get("/sessions?token=my-secret-token&q=hello")
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/sessions?q=hello"
+
+    def test_auth_via_cookie(self, config):
         config["ui"] = {"auth_token": "my-secret-token"}
         app = create_app(config)
         client = TestClient(app)
+        client.cookies.set("mithai_session", "my-secret-token")
 
-        resp = client.get("/?token=my-secret-token")
+        resp = client.get("/")
         assert resp.status_code == 200
+
+    def test_auth_via_cookie_wrong_value(self, config):
+        config["ui"] = {"auth_token": "my-secret-token"}
+        app = create_app(config)
+        client = TestClient(app)
+        client.cookies.set("mithai_session", "wrong")
+
+        resp = client.get("/")
+        assert resp.status_code == 401
 
     def test_auth_via_bearer_header(self, config):
         config["ui"] = {"auth_token": "my-secret-token"}

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
@@ -35,18 +35,47 @@ def create_app(config: dict) -> Starlette:
 
     auth_token = config.get("ui", {}).get("auth_token", "")
 
+    _COOKIE_NAME = "mithai_session"
+
     async def _check_auth(request: Request) -> Response | None:
-        """Return a 401 response if auth is required and not provided."""
+        """Return a 401 response if auth is required and not provided.
+
+        Token sources (checked in order):
+          1. ?token= query param — if valid, sets a session cookie and redirects
+             to the same path without the token in the URL.
+          2. Session cookie (set by step 1).
+          3. Authorization: Bearer header (for API clients).
+        """
         if not auth_token or auth_token.startswith("${"):
             return None  # No auth configured or unresolved env var
-        token = request.query_params.get("token") or ""
-        if not token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-        if not hmac.compare_digest(token, auth_token):
-            return HTMLResponse("<h1>401 Unauthorized</h1>", status_code=401)
-        return None
+
+        # 1. Query-param token → set cookie and redirect to clean URL
+        query_token = request.query_params.get("token", "")
+        if query_token and hmac.compare_digest(query_token, auth_token):
+            # Build a clean URL without the token param
+            params = {k: v for k, v in request.query_params.items() if k != "token"}
+            qs = "&".join(f"{k}={v}" for k, v in params.items())
+            clean_url = request.url.path + (f"?{qs}" if qs else "")
+            response = RedirectResponse(url=clean_url, status_code=302)
+            response.set_cookie(
+                _COOKIE_NAME, auth_token,
+                httponly=True, samesite="strict", path="/",
+            )
+            return response
+
+        # 2. Session cookie
+        cookie_token = request.cookies.get(_COOKIE_NAME, "")
+        if cookie_token and hmac.compare_digest(cookie_token, auth_token):
+            return None
+
+        # 3. Bearer header (API clients)
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            bearer_token = auth_header[7:]
+            if hmac.compare_digest(bearer_token, auth_token):
+                return None
+
+        return HTMLResponse("<h1>401 Unauthorized</h1>", status_code=401)
 
     # ── HTML routes ──
 

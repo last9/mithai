@@ -230,3 +230,55 @@ class TestInteractiveMode:
         handler.assert_called_once()
         msg = handler.call_args[0][0]
         assert msg.text == "hello"
+
+
+class TestPipedJSONStdin:
+    """_start_piped parses JSON stdin to extract text, system_prompt_append, channel_id."""
+
+    def _run(self, stdin_text):
+        """Run _start_piped with the given raw stdin and return the IncomingMessage received."""
+        handler = MagicMock(return_value="ok")
+        with patch.object(sys, "stdin", new=StringIO(stdin_text)):
+            adapter = CLIAdapter()
+        with patch.object(sys, "stdin", new=StringIO(stdin_text)):
+            adapter._start_piped(handler)
+        handler.assert_called_once()
+        return handler.call_args[0][0]
+
+    def test_json_extracts_text(self):
+        msg = self._run('{"text": "run the scout", "channel_id": "C1"}')
+        assert msg.text == "run the scout"
+
+    def test_json_extracts_channel_id(self):
+        msg = self._run('{"text": "ping", "channel_id": "C999"}')
+        assert msg.channel_id == "C999"
+
+    def test_json_extracts_system_prompt_append(self):
+        msg = self._run('{"text": "go", "system_prompt_append": "## Instructions\\nDo this."}')
+        assert msg.extra_system_prompt == "## Instructions\nDo this."
+
+    def test_json_missing_system_prompt_append_defaults_empty(self):
+        msg = self._run('{"text": "hello"}')
+        assert msg.extra_system_prompt == ""
+
+    def test_json_missing_channel_id_defaults_cli(self):
+        msg = self._run('{"text": "hello"}')
+        assert msg.channel_id == "cli"
+
+    def test_plain_text_still_works(self):
+        """Non-JSON stdin falls back to treating the whole string as text."""
+        msg = self._run("plain text message")
+        assert msg.text == "plain text message"
+        assert msg.extra_system_prompt == ""
+        assert msg.channel_id == "cli"
+
+    def test_invalid_json_falls_back_to_plain_text(self):
+        msg = self._run("{not valid json}")
+        assert msg.text == "{not valid json}"
+        assert msg.extra_system_prompt == ""
+
+    def test_json_array_falls_back_to_plain_text(self):
+        """JSON that isn't a dict is treated as plain text."""
+        raw = '["list", "not", "dict"]'
+        msg = self._run(raw)
+        assert msg.text == raw

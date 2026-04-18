@@ -42,6 +42,7 @@ class IncomingMessage:
     thread_id: str | None = None  # Slack thread_ts, etc.
     images: list[ImageAttachment] = field(default_factory=list)
     non_image_files: list[str] = field(default_factory=list)  # filenames of skipped non-image attachments
+    extra_system_prompt: str = ""  # schedule-specific instructions, appended to system prompt for this turn only
 
 
 @dataclass

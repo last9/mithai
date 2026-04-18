@@ -424,9 +424,13 @@ class Engine:
         response_text = response_text or "(no response)"
 
         # Record turn to session (include images so history can replay them)
+        # Persist text_content (not message.text) so that backfill and thread
+        # observations are part of the session history. If message.text were saved
+        # instead, the enriched context would only exist in the live LLM call and
+        # would be lost from Turn 2 onwards when history is replayed via _build_history.
         turn = SessionManager.build_turn(
             user_id=message.user_id,
-            user_message=message.text,
+            user_message=text_content,
             tool_calls=turn_tool_calls,
             assistant_response=response_text,
             images=all_images if all_images else None,

@@ -320,6 +320,63 @@ def test_handle_no_backfill_when_adapter_returns_none():
     assert content == "question"
 
 
+def test_backfill_is_persisted_in_session_for_subsequent_turns():
+    """Regression test: backfill prefix must be saved into the session so that
+    subsequent turns can see the parent-thread context in conversation history.
+
+    Scenario:
+      - agent posted an escalation in Slack (the "parent message")
+      - user replied in that thread: "@agent what about this?" (Turn 1)
+        → backfill fires, LLM sees the escalation, agent replies correctly
+      - user later: "@agent send a reminder about this" (Turn 2)
+        → BUG: agent asks "what should the reminder be about?" — lost context
+
+    The fix: build_turn must save text_content (backfill + message) not message.text.
+    """
+    engine = _make_engine()
+
+    # Simulate the parent message the agent posted earlier in the channel
+    parent_message = "@oncall — flagging this: deploy pipeline failing since yesterday"
+    adapter = MagicMock()
+    adapter.fetch_thread_context.return_value = [f"agent: {parent_message}"]
+
+    # Turn 1 — user's first @mention in the thread
+    turn1 = _make_thread_reply_message(text="@agent what about this?")
+    engine.handle(turn1, adapter)
+
+    # Verify Turn 1 LLM call had the backfill (sanity check)
+    first_call_args = engine._llm.create_message.call_args_list[0]
+    first_messages = first_call_args[1].get("messages") or first_call_args[0][1]
+    first_user_content = [m for m in first_messages if m["role"] == "user"][-1]["content"]
+    assert parent_message in first_user_content, "Turn 1 should have backfill in live LLM call"
+
+    # Turn 2 — follow-up in the same thread, no new backfill possible
+    turn2 = IncomingMessage(
+        text="send a reminder about this",
+        channel_id="C1",
+        user_id="alice",
+        platform="slack",
+        message_id="333.000",  # new reply ts
+        thread_id="111.000",   # same thread
+    )
+    engine.handle(turn2, adapter)
+
+    # The second LLM call should replay Turn 1 with backfill in history
+    second_call_args = engine._llm.create_message.call_args_list[1]
+    second_messages = second_call_args[1].get("messages") or second_call_args[0][1]
+
+    # user_messages[-1] is Turn 2's prompt; user_messages[-2] is Turn 1 replayed from session
+    user_messages = [m for m in second_messages if m["role"] == "user"]
+    assert len(user_messages) >= 2, "Turn 2 call should have Turn 1 in history"
+    turn1_replayed = user_messages[-2]["content"] if isinstance(user_messages[-2]["content"], str) else ""
+
+    assert parent_message in turn1_replayed, (
+        "The parent message must be visible in Turn 2's history. "
+        "If this fails, build_turn is saving message.text instead of text_content — "
+        "backfill is injected into the live LLM call but not persisted to the session."
+    )
+
+
 def test_handle_no_backfill_when_adapter_returns_empty():
     """fetch_thread_context returns [] — no prefix added."""
     engine = _make_engine()

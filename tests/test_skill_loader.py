@@ -105,3 +105,37 @@ def handle(n, i, c): pass
 
     errors = validate_skill(skill_dir)
     assert errors == []
+
+
+def test_skill_verify_false_by_default(tmp_skill_dir):
+    """Skills without VERIFY = True have verify=False."""
+    skills = load_skills([tmp_skill_dir])
+    assert skills["test_skill"].verify is False
+
+
+def test_skill_verify_true_when_declared(tmp_path):
+    """Skills with VERIFY = True in tools.py have verify=True."""
+    skill_dir = tmp_path / "skills" / "ops_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "prompt.md").write_text("ops skill")
+    (skill_dir / "tools.py").write_text(
+        'TOOLS = [{"name": "t", "description": "d", "input_schema": {}}]\n'
+        'VERIFY = True\n'
+        'def handle(n, i, c): pass\n'
+    )
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["ops_skill"].verify is True
+
+
+def test_skill_verify_false_when_explicitly_false(tmp_path):
+    """Skills with VERIFY = False have verify=False."""
+    skill_dir = tmp_path / "skills" / "safe_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "prompt.md").write_text("safe skill")
+    (skill_dir / "tools.py").write_text(
+        'TOOLS = [{"name": "t", "description": "d", "input_schema": {}}]\n'
+        'VERIFY = False\n'
+        'def handle(n, i, c): pass\n'
+    )
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["safe_skill"].verify is False

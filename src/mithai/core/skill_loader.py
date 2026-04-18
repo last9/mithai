@@ -35,6 +35,7 @@ class Skill:
     mcp_tools: list[dict] = field(default_factory=list, repr=False)
     startup: Callable | None = field(default=None, repr=False)
     bind: Callable | None = field(default=None, repr=False)
+    verify: bool = False  # True → post-turn fact-check runs for this skill's turns
 
 
 def _load_skill(skill_dir: Path) -> Skill | None:
@@ -66,6 +67,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
     raw_mcp_tools = getattr(mod, "MCP_TOOLS", [])
     startup_fn = getattr(mod, "startup", None)
     bind_fn = getattr(mod, "bind", None)
+    verify_flag = bool(getattr(mod, "VERIFY", False))
 
     if raw_tools is None:
         logger.warning("Skill %s: missing TOOLS export", skill_dir.name)
@@ -94,6 +96,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
         mcp_tools=raw_mcp_tools if isinstance(raw_mcp_tools, list) else [],
         startup=startup_fn,
         bind=bind_fn,
+        verify=verify_flag,
     )
 
 

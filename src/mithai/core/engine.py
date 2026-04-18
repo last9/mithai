@@ -104,6 +104,11 @@ class Engine:
                     logger.warning("Skill %s startup() failed", skill_name, exc_info=True)
         self._llm_config = get_llm_config(config)
 
+        # Per-channel onboarding locks — prevent concurrent handle_channel_join calls
+        # for the same channel (startup check + member_joined events racing).
+        self._onboarding_locks: dict[str, threading.Lock] = {}
+        self._onboarding_locks_mu = threading.Lock()
+
         # Learning / memory
         learning_config = config.get("learning", {})
         self._learning_config = learning_config
@@ -438,6 +443,12 @@ class Engine:
 
         return response_text
 
+    def _onboarding_lock(self, channel_id: str) -> threading.Lock:
+        with self._onboarding_locks_mu:
+            if channel_id not in self._onboarding_locks:
+                self._onboarding_locks[channel_id] = threading.Lock()
+            return self._onboarding_locks[channel_id]
+
     def handle_channel_join(self, channel_id: str, channel_name: str) -> str | None:
         """
         Called when the bot is added to a new Slack channel.
@@ -451,6 +462,32 @@ class Engine:
         if not onboarding_config.get("enabled", False):
             return None
 
+        # Acquire per-channel lock to prevent concurrent runs (e.g. multiple
+        # member_joined events + startup check all firing before done: is written).
+        lock = self._onboarding_lock(channel_id)
+        if not lock.acquire(blocking=False):
+            logger.info("Onboarding for %s already in progress — skipping", channel_id)
+            return None
+        try:
+            # Double-check after acquiring: another process may have completed between
+            # the caller's is_channel_onboarded check and this acquire.
+            if self.is_channel_onboarded(channel_id):
+                logger.info("Channel %s already started onboarding — skipping", channel_id)
+                return None
+            # Mark started immediately so the startup check (which reads state, not the
+            # in-process lock) skips this channel on the next boot even if we crash.
+            self._state.set("onboarding", f"started:{channel_id}", True)
+            return self._run_onboarding(channel_id, channel_name)
+        finally:
+            lock.release()
+
+    def _run_onboarding(self, channel_id: str, channel_name: str) -> str | None:
+        """Execute the two-phase onboarding flow for a channel.
+
+        Phase 1: gather channel context via tools (members, history, memory).
+        Phase 2: generate the intro message with a minimal no-tools prompt.
+        Called only after the per-channel lock is held and started: is written.
+        """
         # Clear any stale session from a previous join so old history doesn't
         # contaminate the new onboarding LLM call.
         session_key = SessionManager.session_key("slack", f"onboard:{channel_id}", agent_id=self._agent_id)
@@ -534,8 +571,16 @@ class Engine:
         return intro
 
     def is_channel_onboarded(self, channel_id: str) -> bool:
-        """Return True if this channel has already been through onboarding."""
-        return bool(self._state.get("onboarding", f"done:{channel_id}"))
+        """Return True if onboarding has started (or completed) for this channel.
+
+        Checking started: (not just done:) means the startup check on restart
+        skips channels that began onboarding in a previous process lifetime,
+        preventing a second intro post if the bot is restarted mid-onboarding.
+        """
+        return bool(
+            self._state.get("onboarding", f"started:{channel_id}")
+            or self._state.get("onboarding", f"done:{channel_id}")
+        )
 
     def _log_to_channel_context(self, message: IncomingMessage) -> None:
         """Append a single message line to channel_context/{channel_id}.md.

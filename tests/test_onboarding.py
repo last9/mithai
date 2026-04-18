@@ -520,6 +520,11 @@ class TestHandleChannelJoin:
         session_key = SessionManager.session_key("slack", "onboard:CREJOIN")
         assert state.get("sessions", session_key) is not None
 
+        # Simulate re-onboarding (bot removed and re-added): clear the started/done
+        # state keys so the lock guard allows the second run through.
+        state.delete("onboarding", "started:CREJOIN")
+        state.delete("onboarding", "done:CREJOIN")
+
         # Second join — session should be cleared and re-created fresh
         llm.create_message.reset_mock()
         engine.handle_channel_join("CREJOIN", "ops")
@@ -531,6 +536,66 @@ class TestHandleChannelJoin:
         assert new_session is not None
         # Only 1 turn — from the second join (old turns were cleared before it ran)
         assert len(new_session["turns"]) == 1
+
+    def test_concurrent_calls_run_only_once(self):
+        """Concurrent handle_channel_join calls for the same channel must result in
+        exactly one onboarding run.
+
+        Root cause (confirmed from production logs):
+        - Slack Socket Mode opens 2 WebSocket connections by default. The hello
+          frame includes "num_connections": 2. Both connections receive the same
+          member_joined_channel event independently (different envelope_id, same
+          event_id), so handle_member_joined fires twice.
+        - startup_onboard runs in a background thread 3 seconds after connect. It
+          checks is_channel_onboarded (reads done:{channel_id}) which is not written
+          until the very end of handle_channel_join. When the bot is added to a
+          channel it wasn't previously in, startup_onboard also calls handle_channel_join
+          concurrently with the two member_joined deliveries.
+        - Result: 3 concurrent runs all see done:{channel_id}=False and proceed,
+          producing 3 intro posts in the channel.
+
+        Fix: per-channel threading.Lock (non-blocking acquire) + persistent
+        started:{channel_id} state key written at entry. The lock prevents
+        same-process races; started: prevents restart-triggered re-runs.
+        """
+        import threading
+        import time
+
+        config = _base_config(onboarding={"enabled": True})
+
+        barrier = threading.Barrier(4)  # 3 member_joined + 1 startup check
+
+        def slow_llm(**kwargs):
+            time.sleep(0.05)  # simulate LLM latency — the window where the race occurs
+            resp = MagicMock()
+            resp.content = [{"type": "text", "text": "Hi team!"}]
+            resp.stop_reason = "end_turn"
+            return resp
+
+        llm = MagicMock()
+        llm.create_message.side_effect = slow_llm
+        engine = _make_engine(config, llm=llm)
+
+        results = []
+        results_lock = threading.Lock()
+
+        def run_join():
+            barrier.wait()  # all threads start simultaneously
+            result = engine.handle_channel_join("C_RACE", "ops")
+            with results_lock:
+                results.append(result)
+
+        threads = [threading.Thread(target=run_join) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        non_none = [r for r in results if r is not None]
+        assert len(non_none) == 1, (
+            f"Expected exactly 1 onboarding run, got {len(non_none)}. "
+            f"Race condition: {len(non_none)} concurrent calls all ran to completion."
+        )
 
 
 # ---------------------------------------------------------------------------

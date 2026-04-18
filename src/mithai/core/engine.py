@@ -19,6 +19,7 @@ from mithai.adapters.base import Adapter, IncomingMessage
 from mithai.core.config import get_human_config, get_llm_config, get_mcp_config, get_skill_config, get_skill_paths
 from mithai.core.context import build_context
 from mithai.core.reflection import reflect
+from mithai.core.verifier import verify, verified_skills_called
 from mithai.core.session import SessionManager
 from mithai.core.skill_loader import Skill, load_skills
 from mithai.core.tool_router import ToolRouter
@@ -112,6 +113,26 @@ class Engine:
         # Learning / memory
         learning_config = config.get("learning", {})
         self._learning_config = learning_config
+
+        # Verifier — collect skills that opted in via VERIFY = True
+        self._verified_skills: set[str] = {
+            name for name, skill in self._skills.items() if skill.verify
+        }
+
+        # Separate cheap LLM for verification; falls back to main LLM if not configured
+        verifier_config = config.get("verifier", {})
+        verifier_model = verifier_config.get("model")
+        if verifier_model and isinstance(self._llm, self._llm.__class__):
+            try:
+                self._verifier_llm = self._llm.__class__(
+                    api_key=get_llm_config(config).get("api_key", ""),
+                    model=verifier_model,
+                )
+            except Exception:
+                logger.warning("Could not create verifier LLM, falling back to main LLM")
+                self._verifier_llm = self._llm
+        else:
+            self._verifier_llm = self._llm
 
         # Session memory
         session_config = config.get("sessions", {})
@@ -422,6 +443,12 @@ class Engine:
             response_text = self._extract_raw_text(nudge_response).strip()
 
         response_text = response_text or "(no response)"
+
+        # Post-turn fact-check — only for turns that used a verified skill
+        if self._verified_skills and verified_skills_called(turn_tool_calls, self._verified_skills):
+            failure = verify(response_text, turn_tool_calls, self._verifier_llm)
+            if failure:
+                response_text = f"{response_text}\n\n⚠️ *Fact-check flagged:* {failure}"
 
         # Record turn to session (include images so history can replay them)
         # Persist text_content (not message.text) so that backfill and thread

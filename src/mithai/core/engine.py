@@ -206,6 +206,8 @@ class Engine:
 
     def _handle_inner(self, message: IncomingMessage, adapter: Adapter, tracer) -> str:
         system = self._compose_system_prompt()
+        if message.extra_system_prompt:
+            system += "\n\n---\n\n## Task Instructions\n" + message.extra_system_prompt.strip()
         tools = self._router.collect_tools_for_llm()
 
         # Load session and build conversation history

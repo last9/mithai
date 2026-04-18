@@ -1,5 +1,6 @@
 """CLI/terminal adapter for local development and testing."""
 
+import json
 import sys
 import time
 
@@ -184,16 +185,34 @@ class CLIAdapter(Adapter):
 
     def _start_piped(self, on_message: MessageHandler) -> None:
         """Read one message from stdin, process through the full conversation loop,
-        write the final plain-text response to stdout, and exit."""
-        text = sys.stdin.read().strip()
-        if not text:
+        write the final plain-text response to stdout, and exit.
+
+        Stdin may be plain text or a JSON object. JSON form:
+            {"text": "...", "system_prompt_append": "...", "channel_id": "..."}
+        Unknown keys are ignored. Plain text is used as-is.
+        """
+        raw = sys.stdin.read().strip()
+        if not raw:
             return
+
+        text = raw
+        extra_system_prompt = ""
+        channel_id = "cli"
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                text = data.get("text", raw)
+                extra_system_prompt = data.get("system_prompt_append", "")
+                channel_id = data.get("channel_id", "cli")
+        except (ValueError, TypeError):
+            pass  # not JSON — treat as plain text
 
         message = IncomingMessage(
             text=text,
-            channel_id="cli",
+            channel_id=channel_id,
             user_id="local",
             platform="cli",
+            extra_system_prompt=extra_system_prompt,
         )
 
         try:

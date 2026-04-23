@@ -1,7 +1,11 @@
 """mithai run — start the bot with configured adapters."""
 
+import copy
 import logging
+import os
+import socket
 import threading
+import time
 
 import click
 
@@ -24,7 +28,7 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--adapter",
     "adapter_override",
-    type=click.Choice(["cli", "slack", "slack_http", "telegram"]),
+    type=click.Choice(["api", "cli", "slack", "slack_http", "telegram"]),
     default=None,
     help="Run only this adapter (overrides config, single-agent mode only)",
 )
@@ -60,6 +64,53 @@ def _maybe_startup_onboard(engine, adapter, on_join) -> None:
         ).start()
 
 
+def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
+    """Start an embedded API server in a daemon thread if MITHAI_UI_PORT is set.
+
+    This allows multi-mithai's procmgr to proxy API requests (including /api/trigger)
+    to the running engine process without needing a separate `mithai ui` process.
+    """
+    ui_port = os.environ.get("MITHAI_UI_PORT")
+    if not ui_port:
+        return
+
+    try:
+        import uvicorn
+        from mithai.ui.app import create_app
+    except ImportError as e:
+        logger.warning("uvicorn/starlette not available, embedded API server disabled: %s", e)
+        return
+
+    port = int(ui_port)
+    ui_token = os.environ.get("MITHAI_UI_TOKEN", "")
+    api_config = copy.deepcopy(config)
+    api_config.setdefault("ui", {})
+    api_config["ui"]["auth_token"] = ui_token
+    api_config["ui"]["port"] = port
+
+    app = create_app(api_config, engine=engine, adapter=adapter)
+
+    def _serve():
+        try:
+            uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+        except Exception as e:
+            logger.error("Embedded API server failed to start: %s", e)
+
+    t = threading.Thread(target=_serve, daemon=True)
+    t.start()
+
+    for _ in range(50):
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
+            s.close()
+            logger.info("Embedded API server listening on port %d", port)
+            break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        logger.warning("Embedded API server did not become ready on port %d", port)
+
+
 def _run_single_agent(config: dict, adapter_override: str | None):
     """Single-agent mode — one engine, adapters from global config."""
     engines = _create_engine_single(config)
@@ -85,6 +136,8 @@ def _run_single_agent(config: dict, adapter_override: str | None):
             adapter.set_engine(engine)
 
     heartbeat = _start_heartbeat(config, engine)
+
+    _maybe_start_embedded_api(config, engine, adapters[0][1] if adapters else None)
 
     # Show startup info
     banner_small("run")
@@ -173,6 +226,12 @@ def _run_multi_agent(config: dict, agents_config: dict):
         hb = _start_heartbeat(get_agent_config(config, agent_id), engine)
         if hb:
             heartbeats.append(hb)
+
+    # Use default_agent's engine for trigger; fall back to first engine.
+    default_agent_id = config.get("default_agent")
+    trigger_engine = engines.get(default_agent_id) or next(iter(engines.values()))
+    trigger_adapter = next((a for _, _, a, e in all_adapters if e is trigger_engine), None)
+    _maybe_start_embedded_api(config, trigger_engine, trigger_adapter)
 
     # Show startup info
     banner_small("multi-agent")
@@ -320,7 +379,11 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
     if adapter_config is None:
         adapter_config = get_adapter_config(config, adapter_type)
 
-    if adapter_type == "cli":
+    if adapter_type == "api":
+        from mithai.adapters.api import APIAdapter
+        return APIAdapter()
+
+    elif adapter_type == "cli":
         from mithai.adapters.cli import CLIAdapter
         return CLIAdapter()
 

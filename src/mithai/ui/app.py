@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
@@ -23,8 +24,12 @@ _TEMPLATE_DIR = _UI_DIR / "templates"
 _STATIC_DIR = _UI_DIR / "static"
 
 
-def create_app(config: dict) -> Starlette:
-    """Create the Control Room Starlette application."""
+def create_app(config: dict, engine=None, adapter=None) -> Starlette:
+    """Create the Control Room Starlette application.
+
+    When engine and adapter are provided, a POST /api/trigger endpoint
+    is registered that allows sending messages to the agent via HTTP.
+    """
     from mithai.cli.run_cmd import _create_memory_backend, _create_state
 
     state = _create_state(config)
@@ -222,6 +227,33 @@ def create_app(config: dict) -> Starlette:
             "approvals": ctrl.get_approval_stats(),
         })
 
+    async def api_trigger(request: Request) -> Response:
+        if err := await _check_auth(request):
+            return err
+        if engine is None or adapter is None:
+            return JSONResponse({"error": "engine not available"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        message_text = body.get("message", "")
+        if not message_text:
+            return JSONResponse({"error": "message is required"}, status_code=400)
+
+        from mithai.adapters.base import IncomingMessage
+        channel_id = body.get("channel_id", "trigger")
+        msg = IncomingMessage(
+            text=message_text,
+            channel_id=channel_id,
+            user_id=body.get("user_id", "api"),
+            platform="trigger",
+        )
+        return JSONResponse(
+            {"status": "accepted", "channel_id": channel_id},
+            status_code=202,
+            background=BackgroundTask(engine.handle, msg, adapter),
+        )
+
     routes = [
         Route("/", dashboard),
         Route("/sessions", sessions_page),
@@ -240,6 +272,7 @@ def create_app(config: dict) -> Starlette:
         Route("/api/skills", api_skills),
         Route("/api/config", api_config),
         Route("/api/stats", api_stats),
+        Route("/api/trigger", api_trigger, methods=["POST"]),
     ]
 
     # Only mount static files if directory exists

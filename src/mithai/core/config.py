@@ -39,7 +39,7 @@ class SlackHTTPAdapterConfig(BaseModel):
 class TelegramAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     bot_token: str | None = None
-    allowed_chat_ids: str | list[int] | None = None  # str for comma-separated env var; int list for direct YAML
+    allowed_chat_ids: str | list[str | int] | None = None  # str for comma-separated; list allows unresolved ${} placeholders
 
 
 class AdapterConfig(BaseModel):

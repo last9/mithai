@@ -6,8 +6,7 @@
 #   make checksums        Generate SHA256 checksums for release
 #   make clean            Remove build artifacts
 #
-# Prerequisites:
-#   uv pip install pyinstaller
+# Prerequisites: uv (dev deps installed automatically)
 
 UV       = uv run
 VERSION  = $(shell $(UV) python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
@@ -23,6 +22,7 @@ version:
 ## Build the native binary for the current platform
 build-binary:
 	@echo "Building mithai $(VERSION) for $(PLATFORM)..."
+	uv pip install -e ".[dev,ui,slack,telemetry]" --quiet
 	$(UV) pyinstaller mithai.spec --noconfirm
 	@ls -lh $(BINARY)
 	@echo ""

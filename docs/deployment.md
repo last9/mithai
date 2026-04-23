@@ -15,6 +15,7 @@ This guide covers running mithai as a long-lived process in production: as a sys
 - [Running with Docker](#running-with-docker)
 - [Environment and secrets](#environment-and-secrets)
 - [Keeping memory persistent](#keeping-memory-persistent)
+- [Webhook / headless mode](#webhook--headless-mode)
 - [Multiple instances](#multiple-instances)
 - [Health checking](#health-checking)
 - [Upgrading](#upgrading)
@@ -290,6 +291,39 @@ Named Docker volumes survive container restarts and image updates. Bind mounts (
 **For systemd:** the data directories are at `/var/lib/mithai/memory` and `/var/lib/mithai/state` (as configured above). Back these up with your normal host backup strategy. A nightly `rsync` or snapshot of `/var/lib/mithai/` is sufficient for most deployments.
 
 > **Note:** Memory and state are plain files. `memory/MEMORY.md` is Markdown. Session state files are JSON. You can inspect and edit them directly if needed.
+
+---
+
+## Webhook / headless mode
+
+Use the `api` adapter when you want the agent to receive messages via HTTP instead of Slack or Telegram — for example, as the target of a webhook, a cron scheduler, or a CI pipeline.
+
+```bash
+MITHAI_UI_PORT=8080 MITHAI_UI_TOKEN=secret mithai run --adapter api
+```
+
+The embedded server listens on `127.0.0.1:8080`. Proxy it through nginx or an SSH tunnel if you need external access. Send messages with:
+
+```bash
+curl -X POST http://localhost:8080/api/trigger \
+  -H "Authorization: Bearer secret" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "summarize recent alerts", "channel_id": "cron"}'
+# → 202 {"status": "accepted", "channel_id": "cron"}
+```
+
+The `channel_id` field acts as a session namespace. Use distinct values to keep different triggers isolated (e.g., `"cron-daily"` vs `"webhook-deploy"`).
+
+**systemd unit for API mode:**
+
+```ini
+[Service]
+ExecStart=/opt/mithai/venv/bin/mithai run --config /etc/mithai/config.yaml --adapter api
+Environment=MITHAI_UI_PORT=8080
+Environment=MITHAI_UI_TOKEN=secret
+```
+
+> **Note:** Human approval requests are auto-denied in API mode. Do not use this adapter for skills that require interactive approval for sensitive operations.
 
 ---
 

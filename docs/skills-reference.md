@@ -1,6 +1,6 @@
 ---
 title: "Skills reference"
-description: "Complete reference for TOOLS, handle, resolve_human, startup, bind, MCP_TOOLS, and the ctx object."
+description: "Complete reference for TOOLS, handle, resolve_human, startup, bind, MCP_TOOLS, VERIFY, and the ctx object."
 ---
 
 
@@ -19,6 +19,7 @@ A skill is a folder with a `prompt.md` and a `tools.py`. This page is the comple
   - [startup](#startupconfig-optional)
   - [bind](#bindengine-adapter-optional)
   - [MCP_TOOLS](#mcp_tools-optional)
+  - [VERIFY](#verify-optional)
 - [The ctx object](#the-ctx-object)
 - [Built-in skills](#built-in-skills)
 - [Configuration overrides](#configuration-overrides)
@@ -215,6 +216,25 @@ MCP_TOOLS = [
 ```
 
 MCP servers are declared in `config.yaml` under `mcp_servers`. Tools from MCP servers are namespaced the same way as native tools.
+
+---
+
+### `VERIFY` (optional)
+
+Set to `True` to enable post-turn fact-checking for this skill. After each turn where a verified skill was called, a secondary LLM call checks the agent's response against what the tools actually returned, and annotates the response with ⚠️ if a numerical or factual contradiction is found.
+
+```python
+VERIFY = True
+```
+
+Use this for skills that query external systems with precise values (counts, sizes, versions, costs) where hallucinated summaries would be harmful. The built-in `aws` and `kubernetes` skills opt in by default.
+
+To use a cheaper model for the fact-check, configure it in `config.yaml`:
+
+```yaml
+verifier:
+  model: claude-haiku-4-5
+```
 
 ---
 

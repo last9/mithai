@@ -15,6 +15,7 @@ This page explains the core ideas behind mithai. Read it after the [getting star
 - [Adapters](#adapters)
 - [Sessions](#sessions)
 - [Memory](#memory)
+- [Verifier](#verifier)
 - [How a request flows](#how-a-request-flows)
 - [Multi-agent mode](#multi-agent-mode)
 
@@ -222,6 +223,27 @@ Interactive REPL. Good for local development and testing skills before deploying
 mithai chat
 ```
 
+The CLI adapter also accepts JSON on stdin in piped mode, which lets scripts and schedulers inject per-call context:
+
+```bash
+echo '{"text": "check staging", "channel_id": "ci", "system_prompt_append": "Focus on the staging environment only."}' \
+  | mithai run --adapter cli
+```
+
+`system_prompt_append` is appended to the agent's system prompt for that turn only; the base prompt is unchanged for other calls.
+
+### API
+
+Headless adapter for webhooks and automation. The process blocks indefinitely while an embedded HTTP server (`MITHAI_UI_PORT`) handles all traffic. No Slack connection or terminal required.
+
+```bash
+MITHAI_UI_PORT=8080 MITHAI_UI_TOKEN=secret mithai run --adapter api
+```
+
+Callers send messages via `POST /api/trigger` with a Bearer token. The engine fires in the background and returns 202 immediately. Human approval requests are auto-denied in this mode.
+
+See [Configuration reference → API adapter](configuration.md#api) for the full request format.
+
 ### Running multiple adapters
 
 To run Slack and Telegram simultaneously, use `types` instead of `type`:
@@ -321,6 +343,29 @@ skills:
 The approval history is stored in `memory/approvals.json`. You can inspect or reset it at any time.
 
 The agent also runs a reflection pass after each conversation (when `learning.reflection: true`), writing a brief summary to `memory/daily/YYYY-MM-DD.md`. Over time this becomes a log of what the agent has learned and done.
+
+---
+
+## Verifier
+
+After each turn, when a skill with `VERIFY = True` was called, mithai runs a secondary LLM call to check that the agent's response does not contradict what the tools returned. If a numerical or factual contradiction is found, the response is annotated with ⚠️.
+
+This is opt-in per skill. Built-in skills `aws` and `kubernetes` opt in by default. To add verification to a custom skill:
+
+```python
+# skills/my_skill/tools.py
+VERIFY = True
+```
+
+To use a separate cheaper model for the fact-check:
+
+```yaml
+# config.yaml
+verifier:
+  model: claude-haiku-4-5
+```
+
+The verifier only catches clear contradictions — not omissions, style differences, or paraphrasing. It's a safety net for skills that return precise numeric data (pod counts, costs, disk sizes) where a hallucinated summary could cause a bad decision.
 
 ---
 

@@ -10,6 +10,19 @@ via `mithai skill install <name>`.
 """
 
 import platform
+try:
+    from PyInstaller.utils.hooks import collect_all
+    uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all('uvicorn')
+    starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('starlette')
+except Exception:
+    uvicorn_datas = uvicorn_binaries = uvicorn_hiddenimports = []
+    starlette_datas = starlette_binaries = starlette_hiddenimports = []
+
+try:
+    from PyInstaller.utils.hooks import collect_all
+    otel_datas, otel_binaries, otel_hiddenimports = collect_all('opentelemetry')
+except Exception:
+    otel_datas = otel_binaries = otel_hiddenimports = []
 
 block_cipher = None
 
@@ -34,12 +47,13 @@ datas.append(('src/mithai/ui/static', 'mithai/ui/static'))
 a = Analysis(
     ['src/mithai/__main__.py'],
     pathex=['src'],
-    binaries=[],
-    datas=datas,
-    hiddenimports=[
+    binaries=[] + uvicorn_binaries + starlette_binaries + otel_binaries,
+    datas=datas + uvicorn_datas + starlette_datas + otel_datas,
+    hiddenimports=[] + uvicorn_hiddenimports + starlette_hiddenimports + otel_hiddenimports + [
         # Core mithai modules (lazy-imported, PyInstaller won't trace them)
         'mithai',
         'mithai.__main__',
+        'mithai.adapters.api',
         'mithai.adapters.cli',
         'mithai.adapters.slack',
         'mithai.adapters.telegram',
@@ -106,13 +120,7 @@ a = Analysis(
         'mcp.client.sse',
         'mcp.client.streamable_http',
 
-        # Third-party: UI (Control Room)
-        'starlette',
-        'starlette.applications',
-        'starlette.routing',
-        'starlette.responses',
-        'starlette.staticfiles',
-        'uvicorn',
+        # Third-party: UI (Control Room) — collected via collect_all above
 
         # Transitive deps that PyInstaller may miss
         'anyio',

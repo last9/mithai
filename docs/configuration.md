@@ -16,6 +16,7 @@ mithai is configured with a `config.yaml` file. All values support `${ENV_VAR}` 
 - [llm](#llm)
 - [skills](#skills)
 - [human](#human)
+- [verifier](#verifier)
 - [learning](#learning)
 - [state](#state)
 - [mcp_servers](#mcp_servers)
@@ -78,7 +79,7 @@ Adapters connect the agent to communication platforms.
 
 ```yaml
 adapter:
-  type: slack           # slack | telegram | cli
+  type: slack           # slack | telegram | cli | api
   slack: { ... }
 ```
 
@@ -120,6 +121,41 @@ adapter:
 ### CLI
 
 No configuration required. Use `mithai chat` to start an interactive session.
+
+### API
+
+Headless adapter for webhook and programmatic use. The process stays alive while the embedded API server (`MITHAI_UI_PORT`) handles all traffic. No Slack or terminal connection required.
+
+```yaml
+adapter:
+  type: api
+```
+
+Start with:
+
+```bash
+MITHAI_UI_PORT=8080 MITHAI_UI_TOKEN=secret mithai run --adapter api
+```
+
+Send messages via `POST /api/trigger`:
+
+```bash
+curl -X POST http://localhost:8080/api/trigger \
+  -H "Authorization: Bearer secret" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "deploy app", "channel_id": "webhook"}'
+# → 202 Accepted {"status": "accepted", "channel_id": "webhook"}
+```
+
+The response returns 202 immediately; the engine runs in the background. Human approval requests are auto-denied (no interactive terminal).
+
+**Body fields:**
+
+| Field | Required | Description |
+|---|---|---|
+| `message` | yes | Text to send to the agent |
+| `channel_id` | no | Session namespace (default: `"trigger"`) |
+| `user_id` | no | User identifier (default: `"api"`) |
 
 ---
 
@@ -189,6 +225,25 @@ human:
 `overrides` keys are `skillname__toolname`. Valid values: `null`, `"approve"`, `"confirm"`.
 
 Overrides take effect after `resolve_human` — they are the final word on approval level.
+
+---
+
+## `verifier`
+
+Post-turn fact-checker. After each agent turn, a secondary LLM call checks that the agent's response does not contradict what the tools actually returned.
+
+```yaml
+verifier:
+  model: claude-haiku-4-5    # cheap model; falls back to main LLM if omitted
+```
+
+The verifier only runs when at least one skill that has opted in via `VERIFY = True` (in `tools.py`) was called during the turn. Built-in skills `aws` and `kubernetes` opt in by default. When a contradiction is detected, the agent's response is annotated with a ⚠️ warning.
+
+To opt a custom skill into verification, add to its `tools.py`:
+
+```python
+VERIFY = True
+```
 
 ---
 

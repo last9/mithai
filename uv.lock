@@ -736,7 +736,7 @@ wheels = [
 
 [[package]]
 name = "mithai"
-version = "0.6.3"
+version = "0.6.4"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -769,6 +769,7 @@ s3 = [
     { name = "boto3" },
 ]
 slack = [
+    { name = "anyio" },
     { name = "slack-bolt" },
     { name = "starlette" },
     { name = "uvicorn" },
@@ -791,6 +792,7 @@ ui = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40.0" },
+    { name = "anyio", marker = "extra == 'slack'", specifier = ">=3.0" },
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.34.0" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },

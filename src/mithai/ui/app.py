@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from urllib.parse import urlencode
 
+import anyio
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
 from starlette.requests import Request
@@ -248,6 +249,30 @@ def create_app(config: dict, engine=None, adapter=None) -> Starlette:
             user_id=body.get("user_id", "api"),
             platform="trigger",
         )
+
+        # wait=true → run engine.handle inline and return the response text.
+        # Default (wait absent or false) → fire-and-forget 202 for webhook callers
+        # with short HTTP timeouts.
+        wait_param = request.query_params.get("wait", "").lower()
+        if wait_param in ("1", "true", "yes"):
+            try:
+                # cancellable=False (anyio default): keep working even if HTTP client disconnects.
+                # LLM calls are expensive; orphaning them mid-flight wastes money.
+                response_text = await anyio.to_thread.run_sync(engine.handle, msg, adapter)
+            except Exception as e:
+                logger.exception("api_trigger: engine.handle failed")
+                return JSONResponse(
+                    {"error": "engine failed", "detail": str(e), "channel_id": channel_id},
+                    status_code=500,
+                )
+            # Defensive coerce: engine.handle is typed -> str but future refactors
+            # could return non-serializable. Stringify before JSONResponse builds.
+            response_text = "" if response_text is None else str(response_text)
+            return JSONResponse(
+                {"status": "ok", "channel_id": channel_id, "response": response_text},
+                status_code=200,
+            )
+
         return JSONResponse(
             {"status": "accepted", "channel_id": channel_id},
             status_code=202,

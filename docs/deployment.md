@@ -314,6 +314,25 @@ curl -X POST http://localhost:8080/api/trigger \
 
 The `channel_id` field acts as a session namespace. Use distinct values to keep different triggers isolated (e.g., `"cron-daily"` vs `"webhook-deploy"`).
 
+### Synchronous mode (`?wait=true`)
+
+For request/response surfaces (chat UI proxying to mithai, internal API gateway), use `?wait=true` so the endpoint blocks until the agent completes and returns the response text inline.
+
+```bash
+curl -X POST 'http://localhost:8080/api/trigger?wait=true' \
+  -H "Authorization: Bearer secret" \
+  -d '{"message": "what is the status of foo?", "channel_id": "chat-1"}'
+
+# 200 OK
+# {"status": "ok", "channel_id": "chat-1", "response": "<agent text>"}
+```
+
+Truthy values for `wait`: `1`, `true`, `yes` (case-insensitive). Any other value (including absent) keeps the fire-and-forget 202 behavior — webhook callers added in v0.6.4 are unaffected.
+
+Engine exceptions surface as `500` with `{"error": "engine failed", "detail": "...", "channel_id": "..."}` so callers can correlate by `channel_id`.
+
+**No server-side timeout** — the request blocks until `engine.handle` completes. The caller's HTTP client timeout governs. Note that even if the client disconnects mid-request, the worker thread (and the LLM call inside it) runs to completion server-side — this is intentional so paid LLM calls are not orphaned. Configure your client timeout to match expected agent latency.
+
 **systemd unit for API mode:**
 
 ```ini

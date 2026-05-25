@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-slack = ["slack-bolt>=1.18.0", "starlette>=0.40.0", "uvicorn>=0.30.0"]
+slack = ["slack-bolt>=1.18.0", "starlette>=0.40.0", "uvicorn>=0.30.0", "anyio>=3.0"]
 telegram = ["python-telegram-bot>=21.0"]
 mcp = ["mcp>=1.0.0"]
 redis = ["redis>=5.0.0"]

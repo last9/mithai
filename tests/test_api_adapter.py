@@ -178,3 +178,99 @@ class TestApiTriggerEndpoint:
         assert msg_arg.channel_id == "webhook"
         assert msg_arg.user_id == "webhook:github"
         assert msg_arg.platform == "trigger"
+
+
+class TestApiTriggerWait:
+    """wait=true switches /api/trigger from fire-and-forget to block-and-return."""
+
+    def test_wait_true_returns_200_with_response(self):
+        engine = MagicMock()
+        engine.handle.return_value = "agent reply text"
+        app = _make_app(engine=engine, adapter=MagicMock())
+        client = TestClient(app, raise_server_exceptions=True)
+
+        resp = client.post(
+            "/api/trigger?wait=true",
+            json={"message": "ping", "channel_id": "chat-123"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["channel_id"] == "chat-123"
+        assert body["response"] == "agent reply text"
+        engine.handle.assert_called_once()
+
+    def test_wait_false_keeps_202_fire_and_forget(self):
+        engine = MagicMock()
+        engine.handle.return_value = "ignored in async mode"
+        app = _make_app(engine=engine, adapter=MagicMock())
+        client = TestClient(app, raise_server_exceptions=True)
+
+        resp = client.post(
+            "/api/trigger?wait=false",
+            json={"message": "ping"},
+        )
+
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "accepted"
+        assert "response" not in resp.json()
+
+    def test_wait_absent_keeps_existing_202_behavior(self):
+        engine = MagicMock()
+        engine.handle.return_value = "x"
+        app = _make_app(engine=engine, adapter=MagicMock())
+        client = TestClient(app, raise_server_exceptions=True)
+
+        resp = client.post("/api/trigger", json={"message": "ping"})
+
+        assert resp.status_code == 202
+        assert "response" not in resp.json()
+
+    def test_wait_accepts_1_yes_true(self):
+        engine = MagicMock()
+        engine.handle.return_value = "ok"
+        app = _make_app(engine=engine, adapter=MagicMock())
+        client = TestClient(app, raise_server_exceptions=True)
+
+        for value in ("1", "true", "TRUE", "yes", "YES"):
+            resp = client.post(
+                f"/api/trigger?wait={value}",
+                json={"message": "ping"},
+            )
+            assert resp.status_code == 200, f"value={value} got {resp.status_code}"
+
+    def test_wait_true_returns_500_on_engine_error(self, caplog):
+        import logging
+        engine = MagicMock()
+        engine.handle.side_effect = RuntimeError("boom")
+        app = _make_app(engine=engine, adapter=MagicMock())
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with caplog.at_level(logging.ERROR, logger="mithai.ui.app"):
+            resp = client.post(
+                "/api/trigger?wait=true",
+                json={"message": "ping", "channel_id": "chat-7"},
+            )
+
+        assert resp.status_code == 500
+        body = resp.json()
+        assert body["error"] == "engine failed"
+        assert "boom" in body["detail"]
+        assert body["channel_id"] == "chat-7"
+        # logger.exception adds the traceback at ERROR level
+        assert "api_trigger: engine.handle failed" in caplog.text
+
+    def test_wait_true_respects_auth(self):
+        app = _make_app(engine=MagicMock(), adapter=MagicMock(), auth_token="secret")
+        client = TestClient(app)
+
+        resp = client.post("/api/trigger?wait=true", json={"message": "ping"})
+        assert resp.status_code == 401
+
+    def test_wait_true_returns_503_when_no_engine(self):
+        app = _make_app(engine=None, adapter=None)
+        client = TestClient(app)
+
+        resp = client.post("/api/trigger?wait=true", json={"message": "ping"})
+        assert resp.status_code == 503

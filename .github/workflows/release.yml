@@ -16,9 +16,11 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # required for aws-actions OIDC role assumption
 
 env:
-  LAST9_IMAGE: docker-registry.last9.io/mithai
+  LAST9_IMAGE: 652845092827.dkr.ecr.ap-south-1.amazonaws.com/mithai
+  AWS_REGION: ap-south-1
 
 jobs:
   # ── Extract version from tag or pyproject.toml ──
@@ -108,23 +110,30 @@ jobs:
           path: dist/mithai-*
           if-no-files-found: error
 
-  # ── Build and push Docker image to Last9 registry ──
+  # ── Build and push Docker image to Last9 ECR ──
   build-docker:
     name: Build Docker image
     needs: meta
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # OIDC for aws-actions/configure-aws-credentials
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Last9 registry
-        uses: docker/login-action@v3
+      - name: Configure AWS credentials
+        if: ${{ needs.meta.outputs.is_tag == 'true' && !inputs.dry_run }}
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          registry: docker-registry.last9.io
-          username: ${{ secrets.LAST9_REGISTRY_USERNAME }}
-          password: ${{ secrets.LAST9_REGISTRY_PASSWORD }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: ${{ needs.meta.outputs.is_tag == 'true' && !inputs.dry_run }}
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Extract Docker tags
         id: docker_meta
@@ -204,7 +213,7 @@ jobs:
             echo ""
             echo '```sh'
             echo '# Docker'
-            echo "docker pull docker-registry.last9.io/mithai:${RELEASE_VERSION#v}"
+            echo "docker pull 652845092827.dkr.ecr.ap-south-1.amazonaws.com/mithai:${RELEASE_VERSION#v}"
             echo '```'
             echo ""
             echo "### What's changed"

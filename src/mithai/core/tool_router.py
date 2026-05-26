@@ -50,6 +50,38 @@ class ToolRouter:
             # MCP tools declared by this skill
             if self._mcp and skill.mcp_tools:
                 self._register_mcp_tools(skill_name, skill.mcp_tools)
+        if self._mcp:
+            self._register_direct_mcp_tools()
+
+    def _register_direct_mcp_tools(self) -> None:
+        """Register agent-level MCP tools as mcp__<server>__<tool>."""
+        for server_name in self._mcp.server_names():
+            discovered = self._mcp.discover_tools(server_name)
+            if not discovered:
+                logger.warning(
+                    "MCP server '%s' has no tools (not connected?)",
+                    server_name,
+                )
+                continue
+            requested_tools, default_human, human_overrides = self._mcp.direct_tool_policy(server_name)
+
+            for tool_def in discovered:
+                if requested_tools not in ("*", ["*"]) and tool_def.name not in requested_tools:
+                    continue
+                effective_def = ToolDefinition(
+                    name=tool_def.name,
+                    description=tool_def.description,
+                    input_schema=tool_def.input_schema,
+                    human=human_overrides.get(tool_def.name, default_human),
+                )
+                prefixed = f"mcp{SEPARATOR}{server_name}{SEPARATOR}{tool_def.name}"
+                if prefixed in self._tool_index:
+                    logger.warning(
+                        "MCP tool %s collides with native skill tool — skipping direct MCP tool",
+                        prefixed,
+                    )
+                    continue
+                self._mcp_index[prefixed] = (server_name, tool_def.name, effective_def)
 
     def _register_mcp_tools(self, skill_name: str, mcp_tools: list[dict]) -> None:
         """Register MCP tools for a skill, namespaced under the skill."""
@@ -69,7 +101,7 @@ class ToolRouter:
 
             for tool_def in discovered:
                 # Filter to only requested tools
-                if requested_tools != "*" and tool_def.name not in requested_tools:
+                if requested_tools not in ("*", ["*"]) and tool_def.name not in requested_tools:
                     continue
 
                 # Apply skill's human level
@@ -116,13 +148,25 @@ class ToolRouter:
                 "input_schema": tool_def.input_schema,
             })
         for prefixed, (server_name, _, tool_def) in self._mcp_index.items():
-            skill_name = prefixed.split(SEPARATOR, 1)[0]
+            source_name = prefixed.rsplit(SEPARATOR, 1)[0]
             tools.append({
                 "name": prefixed,
-                "description": f"[{skill_name}] {tool_def.description}",
+                "description": f"[{source_name}] {tool_def.description}",
                 "input_schema": tool_def.input_schema,
             })
         return tools
+
+    def available_tool_names(self) -> set[str]:
+        """Return exactly the tool names this router can dispatch."""
+        return set(self._tool_index) | set(self._mcp_index)
+
+    def lock_allowlist(self) -> None:
+        """Set the hard allowlist to exactly the router's dispatchable tools.
+
+        Keeps the allowlist and the dispatch indexes from drifting apart —
+        callers should not derive a separate allowlist from external sources.
+        """
+        self._allowed_tools = self.available_tool_names()
 
     def parse(self, prefixed_name: str) -> tuple[str, str]:
         """Parse a prefixed tool name into (skill_name, tool_name)."""

@@ -3,9 +3,11 @@
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from mithai.adapters.base import IncomingMessage
 from mithai.core.engine import Engine
+from mithai.core.skill_loader import Skill, ToolDefinition
 from mithai.memory.filesystem import FilesystemMemoryBackend
 from mithai.state.memory import MemoryStateBackend
 
@@ -114,3 +116,60 @@ class TestExtraSystemPrompt:
         tail = system[idx + len(task_marker):]
         # strip() was called on the input, so no leading newlines in the tail.
         assert tail.startswith("## Instructions")
+
+
+class TestEngineMCPAllowlist:
+    def test_agent_level_mcp_tool_routes_through_engine_allowlist(self):
+        """Engine allowlist is derived from router indexes, including direct MCP tools."""
+        llm = MagicMock()
+        state = MemoryStateBackend()
+        memory = FilesystemMemoryBackend(Path(tempfile.mkdtemp()))
+        mcp_manager = MagicMock()
+        mcp_manager.server_names.return_value = ["last9"]
+        mcp_manager.direct_tool_policy.return_value = (["prometheus_labels"], None, {})
+        mcp_manager.discover_tools.return_value = [
+            ToolDefinition(
+                name="prometheus_labels",
+                description="List labels",
+                input_schema={"type": "object"},
+            )
+        ]
+        mcp_manager.call_tool.return_value = '{"labels": ["job"]}'
+
+        config = {
+            "bot": {"system_prompt": "You are a helpful assistant."},
+            "learning": {"enabled": False},
+            "llm": {"provider": "anthropic", "api_key": "test"},
+            "mcp_servers": {"last9": {"transport": "http", "url": "https://example.test/mcp"}},
+        }
+        skill = Skill(
+            name="local",
+            prompt="local skill",
+            tools=[],
+            handle=lambda _name, _input, _ctx: "{}",
+            source_dir=Path(tempfile.mkdtemp()),
+        )
+
+        with patch("mithai.core.mcp_manager.MCPManager", return_value=mcp_manager):
+            engine = Engine(
+                config=config,
+                llm=llm,
+                state=state,
+                memory=memory,
+                skills={"local": skill},
+            )
+
+        result = engine._router.route(
+            "mcp__last9__prometheus_labels",
+            {"lookback_minutes": 60},
+            {},
+        )
+
+        assert result == '{"labels": ["job"]}'
+        mcp_manager.start.assert_called_once_with()
+        mcp_manager.call_tool.assert_called_once_with(
+            "last9",
+            "prometheus_labels",
+            {"lookback_minutes": 60},
+        )
+        assert "mcp__last9__prometheus_labels" in engine._router._allowed_tools

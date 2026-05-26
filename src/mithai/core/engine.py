@@ -82,7 +82,7 @@ class Engine:
         # direct MCP names. Derive the hard allowlist from its actual indexes
         # so the boundary cannot drift from dispatchable tools.
         self._router = ToolRouter(self._skills, mcp_manager=self._mcp_manager)
-        self._router._allowed_tools = self._router.available_tool_names()
+        self._router.lock_allowlist()
         self._human = HumanMCP(get_human_config(config))
 
         # Run startup hooks for skills that need background work (e.g. polling loops)

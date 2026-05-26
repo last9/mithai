@@ -126,6 +126,7 @@ class TestEngineMCPAllowlist:
         memory = FilesystemMemoryBackend(Path(tempfile.mkdtemp()))
         mcp_manager = MagicMock()
         mcp_manager.server_names.return_value = ["last9"]
+        mcp_manager.direct_tool_policy.return_value = (["prometheus_labels"], None, {})
         mcp_manager.discover_tools.return_value = [
             ToolDefinition(
                 name="prometheus_labels",

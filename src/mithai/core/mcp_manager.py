@@ -37,6 +37,9 @@ class MCPServerConfig:
     env: dict[str, str] = field(default_factory=dict)
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    tools: list[str] | str = "*"
+    human: str | None = None
+    human_overrides: dict[str, str | None] = field(default_factory=dict)
 
 
 class MCPManager:
@@ -84,6 +87,13 @@ class MCPManager:
                         name, k, v,
                     )
 
+            # Normalize tools: a bare string that isn't "*" is almost certainly
+            # a YAML typo for a single-element list — coerce so it doesn't
+            # silently fall into substring matching against tool names.
+            tools_value = conf.get("tools", "*")
+            if isinstance(tools_value, str) and tools_value != "*":
+                tools_value = [tools_value]
+
             self._configs[name] = MCPServerConfig(
                 name=name,
                 transport=transport,
@@ -92,6 +102,9 @@ class MCPManager:
                 env=conf.get("env", {}),
                 url=conf.get("url"),
                 headers=headers,
+                tools=tools_value,
+                human=conf.get("human"),
+                human_overrides=conf.get("human_overrides", {}) or {},
             )
 
     def _ensure_loop(self) -> None:
@@ -246,6 +259,20 @@ class MCPManager:
     def server_names(self) -> list[str]:
         """Return configured MCP server names."""
         return list(self._configs.keys())
+
+    def direct_tool_policy(
+        self, server_name: str
+    ) -> tuple[list[str] | str, str | None, dict[str, str | None]]:
+        """Return server-level direct tool exposure policy.
+
+        Returns (tools, default_human, human_overrides). Operators can mix
+        approval levels per tool via the human_overrides dict, exactly like
+        skill-level MCP_TOOLS does.
+        """
+        config = self._configs.get(server_name)
+        if config is None:
+            return [], None, {}
+        return config.tools, config.human, config.human_overrides
 
     def _reconnect(self, server_name: str) -> bool:
         """Reconnect to an MCP server after a connection failure."""

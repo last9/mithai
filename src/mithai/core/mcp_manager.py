@@ -3,8 +3,9 @@
 Manages the lifecycle of MCP client sessions. Each configured server
 is a subprocess (stdio transport) or connected via SSE/streamablehttp.
 
-Skills declare which MCP tools they need via MCP_TOOLS in their tools.py.
-The manager only starts servers that are actually referenced by skills.
+Skills may declare which MCP tools they need via MCP_TOOLS in their tools.py.
+Agent-level MCP bindings also work without a companion skill: configured
+servers are connected and their tools are exposed directly.
 
 Architecture: A background thread runs an asyncio event loop that keeps
 all MCP sessions alive (required by transports like streamablehttp that
@@ -59,6 +60,10 @@ class MCPManager:
         import re
 
         for name, conf in mcp_config.items():
+            transport = conf.get("transport", "stdio")
+            if transport == "http":
+                transport = "streamablehttp"
+
             # Resolve ${VAR} references in headers
             raw_headers = conf.get("headers", {})
             headers = {}
@@ -81,7 +86,7 @@ class MCPManager:
 
             self._configs[name] = MCPServerConfig(
                 name=name,
-                transport=conf.get("transport", "stdio"),
+                transport=transport,
                 command=conf.get("command"),
                 args=conf.get("args", []) + conf.get("args_extra", []),
                 env=conf.get("env", {}),
@@ -106,9 +111,17 @@ class MCPManager:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
 
-    def start(self, needed_servers: set[str]) -> None:
-        """Connect to MCP servers that skills actually reference."""
-        servers_to_start = needed_servers & set(self._configs.keys())
+    def start(self, needed_servers: set[str] | None = None) -> None:
+        """Connect to configured MCP servers.
+
+        When needed_servers is provided, only that subset is started. When it is
+        None, all configured servers are started so agent-level MCP bindings are
+        exposed even when no skill declares MCP_TOOLS.
+        """
+        if needed_servers is None:
+            servers_to_start = set(self._configs.keys())
+        else:
+            servers_to_start = needed_servers & set(self._configs.keys())
         if not servers_to_start:
             return
 
@@ -229,6 +242,10 @@ class MCPManager:
     def discover_tools(self, server_name: str) -> list[ToolDefinition]:
         """Return all tools discovered from a specific MCP server."""
         return list(self._server_tools.get(server_name, []))
+
+    def server_names(self) -> list[str]:
+        """Return configured MCP server names."""
+        return list(self._configs.keys())
 
     def _reconnect(self, server_name: str) -> bool:
         """Reconnect to an MCP server after a connection failure."""

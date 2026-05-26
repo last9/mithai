@@ -85,6 +85,19 @@ def test_parse_config_sse():
     assert conf.headers == {"Authorization": "Bearer xyz"}
 
 
+def test_parse_config_http_aliases_to_streamablehttp():
+    """HTTP transport is accepted as an alias for streamable HTTP."""
+    mgr = MCPManager({
+        "remote": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+        },
+    })
+    conf = mgr._configs["remote"]
+    assert conf.transport == "streamablehttp"
+    assert conf.url == "https://mcp.example.com"
+
+
 def test_parse_config_args_extra():
     """args_extra is appended to args."""
     mgr = MCPManager({
@@ -108,6 +121,17 @@ def test_start_only_needed_servers(mcp_config):
         mock_connect.assert_awaited_once()
         call_args = mock_connect.call_args
         assert call_args[0][0] == "linear"
+    _teardown_loop(mgr)
+
+
+def test_start_all_servers_when_needed_omitted(mcp_config):
+    """Agent-level MCP config starts all configured servers by default."""
+    mgr = MCPManager(mcp_config)
+
+    with patch.object(mgr, "_connect_server", new_callable=AsyncMock) as mock_connect:
+        mgr.start()
+        assert mock_connect.await_count == 2
+        assert {call.args[0] for call in mock_connect.await_args_list} == {"linear", "github"}
     _teardown_loop(mgr)
 
 
@@ -138,6 +162,12 @@ def test_discover_tools_returns_copy():
     assert result is not tools
 
 
+def test_server_names(mcp_config):
+    """Configured server names are exposed for direct MCP tool registration."""
+    mgr = MCPManager(mcp_config)
+    assert set(mgr.server_names()) == {"linear", "github"}
+
+
 def test_call_tool_not_connected():
     """Returns error if server not connected."""
     mgr = MCPManager({})
@@ -161,7 +191,11 @@ def test_call_tool_success():
     mock_result.content = [mock_block]
     mock_session.call_tool = AsyncMock(return_value=mock_result)
 
-    mgr._sessions["test_server"] = {"session": mock_session, "context": MagicMock()}
+    mgr._sessions["test_server"] = {
+        "session": mock_session,
+        "session_ctx": MagicMock(),
+        "transport_ctx": MagicMock(),
+    }
 
     result = mgr.call_tool("test_server", "my_tool", {"arg": "val"})
     assert result == "result data"
@@ -184,7 +218,11 @@ def test_call_tool_error_result():
     mock_result.content = [mock_block]
     mock_session.call_tool = AsyncMock(return_value=mock_result)
 
-    mgr._sessions["srv"] = {"session": mock_session, "context": MagicMock()}
+    mgr._sessions["srv"] = {
+        "session": mock_session,
+        "session_ctx": MagicMock(),
+        "transport_ctx": MagicMock(),
+    }
 
     result = mgr.call_tool("srv", "tool", {})
     data = json.loads(result)
@@ -202,7 +240,11 @@ def test_call_tool_exception():
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(side_effect=RuntimeError("connection lost"))
 
-    mgr._sessions["srv"] = {"session": mock_session, "context": MagicMock()}
+    mgr._sessions["srv"] = {
+        "session": mock_session,
+        "session_ctx": MagicMock(),
+        "transport_ctx": MagicMock(),
+    }
 
     result = mgr.call_tool("srv", "tool", {})
     data = json.loads(result)

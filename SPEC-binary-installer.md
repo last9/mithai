@@ -558,24 +558,24 @@ exe = EXE(
 ### 8.4 Homebrew Tap
 
 ```ruby
-# nishantmodak/homebrew-mithai/Formula/mithai.rb
+# last9/homebrew-mithai/Formula/mithai.rb
 class Mithai < Formula
   desc "AI agent framework for infrastructure operations"
-  homepage "https://github.com/nishantmodak/mithai"
+  homepage "https://github.com/last9/mithai"
   version "0.2.0"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/nishantmodak/mithai/releases/download/v0.2.0/mithai-darwin-arm64"
+      url "https://github.com/last9/mithai/releases/download/v0.2.0/mithai-darwin-arm64"
       sha256 "..."
     else
-      url "https://github.com/nishantmodak/mithai/releases/download/v0.2.0/mithai-darwin-amd64"
+      url "https://github.com/last9/mithai/releases/download/v0.2.0/mithai-darwin-amd64"
       sha256 "..."
     end
   end
 
   on_linux do
-    url "https://github.com/nishantmodak/mithai/releases/download/v0.2.0/mithai-linux-amd64"
+    url "https://github.com/last9/mithai/releases/download/v0.2.0/mithai-linux-amd64"
     sha256 "..."
   end
 
@@ -589,7 +589,7 @@ class Mithai < Formula
 end
 ```
 
-**Install:** `brew install nishantmodak/mithai/mithai`
+**Install:** `brew install last9/mithai/mithai`
 
 ### 8.5 Curl Installer
 
@@ -598,7 +598,7 @@ end
 # install.sh — hosted at https://raw.githubusercontent.com/last9/mithai/master/install.sh
 set -euf
 
-REPO="nishantmodak/mithai"
+REPO="last9/mithai"
 INSTALL_DIR="${MITHAI_INSTALL_DIR:-/usr/local/bin}"
 
 detect_platform() {
@@ -701,7 +701,7 @@ Binary Build
 Install
   [ ] curl installer detects platform correctly
   [ ] curl installer downloads and installs binary
-  [ ] `brew install nishantmodak/mithai/mithai` works
+  [ ] `brew install last9/mithai/mithai` works
   [ ] Binary runs from installed location
 
 Init Wizard

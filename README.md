@@ -39,7 +39,7 @@ mithai chat
 Or from source:
 
 ```bash
-git clone https://github.com/nishantmodak/mithai.git
+git clone https://github.com/last9/mithai.git
 cd mithai
 pip install -e ".[dev]"
 mithai init

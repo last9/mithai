@@ -58,6 +58,9 @@ def test_parse_config(mcp_config):
     assert linear.command == "npx"
     assert linear.args == ["-y", "@linear/mcp-server"]
     assert linear.env == {"LINEAR_API_KEY": "test-key"}
+    assert linear.tools == "*"
+    assert linear.human is None
+    assert linear.human_overrides == {}
 
 
 def test_parse_config_defaults():
@@ -108,6 +111,49 @@ def test_parse_config_args_extra():
         },
     })
     assert mgr._configs["srv"].args == ["a", "b", "c"]
+
+
+def test_parse_direct_tool_policy():
+    """Server-level direct tool policy is parsed."""
+    mgr = MCPManager({
+        "last9": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+            "tools": ["prometheus_labels", "delete_dashboard"],
+            "human": None,
+            "human_overrides": {"delete_dashboard": "approve"},
+        },
+    })
+    assert mgr.direct_tool_policy("last9") == (
+        ["prometheus_labels", "delete_dashboard"],
+        None,
+        {"delete_dashboard": "approve"},
+    )
+    assert mgr.direct_tool_policy("missing") == ([], None, {})
+
+
+def test_parse_tools_bare_string_normalized_to_list():
+    """A bare-string `tools` value (YAML typo for a single-tool list) is coerced."""
+    mgr = MCPManager({
+        "last9": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+            "tools": "prometheus_labels",
+        },
+    })
+    assert mgr.direct_tool_policy("last9") == (["prometheus_labels"], None, {})
+
+
+def test_parse_tools_wildcard_string_preserved():
+    """`tools: '*'` stays as the literal wildcard, not a list."""
+    mgr = MCPManager({
+        "last9": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+            "tools": "*",
+        },
+    })
+    assert mgr.direct_tool_policy("last9") == ("*", None, {})
 
 
 def test_start_only_needed_servers(mcp_config):

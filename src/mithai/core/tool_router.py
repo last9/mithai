@@ -63,13 +63,16 @@ class ToolRouter:
                     server_name,
                 )
                 continue
+            requested_tools, default_human, human_overrides = self._mcp.direct_tool_policy(server_name)
 
             for tool_def in discovered:
+                if requested_tools not in ("*", ["*"]) and tool_def.name not in requested_tools:
+                    continue
                 effective_def = ToolDefinition(
                     name=tool_def.name,
                     description=tool_def.description,
                     input_schema=tool_def.input_schema,
-                    human=tool_def.human,
+                    human=human_overrides.get(tool_def.name, default_human),
                 )
                 prefixed = f"mcp{SEPARATOR}{server_name}{SEPARATOR}{tool_def.name}"
                 if prefixed in self._tool_index:
@@ -156,6 +159,14 @@ class ToolRouter:
     def available_tool_names(self) -> set[str]:
         """Return exactly the tool names this router can dispatch."""
         return set(self._tool_index) | set(self._mcp_index)
+
+    def lock_allowlist(self) -> None:
+        """Set the hard allowlist to exactly the router's dispatchable tools.
+
+        Keeps the allowlist and the dispatch indexes from drifting apart —
+        callers should not derive a separate allowlist from external sources.
+        """
+        self._allowed_tools = self.available_tool_names()
 
     def parse(self, prefixed_name: str) -> tuple[str, str]:
         """Parse a prefixed tool name into (skill_name, tool_name)."""

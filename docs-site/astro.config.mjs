@@ -14,10 +14,10 @@ export default defineConfig({
         replacesTitle: false,
       },
       social: [
-        { icon: 'github', label: 'GitHub', href: 'https://github.com/nishantmodak/mithai' },
+        { icon: 'github', label: 'GitHub', href: 'https://github.com/last9/mithai' },
       ],
       editLink: {
-        baseUrl: 'https://github.com/nishantmodak/mithai/edit/master/docs-site/src/content/docs/',
+        baseUrl: 'https://github.com/last9/mithai/edit/master/docs-site/src/content/docs/',
       },
       sidebar: [
         {

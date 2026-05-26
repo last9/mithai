@@ -8,7 +8,7 @@
 
 set -euf
 
-REPO="nishantmodak/mithai"
+REPO="last9/mithai"
 INSTALL_DIR="${MITHAI_INSTALL_DIR:-/usr/local/bin}"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -66,9 +66,9 @@ dev = [
 mithai = "mithai.cli.main:cli"
 
 [project.urls]
-Homepage = "https://github.com/nishantmodak/mithai"
-Repository = "https://github.com/nishantmodak/mithai"
-Issues = "https://github.com/nishantmodak/mithai/issues"
+Homepage = "https://github.com/last9/mithai"
+Repository = "https://github.com/last9/mithai"
+Issues = "https://github.com/last9/mithai/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mithai"]

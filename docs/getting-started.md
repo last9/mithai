@@ -39,7 +39,7 @@ pip install mithai
 **From source** (to use the latest or contribute):
 
 ```bash
-git clone https://github.com/nishantmodak/mithai.git
+git clone https://github.com/last9/mithai.git
 cd mithai
 pip install -e ".[dev]"
 ```

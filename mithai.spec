@@ -10,8 +10,23 @@ via `mithai skill install <name>`.
 """
 
 import platform
+
+# PyInstaller helpers — required, unconditional. pyproject.toml pins
+# pyinstaller>=6.0 so both `collect_all` and `copy_metadata` are guaranteed.
+from PyInstaller.utils.hooks import collect_all, copy_metadata
+
+# Bundle mithai's *.dist-info so importlib.metadata.version("mithai") works
+# inside the frozen binary — without this, src/mithai/__init__.py falls back
+# to "0.0.0-dev" and `mithai --version` reports the wrong version.
+# This must succeed at build time (mithai is the package we're freezing); if
+# the dist-info is missing, fail the build loudly rather than ship a binary
+# with the silent fallback.
+mithai_metadata = copy_metadata('mithai')
+
+# Optional third-party collections — wrapped per-package so a missing dep
+# (e.g. building without ui extras) degrades gracefully without masking the
+# required PyInstaller helpers above.
 try:
-    from PyInstaller.utils.hooks import collect_all
     uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all('uvicorn')
     starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('starlette')
 except Exception:
@@ -19,7 +34,6 @@ except Exception:
     starlette_datas = starlette_binaries = starlette_hiddenimports = []
 
 try:
-    from PyInstaller.utils.hooks import collect_all
     otel_datas, otel_binaries, otel_hiddenimports = collect_all('opentelemetry')
 except Exception:
     otel_datas = otel_binaries = otel_hiddenimports = []
@@ -48,7 +62,7 @@ a = Analysis(
     ['src/mithai/__main__.py'],
     pathex=['src'],
     binaries=[] + uvicorn_binaries + starlette_binaries + otel_binaries,
-    datas=datas + uvicorn_datas + starlette_datas + otel_datas,
+    datas=datas + uvicorn_datas + starlette_datas + otel_datas + mithai_metadata,
     hiddenimports=[] + uvicorn_hiddenimports + starlette_hiddenimports + otel_hiddenimports + [
         # Core mithai modules (lazy-imported, PyInstaller won't trace them)
         'mithai',

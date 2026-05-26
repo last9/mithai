@@ -17,6 +17,8 @@ def _make_mock_mcp_manager(tools_by_server=None):
         return list(tools_by_server.get(server_name, []))
 
     mgr.discover_tools = MagicMock(side_effect=discover_tools)
+    mgr.server_names = MagicMock(return_value=list(tools_by_server.keys()))
+    mgr.direct_tool_policy = MagicMock(return_value=("*", None, {}))
     mgr.call_tool = MagicMock(return_value='{"mcp_result": "ok"}')
     return mgr
 
@@ -62,6 +64,89 @@ class TestToolRouterWithMCP:
         assert "triage__searchIssues" in names
         assert "triage__createIssue" in names
 
+    def test_direct_mcp_tools_appear_in_collect(self):
+        """Configured MCP server tools are exposed without MCP_TOOLS declarations."""
+        mcp = _make_mock_mcp_manager({
+            "last9": [
+                ToolDefinition(
+                    name="prometheus_instant_query",
+                    description="Run PromQL",
+                    input_schema={"type": "object"},
+                ),
+            ],
+        })
+        skill = _make_skill_with_mcp("triage", [])
+
+        router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+        tools = router.collect_tools_for_llm()
+
+        names = [t["name"] for t in tools]
+        assert "triage__local_tool" in names
+        assert "mcp__last9__prometheus_instant_query" in names
+
+        direct = next(t for t in tools if t["name"] == "mcp__last9__prometheus_instant_query")
+        assert direct["description"].startswith("[mcp__last9]")
+        # Default policy preserves auto-execute (human=None) for backward compatibility.
+        assert router.get_definition("mcp__last9__prometheus_instant_query").human is None
+
+    def test_direct_mcp_tools_respect_server_policy(self):
+        """Direct MCP aliases apply server-level tools and human policy."""
+        mcp = _make_mock_mcp_manager({
+            "last9": [
+                ToolDefinition(name="prometheus_labels", description="Labels", input_schema={}),
+                ToolDefinition(name="delete_dashboard", description="Delete", input_schema={}),
+            ],
+        })
+        mcp.direct_tool_policy.return_value = (["prometheus_labels"], "approve", {})
+        skill = _make_skill_with_mcp("triage", [])
+
+        router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+        tools = router.collect_tools_for_llm()
+
+        names = [t["name"] for t in tools]
+        assert "mcp__last9__prometheus_labels" in names
+        assert "mcp__last9__delete_dashboard" not in names
+        assert router.get_definition("mcp__last9__prometheus_labels").human == "approve"
+
+    def test_direct_mcp_tools_per_tool_human_overrides(self):
+        """Per-tool human_overrides at server level mix approval and auto-execute."""
+        mcp = _make_mock_mcp_manager({
+            "last9": [
+                ToolDefinition(name="prometheus_labels", description="Labels", input_schema={}),
+                ToolDefinition(name="delete_dashboard", description="Delete", input_schema={}),
+            ],
+        })
+        mcp.direct_tool_policy.return_value = (
+            "*",
+            None,
+            {"delete_dashboard": "approve"},
+        )
+        skill = _make_skill_with_mcp("triage", [])
+
+        router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+
+        assert router.get_definition("mcp__last9__prometheus_labels").human is None
+        assert router.get_definition("mcp__last9__delete_dashboard").human == "approve"
+
+    def test_route_direct_mcp_tool(self):
+        """Direct MCP tools route to the configured MCP server."""
+        mcp = _make_mock_mcp_manager({
+            "last9": [
+                ToolDefinition(name="prometheus_labels", description="Labels", input_schema={}),
+            ],
+        })
+        skill = _make_skill_with_mcp("triage", [])
+
+        router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+        result = router.route("mcp__last9__prometheus_labels", {"lookback_minutes": 60}, {})
+
+        mcp.call_tool.assert_called_once_with(
+            "last9",
+            "prometheus_labels",
+            {"lookback_minutes": 60},
+        )
+        assert "mcp_result" in result
+
     def test_mcp_tools_filtered_to_requested(self):
         """Only requested MCP tools are included, not all from server."""
         mcp = _make_mock_mcp_manager({
@@ -102,6 +187,81 @@ class TestToolRouterWithMCP:
         assert "devops__listRepos" in names
         assert "devops__createPR" in names
 
+    def test_mcp_tools_wildcard_list(self):
+        """tools=['*'] is treated like tools='*'."""
+        mcp = _make_mock_mcp_manager({
+            "github": [
+                ToolDefinition(name="listRepos", description="List repos", input_schema={}),
+                ToolDefinition(name="createPR", description="Create PR", input_schema={}),
+            ],
+        })
+        skill = _make_skill_with_mcp("devops", [
+            {"server": "github", "tools": ["*"]},
+        ])
+
+        router = ToolRouter({"devops": skill}, mcp_manager=mcp)
+        tools = router.collect_tools_for_llm()
+
+        names = [t["name"] for t in tools]
+        assert "devops__listRepos" in names
+        assert "devops__createPR" in names
+
+    def test_available_tool_names_matches_indexes(self):
+        """The router exposes a single source of truth for dispatchable tools."""
+        mcp = _make_mock_mcp_manager({
+            "linear": [
+                ToolDefinition(name="search", description="Search", input_schema={}),
+            ],
+        })
+        skill = _make_skill_with_mcp("triage", [
+            {"server": "linear", "tools": ["search"]},
+        ])
+
+        router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+
+        assert router.available_tool_names() == {
+            "triage__local_tool",
+            "triage__search",
+            "mcp__linear__search",
+        }
+
+    def test_lock_allowlist_matches_dispatchable_tools(self):
+        """lock_allowlist seeds the hard boundary from the actual indexes."""
+        mcp = _make_mock_mcp_manager({
+            "linear": [
+                ToolDefinition(name="search", description="Search", input_schema={}),
+            ],
+        })
+        skill = _make_skill_with_mcp("triage", [
+            {"server": "linear", "tools": ["search"]},
+        ])
+
+        router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+        router.lock_allowlist()
+
+        # A tool the LLM might hallucinate is rejected at the boundary
+        rejected = router.route("triage__not_a_real_tool", {}, {})
+        assert "not available to this agent" in rejected
+
+        # Every dispatchable tool passes the boundary
+        assert router._allowed_tools == router.available_tool_names()
+
+    def test_direct_mcp_tools_empty_allowlist(self):
+        """tools: [] exposes zero direct tools without errors."""
+        mcp = _make_mock_mcp_manager({
+            "last9": [
+                ToolDefinition(name="prometheus_labels", description="Labels", input_schema={}),
+            ],
+        })
+        mcp.direct_tool_policy.return_value = ([], None, {})
+        skill = _make_skill_with_mcp("triage", [])
+
+        router = ToolRouter({"triage": skill}, mcp_manager=mcp)
+        names = [t["name"] for t in router.collect_tools_for_llm()]
+
+        assert "mcp__last9__prometheus_labels" not in names
+        assert "triage__local_tool" in names
+
     def test_is_mcp_tool(self):
         """is_mcp_tool distinguishes MCP from native tools."""
         mcp = _make_mock_mcp_manager({
@@ -116,6 +276,7 @@ class TestToolRouterWithMCP:
         router = ToolRouter({"triage": skill}, mcp_manager=mcp)
 
         assert router.is_mcp_tool("triage__search") is True
+        assert router.is_mcp_tool("mcp__linear__search") is True
         assert router.is_mcp_tool("triage__local_tool") is False
 
     def test_route_mcp_tool(self):

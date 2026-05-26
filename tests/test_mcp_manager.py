@@ -58,6 +58,9 @@ def test_parse_config(mcp_config):
     assert linear.command == "npx"
     assert linear.args == ["-y", "@linear/mcp-server"]
     assert linear.env == {"LINEAR_API_KEY": "test-key"}
+    assert linear.tools == "*"
+    assert linear.human is None
+    assert linear.human_overrides == {}
 
 
 def test_parse_config_defaults():
@@ -85,6 +88,19 @@ def test_parse_config_sse():
     assert conf.headers == {"Authorization": "Bearer xyz"}
 
 
+def test_parse_config_http_aliases_to_streamablehttp():
+    """HTTP transport is accepted as an alias for streamable HTTP."""
+    mgr = MCPManager({
+        "remote": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+        },
+    })
+    conf = mgr._configs["remote"]
+    assert conf.transport == "streamablehttp"
+    assert conf.url == "https://mcp.example.com"
+
+
 def test_parse_config_args_extra():
     """args_extra is appended to args."""
     mgr = MCPManager({
@@ -95,6 +111,49 @@ def test_parse_config_args_extra():
         },
     })
     assert mgr._configs["srv"].args == ["a", "b", "c"]
+
+
+def test_parse_direct_tool_policy():
+    """Server-level direct tool policy is parsed."""
+    mgr = MCPManager({
+        "last9": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+            "tools": ["prometheus_labels", "delete_dashboard"],
+            "human": None,
+            "human_overrides": {"delete_dashboard": "approve"},
+        },
+    })
+    assert mgr.direct_tool_policy("last9") == (
+        ["prometheus_labels", "delete_dashboard"],
+        None,
+        {"delete_dashboard": "approve"},
+    )
+    assert mgr.direct_tool_policy("missing") == ([], None, {})
+
+
+def test_parse_tools_bare_string_normalized_to_list():
+    """A bare-string `tools` value (YAML typo for a single-tool list) is coerced."""
+    mgr = MCPManager({
+        "last9": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+            "tools": "prometheus_labels",
+        },
+    })
+    assert mgr.direct_tool_policy("last9") == (["prometheus_labels"], None, {})
+
+
+def test_parse_tools_wildcard_string_preserved():
+    """`tools: '*'` stays as the literal wildcard, not a list."""
+    mgr = MCPManager({
+        "last9": {
+            "transport": "http",
+            "url": "https://mcp.example.com",
+            "tools": "*",
+        },
+    })
+    assert mgr.direct_tool_policy("last9") == ("*", None, {})
 
 
 def test_start_only_needed_servers(mcp_config):
@@ -108,6 +167,17 @@ def test_start_only_needed_servers(mcp_config):
         mock_connect.assert_awaited_once()
         call_args = mock_connect.call_args
         assert call_args[0][0] == "linear"
+    _teardown_loop(mgr)
+
+
+def test_start_all_servers_when_needed_omitted(mcp_config):
+    """Agent-level MCP config starts all configured servers by default."""
+    mgr = MCPManager(mcp_config)
+
+    with patch.object(mgr, "_connect_server", new_callable=AsyncMock) as mock_connect:
+        mgr.start()
+        assert mock_connect.await_count == 2
+        assert {call.args[0] for call in mock_connect.await_args_list} == {"linear", "github"}
     _teardown_loop(mgr)
 
 
@@ -138,6 +208,12 @@ def test_discover_tools_returns_copy():
     assert result is not tools
 
 
+def test_server_names(mcp_config):
+    """Configured server names are exposed for direct MCP tool registration."""
+    mgr = MCPManager(mcp_config)
+    assert set(mgr.server_names()) == {"linear", "github"}
+
+
 def test_call_tool_not_connected():
     """Returns error if server not connected."""
     mgr = MCPManager({})
@@ -161,7 +237,11 @@ def test_call_tool_success():
     mock_result.content = [mock_block]
     mock_session.call_tool = AsyncMock(return_value=mock_result)
 
-    mgr._sessions["test_server"] = {"session": mock_session, "context": MagicMock()}
+    mgr._sessions["test_server"] = {
+        "session": mock_session,
+        "session_ctx": MagicMock(),
+        "transport_ctx": MagicMock(),
+    }
 
     result = mgr.call_tool("test_server", "my_tool", {"arg": "val"})
     assert result == "result data"
@@ -184,7 +264,11 @@ def test_call_tool_error_result():
     mock_result.content = [mock_block]
     mock_session.call_tool = AsyncMock(return_value=mock_result)
 
-    mgr._sessions["srv"] = {"session": mock_session, "context": MagicMock()}
+    mgr._sessions["srv"] = {
+        "session": mock_session,
+        "session_ctx": MagicMock(),
+        "transport_ctx": MagicMock(),
+    }
 
     result = mgr.call_tool("srv", "tool", {})
     data = json.loads(result)
@@ -202,7 +286,11 @@ def test_call_tool_exception():
     mock_session = MagicMock()
     mock_session.call_tool = AsyncMock(side_effect=RuntimeError("connection lost"))
 
-    mgr._sessions["srv"] = {"session": mock_session, "context": MagicMock()}
+    mgr._sessions["srv"] = {
+        "session": mock_session,
+        "session_ctx": MagicMock(),
+        "transport_ctx": MagicMock(),
+    }
 
     result = mgr.call_tool("srv", "tool", {})
     data = json.loads(result)

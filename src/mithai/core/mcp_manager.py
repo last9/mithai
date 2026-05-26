@@ -3,8 +3,9 @@
 Manages the lifecycle of MCP client sessions. Each configured server
 is a subprocess (stdio transport) or connected via SSE/streamablehttp.
 
-Skills declare which MCP tools they need via MCP_TOOLS in their tools.py.
-The manager only starts servers that are actually referenced by skills.
+Skills may declare which MCP tools they need via MCP_TOOLS in their tools.py.
+Agent-level MCP bindings also work without a companion skill: configured
+servers are connected and their tools are exposed directly.
 
 Architecture: A background thread runs an asyncio event loop that keeps
 all MCP sessions alive (required by transports like streamablehttp that
@@ -36,6 +37,9 @@ class MCPServerConfig:
     env: dict[str, str] = field(default_factory=dict)
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    tools: list[str] | str = "*"
+    human: str | None = None
+    human_overrides: dict[str, str | None] = field(default_factory=dict)
 
 
 class MCPManager:
@@ -59,6 +63,10 @@ class MCPManager:
         import re
 
         for name, conf in mcp_config.items():
+            transport = conf.get("transport", "stdio")
+            if transport == "http":
+                transport = "streamablehttp"
+
             # Resolve ${VAR} references in headers
             raw_headers = conf.get("headers", {})
             headers = {}
@@ -79,14 +87,24 @@ class MCPManager:
                         name, k, v,
                     )
 
+            # Normalize tools: a bare string that isn't "*" is almost certainly
+            # a YAML typo for a single-element list — coerce so it doesn't
+            # silently fall into substring matching against tool names.
+            tools_value = conf.get("tools", "*")
+            if isinstance(tools_value, str) and tools_value != "*":
+                tools_value = [tools_value]
+
             self._configs[name] = MCPServerConfig(
                 name=name,
-                transport=conf.get("transport", "stdio"),
+                transport=transport,
                 command=conf.get("command"),
                 args=conf.get("args", []) + conf.get("args_extra", []),
                 env=conf.get("env", {}),
                 url=conf.get("url"),
                 headers=headers,
+                tools=tools_value,
+                human=conf.get("human"),
+                human_overrides=conf.get("human_overrides", {}) or {},
             )
 
     def _ensure_loop(self) -> None:
@@ -106,9 +124,17 @@ class MCPManager:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result(timeout=timeout)
 
-    def start(self, needed_servers: set[str]) -> None:
-        """Connect to MCP servers that skills actually reference."""
-        servers_to_start = needed_servers & set(self._configs.keys())
+    def start(self, needed_servers: set[str] | None = None) -> None:
+        """Connect to configured MCP servers.
+
+        When needed_servers is provided, only that subset is started. When it is
+        None, all configured servers are started so agent-level MCP bindings are
+        exposed even when no skill declares MCP_TOOLS.
+        """
+        if needed_servers is None:
+            servers_to_start = set(self._configs.keys())
+        else:
+            servers_to_start = needed_servers & set(self._configs.keys())
         if not servers_to_start:
             return
 
@@ -229,6 +255,24 @@ class MCPManager:
     def discover_tools(self, server_name: str) -> list[ToolDefinition]:
         """Return all tools discovered from a specific MCP server."""
         return list(self._server_tools.get(server_name, []))
+
+    def server_names(self) -> list[str]:
+        """Return configured MCP server names."""
+        return list(self._configs.keys())
+
+    def direct_tool_policy(
+        self, server_name: str
+    ) -> tuple[list[str] | str, str | None, dict[str, str | None]]:
+        """Return server-level direct tool exposure policy.
+
+        Returns (tools, default_human, human_overrides). Operators can mix
+        approval levels per tool via the human_overrides dict, exactly like
+        skill-level MCP_TOOLS does.
+        """
+        config = self._configs.get(server_name)
+        if config is None:
+            return [], None, {}
+        return config.tools, config.human, config.human_overrides
 
     def _reconnect(self, server_name: str) -> bool:
         """Reconnect to an MCP server after a connection failure."""

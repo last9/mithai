@@ -66,34 +66,23 @@ class Engine:
             skill_paths = get_skill_paths(config)
             self._skills = load_skills(skill_paths)
 
-        # MCP servers — start only the ones skills actually reference
+        # MCP servers — start every configured server so agent-level MCP
+        # bindings work even when no skill declares MCP_TOOLS. Skills can still
+        # expose scoped aliases via MCP_TOOLS; direct tools are exposed as
+        # mcp__<server>__<tool>.
         self._mcp_manager = None
         mcp_config = get_mcp_config(config)
         if mcp_config:
             from mithai.core.mcp_manager import MCPManager
 
             self._mcp_manager = MCPManager(mcp_config)
-            needed = set()
-            for skill in self._skills.values():
-                for entry in skill.mcp_tools:
-                    server = entry.get("server")
-                    if server:
-                        needed.add(server)
-            if needed:
-                self._mcp_manager.start(needed)
+            self._mcp_manager.start()
 
-        # Build allowed tools set from native + MCP tools for hard rejection
-        allowed_tools = {f"{sname}__{t.name}" for sname, s in self._skills.items() for t in s.tools}
-        # Include MCP tools discovered from servers so they aren't rejected
-        if self._mcp_manager:
-            for sname, s in self._skills.items():
-                for entry in s.mcp_tools:
-                    server = entry.get("server")
-                    if not server:
-                        continue
-                    for mcp_tool in self._mcp_manager.discover_tools(server):
-                        allowed_tools.add(f"{sname}__{mcp_tool.name}")
-        self._router = ToolRouter(self._skills, mcp_manager=self._mcp_manager, allowed_tools=allowed_tools)
+        # The router owns tool indexing, including MCP_TOOLS filtering and
+        # direct MCP names. Derive the hard allowlist from its actual indexes
+        # so the boundary cannot drift from dispatchable tools.
+        self._router = ToolRouter(self._skills, mcp_manager=self._mcp_manager)
+        self._router._allowed_tools = self._router.available_tool_names()
         self._human = HumanMCP(get_human_config(config))
 
         # Run startup hooks for skills that need background work (e.g. polling loops)

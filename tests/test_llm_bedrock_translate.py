@@ -4,7 +4,7 @@ import pytest  # noqa: F401 — used by Tasks 3 and 4 when they add parametrize/
 
 from mithai.llm._bedrock_translate import (
     anthropic_tools_to_bedrock,
-    messages_to_bedrock,  # noqa: F401 — tested in Task 3
+    messages_to_bedrock,
     bedrock_response_to_llm_response,  # noqa: F401 — tested in Task 4
 )
 
@@ -50,3 +50,64 @@ def test_anthropic_tools_to_bedrock_preserves_multiple():
     assert len(result["tools"]) == 2
     assert result["tools"][0]["toolSpec"]["name"] == "a"
     assert result["tools"][1]["toolSpec"]["name"] == "b"
+
+
+def test_messages_to_bedrock_text_user():
+    messages = [{"role": "user", "content": "hello"}]
+    result = messages_to_bedrock(messages)
+    assert result == [{"role": "user", "content": [{"text": "hello"}]}]
+
+
+def test_messages_to_bedrock_tool_use():
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "let me check"},
+                {"type": "tool_use", "id": "tu_1", "name": "kubectl_get", "input": {"resource": "pods"}},
+            ],
+        }
+    ]
+    result = messages_to_bedrock(messages)
+    assert result == [
+        {
+            "role": "assistant",
+            "content": [
+                {"text": "let me check"},
+                {"toolUse": {"toolUseId": "tu_1", "name": "kubectl_get", "input": {"resource": "pods"}}},
+            ],
+        }
+    ]
+
+
+def test_messages_to_bedrock_tool_result():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "tu_1", "content": "5 pods found"},
+            ],
+        }
+    ]
+    result = messages_to_bedrock(messages)
+    assert result == [
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "tu_1", "content": [{"text": "5 pods found"}]}},
+            ],
+        }
+    ]
+
+
+def test_messages_to_bedrock_multi_turn():
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+        {"role": "user", "content": "check pods"},
+    ]
+    result = messages_to_bedrock(messages)
+    assert len(result) == 3
+    assert result[0]["role"] == "user"
+    assert result[1]["role"] == "assistant"
+    assert result[2]["content"] == [{"text": "check pods"}]

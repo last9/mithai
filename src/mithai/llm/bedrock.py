@@ -31,6 +31,21 @@ class BedrockProvider(LLMProvider):
         region: str,
         model: str,
     ):
+        # Validate at construction so misconfiguration surfaces at startup —
+        # not on the first user message via an opaque boto3 UnrecognizedClientException.
+        missing = [
+            name for name, value in (
+                ("access_key_id", access_key_id),
+                ("secret_access_key", secret_access_key),
+                ("region", region),
+                ("model", model),
+            )
+            if not value or not value.strip()
+        ]
+        if missing:
+            raise ValueError(
+                "BedrockProvider requires non-empty: " + ", ".join(missing)
+            )
         self._access_key_id = access_key_id
         self._secret_access_key = secret_access_key
         self._region = region
@@ -77,7 +92,21 @@ class BedrockProvider(LLMProvider):
             kwargs["toolConfig"] = anthropic_tools_to_bedrock(tools)
 
         client = self._get_client()
-        raw = client.converse(**kwargs)
+        try:
+            raw = client.converse(**kwargs)
+        except Exception as exc:
+            # Wrap boto3 errors (ClientError, EndpointConnectionError, ...) in a
+            # RuntimeError so the caller can distinguish "Bedrock call failed"
+            # from internal exceptions and so the engine doesn't lose the agent
+            # adapter to an uncaught boto exception. The original exception is
+            # chained via `from exc` for debugging.
+            logger.warning(
+                "bedrock converse failed",
+                extra={"model": self._model, "error": str(exc)},
+            )
+            raise RuntimeError(
+                f"bedrock converse failed for model {self._model}: {exc}"
+            ) from exc
         response = bedrock_response_to_llm_response(raw)
 
         elapsed = time.monotonic() - t0

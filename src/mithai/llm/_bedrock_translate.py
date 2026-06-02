@@ -65,8 +65,28 @@ def messages_to_bedrock(messages: list[dict]) -> list[dict]:
                     raw = block.get("content", "")
                     if isinstance(raw, str):
                         inner = [{"text": raw}]
+                    elif isinstance(raw, list):
+                        # Normalize each item to a Bedrock content block.
+                        # Anthropic-style {"type": "text", "text": ...} becomes
+                        # {"text": ...}; already-shaped Bedrock blocks pass through;
+                        # plain strings get wrapped; anything else is coerced to text
+                        # so the whole converse call doesn't get rejected.
+                        inner = []
+                        for item in raw:
+                            if isinstance(item, str):
+                                inner.append({"text": item})
+                            elif isinstance(item, dict):
+                                if item.get("type") == "text":
+                                    inner.append({"text": item.get("text", "")})
+                                elif "text" in item or "json" in item or "image" in item or "document" in item:
+                                    inner.append(item)
+                                else:
+                                    inner.append({"text": str(item)})
+                            else:
+                                inner.append({"text": str(item)})
                     else:
-                        inner = raw  # already-shaped blocks pass through
+                        # Unknown shape — stringify so Bedrock accepts it.
+                        inner = [{"text": str(raw)}]
                     blocks.append(
                         {
                             "toolResult": {
@@ -87,6 +107,11 @@ def bedrock_response_to_llm_response(response: dict) -> LLMResponse:
 
     Translates content blocks back to Anthropic-style ({"type", ...}) and
     renames camelCase usage fields to snake_case.
+
+    Reasoning blocks (emitted by reasoning-capable models like Sonnet 4 with
+    extended thinking) are surfaced as text so the assistant message is never
+    empty — an empty content list would cause Bedrock to reject the next turn
+    with ValidationException.
     """
     out_msg = response.get("output", {}).get("message", {})
     raw_blocks = out_msg.get("content", [])
@@ -104,7 +129,23 @@ def bedrock_response_to_llm_response(response: dict) -> LLMResponse:
                     "input": tu.get("input", {}),
                 }
             )
-        # Other block kinds (reasoningContent etc.) are dropped silently.
+        elif "reasoningContent" in block:
+            # Surface the reasoning text so the assistant message has content.
+            # Shape: {"reasoningContent": {"reasoningText": {"text": "...", "signature": "..."}}}
+            reasoning_text = (
+                block.get("reasoningContent", {}).get("reasoningText", {}).get("text")
+            )
+            if reasoning_text:
+                content.append({"type": "text", "text": reasoning_text})
+        # Other unknown block kinds are dropped silently — but the safeguard
+        # below guarantees content is never empty.
+
+    # Safeguard: never return empty content. An empty assistant message will
+    # cause Bedrock to reject the next turn. If everything was dropped or the
+    # response was genuinely empty, emit a placeholder so the engine can
+    # continue. The stop_reason tells the engine why generation ended.
+    if not content:
+        content = [{"type": "text", "text": ""}]
 
     usage = response.get("usage", {}) or {}
     return LLMResponse(

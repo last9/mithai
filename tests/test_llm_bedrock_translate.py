@@ -111,3 +111,50 @@ def test_messages_to_bedrock_multi_turn():
     assert result[0]["role"] == "user"
     assert result[1]["role"] == "assistant"
     assert result[2]["content"] == [{"text": "check pods"}]
+
+
+def test_bedrock_response_text_only():
+    resp = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "hello"}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 5, "outputTokens": 1},
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
+    }
+    result = bedrock_response_to_llm_response(resp)
+    assert result.content == [{"type": "text", "text": "hello"}]
+    assert result.stop_reason == "end_turn"
+    assert result.model == "anthropic.claude-sonnet-4-20250514-v1:0"
+    assert result.usage == {"input_tokens": 5, "output_tokens": 1}
+
+
+def test_bedrock_response_tool_use():
+    resp = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"text": "checking"},
+                    {"toolUse": {"toolUseId": "tu_1", "name": "kubectl_get", "input": {"resource": "pods"}}},
+                ],
+            }
+        },
+        "stopReason": "tool_use",
+        "usage": {"inputTokens": 8, "outputTokens": 12},
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
+    }
+    result = bedrock_response_to_llm_response(resp)
+    assert result.content == [
+        {"type": "text", "text": "checking"},
+        {"type": "tool_use", "id": "tu_1", "name": "kubectl_get", "input": {"resource": "pods"}},
+    ]
+    assert result.stop_reason == "tool_use"
+
+
+def test_bedrock_response_missing_usage_defaults_to_zero():
+    resp = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+        "stopReason": "end_turn",
+        "modelId": "x",
+    }
+    result = bedrock_response_to_llm_response(resp)
+    assert result.usage == {"input_tokens": 0, "output_tokens": 0}

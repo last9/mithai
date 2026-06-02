@@ -431,6 +431,15 @@ def _create_llm(config: dict):
             model=llm_config.get("model", "claude-sonnet-4-6"),
         )
 
+    elif provider == "bedrock":
+        from mithai.llm.bedrock import BedrockProvider
+        return BedrockProvider(
+            access_key_id=llm_config["access_key_id"],
+            secret_access_key=llm_config["secret_access_key"],
+            region=llm_config["region"],
+            model=llm_config.get("model", "anthropic.claude-sonnet-4-20250514-v1:0"),
+        )
+
     else:
         raise click.ClickException(f"Unknown LLM provider: {provider}")
 

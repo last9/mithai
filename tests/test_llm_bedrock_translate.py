@@ -158,3 +158,107 @@ def test_bedrock_response_missing_usage_defaults_to_zero():
     }
     result = bedrock_response_to_llm_response(resp)
     assert result.usage == {"input_tokens": 0, "output_tokens": 0}
+
+
+def test_messages_to_bedrock_tool_result_list_anthropic_style():
+    """Anthropic-style {"type":"text"} blocks in tool_result.content must be normalized."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu_1",
+                    "content": [{"type": "text", "text": "5 pods"}],
+                },
+            ],
+        }
+    ]
+    result = messages_to_bedrock(messages)
+    assert result[0]["content"][0]["toolResult"]["content"] == [{"text": "5 pods"}]
+
+
+def test_messages_to_bedrock_tool_result_list_passthrough_bedrock_shape():
+    """Already-shaped Bedrock blocks ({"text":...}) pass through."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu_1",
+                    "content": [{"text": "already shaped"}],
+                },
+            ],
+        }
+    ]
+    result = messages_to_bedrock(messages)
+    assert result[0]["content"][0]["toolResult"]["content"] == [{"text": "already shaped"}]
+
+
+def test_messages_to_bedrock_tool_result_list_coerces_unknown_dict():
+    """Unknown dict shapes get coerced to text rather than passing through and failing Bedrock validation."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu_1",
+                    "content": [{"unknown_field": "garbage"}],
+                },
+            ],
+        }
+    ]
+    result = messages_to_bedrock(messages)
+    item = result[0]["content"][0]["toolResult"]["content"][0]
+    assert "text" in item
+
+
+def test_bedrock_response_reasoning_extracted_as_text():
+    """reasoningContent blocks must be surfaced as text — otherwise content goes empty."""
+    resp = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"reasoningText": {"text": "I am thinking..."}}},
+                ],
+            }
+        },
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 5, "outputTokens": 2},
+        "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
+    }
+    result = bedrock_response_to_llm_response(resp)
+    assert result.content == [{"type": "text", "text": "I am thinking..."}]
+
+
+def test_bedrock_response_empty_content_gets_placeholder():
+    """When all blocks are dropped or response is empty, never return empty content."""
+    resp = {
+        "output": {"message": {"role": "assistant", "content": []}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 1, "outputTokens": 0},
+        "modelId": "x",
+    }
+    result = bedrock_response_to_llm_response(resp)
+    assert len(result.content) >= 1
+    assert result.content[0]["type"] == "text"
+
+
+def test_bedrock_response_unknown_block_only_gets_placeholder():
+    """Unknown block kinds drop, but the safeguard keeps content non-empty."""
+    resp = {
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [{"guardrailContent": {"someField": "x"}}],
+            }
+        },
+        "stopReason": "end_turn",
+        "modelId": "x",
+    }
+    result = bedrock_response_to_llm_response(resp)
+    assert len(result.content) == 1
+    assert result.content[0]["type"] == "text"

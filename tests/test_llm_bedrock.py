@@ -157,3 +157,37 @@ def test_bedrock_provider_telemetry_uses_aws_bedrock_system(monkeypatch):
 
     assert ("tokens", "aws.bedrock") in captured_systems, captured_systems
     assert ("duration", "aws.bedrock") in captured_systems, captured_systems
+
+
+def test_bedrock_provider_rejects_empty_creds():
+    """Empty/whitespace creds must fail at construction, not at first call."""
+    import pytest
+
+    for kwargs in [
+        {"access_key_id": "", "secret_access_key": "y", "region": "us-east-1", "model": "x"},
+        {"access_key_id": "  ", "secret_access_key": "y", "region": "us-east-1", "model": "x"},
+        {"access_key_id": "x", "secret_access_key": "", "region": "us-east-1", "model": "x"},
+        {"access_key_id": "x", "secret_access_key": "y", "region": "", "model": "x"},
+        {"access_key_id": "x", "secret_access_key": "y", "region": "us-east-1", "model": ""},
+    ]:
+        with pytest.raises(ValueError, match="BedrockProvider requires non-empty"):
+            BedrockProvider(**kwargs)
+
+
+def test_bedrock_provider_wraps_boto3_clienterror():
+    """boto3 ClientError / EndpointConnectionError must be wrapped as RuntimeError."""
+    import pytest
+
+    class FakeBotoError(Exception):
+        pass
+
+    client = MagicMock()
+    client.converse.side_effect = FakeBotoError("ValidationException: Invalid model id")
+
+    p = BedrockProvider(
+        access_key_id="x", secret_access_key="y", region="us-east-1", model="bad-model",
+    )
+    p._client = client
+
+    with pytest.raises(RuntimeError, match="bedrock converse failed for model bad-model"):
+        p.create_message(system="s", messages=[{"role": "user", "content": "hi"}])

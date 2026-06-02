@@ -28,6 +28,15 @@ llm:
   anthropic:
     api_key: ${ANTHROPIC_API_KEY}
 
+  # To use AWS Bedrock instead, set provider: bedrock and configure the bedrock block:
+  # provider: bedrock
+  # model: anthropic.claude-opus-4-20250514-v1:0  # any Bedrock model ID
+  # bedrock:
+  #   access_key_id: ${AWS_ACCESS_KEY_ID}
+  #   secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+  #   region: ${AWS_REGION}
+  # Install: pip install 'mithai[bedrock]'
+
 # MCP servers — shared infrastructure for tool backends
 # Skills declare which MCP tools they need in their tools.py (MCP_TOOLS)
 # mcp_servers:

@@ -83,5 +83,36 @@ def messages_to_bedrock(messages: list[dict]) -> list[dict]:
 
 
 def bedrock_response_to_llm_response(response: dict) -> LLMResponse:
-    """Stub — implemented in Task 4."""
-    raise NotImplementedError
+    """Convert a Bedrock Converse response into the normalized LLMResponse.
+
+    Translates content blocks back to Anthropic-style ({"type", ...}) and
+    renames camelCase usage fields to snake_case.
+    """
+    out_msg = response.get("output", {}).get("message", {})
+    raw_blocks = out_msg.get("content", [])
+    content: list[dict[str, Any]] = []
+    for block in raw_blocks:
+        if "text" in block:
+            content.append({"type": "text", "text": block["text"]})
+        elif "toolUse" in block:
+            tu = block["toolUse"]
+            content.append(
+                {
+                    "type": "tool_use",
+                    "id": tu["toolUseId"],
+                    "name": tu["name"],
+                    "input": tu.get("input", {}),
+                }
+            )
+        # Other block kinds (reasoningContent etc.) are dropped silently.
+
+    usage = response.get("usage", {}) or {}
+    return LLMResponse(
+        content=content,
+        stop_reason=response.get("stopReason", ""),
+        model=response.get("modelId", ""),
+        usage={
+            "input_tokens": usage.get("inputTokens", 0),
+            "output_tokens": usage.get("outputTokens", 0),
+        },
+    )

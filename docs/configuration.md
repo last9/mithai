@@ -161,6 +161,15 @@ The response returns 202 immediately; the engine runs in the background. Human a
 
 ## `llm`
 
+mithai supports two LLM providers:
+
+- **`anthropic`** (default): direct Claude API access via the `anthropic` Python SDK.
+- **`bedrock`**: AWS Bedrock via the unified Converse API (works across Anthropic/Llama/Cohere/Mistral models on Bedrock). Requires `pip install 'mithai[bedrock]'`.
+
+Switch by setting `llm.provider` and providing the matching config block.
+
+### Anthropic (default)
+
 ```yaml
 llm:
   provider: anthropic
@@ -177,6 +186,34 @@ llm:
 | `claude-sonnet-4-6` | Default. Best balance of capability and speed. |
 | `claude-opus-4-6` | Complex reasoning, multi-step tasks, high-stakes decisions. |
 | `claude-haiku-4-5` | High-volume, latency-sensitive, simple queries. |
+
+### AWS Bedrock
+
+```yaml
+llm:
+  provider: bedrock
+  model: anthropic.claude-sonnet-4-20250514-v1:0   # any Bedrock model ID
+  max_tokens: 4096
+  bedrock:
+    access_key_id: ${AWS_ACCESS_KEY_ID}
+    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+    region: ${AWS_REGION}
+```
+
+The model name is the Bedrock model ID, not the Anthropic alias. Some examples:
+
+| Bedrock model ID | Equivalent |
+|---|---|
+| `anthropic.claude-sonnet-4-20250514-v1:0` | Claude Sonnet 4 |
+| `anthropic.claude-opus-4-20250514-v1:0` | Claude Opus 4 |
+| `anthropic.claude-haiku-4-5-20251001-v1:0` | Claude Haiku 4.5 |
+| `meta.llama3-3-70b-instruct-v1:0` | Llama 3.3 70B |
+
+The Bedrock Converse API is uniform across model families, so switching models is just a config change. Install: `pip install 'mithai[bedrock]'`.
+
+**IAM permissions:** the credentials need `sts:GetCallerIdentity` (for connection validation) and `bedrock:InvokeModel` for every model the agent will use.
+
+### Common settings
 
 `max_tokens` controls the maximum length of each LLM response. 4096 is a good default. Raise it to 8192 or higher for skills that produce long outputs (e.g., log analysis, code review).
 

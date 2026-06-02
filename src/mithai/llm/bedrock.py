@@ -85,6 +85,9 @@ class BedrockProvider(LLMProvider):
             self._model,
             response.usage.get("input_tokens", 0),
             response.usage.get("output_tokens", 0),
+            system="aws.bedrock",
         )
-        record_operation_duration(self._model, response.stop_reason, elapsed)
+        record_operation_duration(
+            self._model, response.stop_reason, elapsed, system="aws.bedrock"
+        )
         return response

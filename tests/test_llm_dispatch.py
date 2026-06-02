@@ -40,3 +40,25 @@ def test_create_llm_unknown_provider_raises():
     with pytest.raises(click.ClickException) as exc_info:
         _create_llm(config)
     assert "Unknown LLM provider: gemini" in str(exc_info.value.message)
+
+
+def test_create_llm_bedrock_missing_keys_raises_clickexception():
+    """Missing bedrock config keys must produce a clean ClickException, not KeyError."""
+    import click
+
+    config = {
+        "llm": {
+            "provider": "bedrock",
+            "model": "x",
+            "bedrock": {
+                # access_key_id and region intentionally missing
+                "secret_access_key": "y",
+            },
+        }
+    }
+    with pytest.raises(click.ClickException) as exc_info:
+        _create_llm(config)
+    msg = str(exc_info.value.message)
+    assert "bedrock provider requires" in msg
+    assert "access_key_id" in msg
+    assert "region" in msg

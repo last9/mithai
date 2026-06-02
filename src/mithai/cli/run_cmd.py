@@ -433,6 +433,17 @@ def _create_llm(config: dict):
 
     elif provider == "bedrock":
         from mithai.llm.bedrock import BedrockProvider
+
+        missing = [
+            k for k in ("access_key_id", "secret_access_key", "region")
+            if not llm_config.get(k)
+        ]
+        if missing:
+            raise click.ClickException(
+                "bedrock provider requires llm.bedrock."
+                + ", llm.bedrock.".join(missing)
+                + " in config.yaml"
+            )
         return BedrockProvider(
             access_key_id=llm_config["access_key_id"],
             secret_access_key=llm_config["secret_access_key"],

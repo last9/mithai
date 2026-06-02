@@ -12,7 +12,7 @@ mithai gives your team an AI-powered ops agent that lives in Slack, Telegram, an
 You (in Slack/Telegram/CLI)
      |
      v
-  Adapter  -->  Engine  -->  LLM (Claude)
+  Adapter  -->  Engine  -->  LLM (Anthropic API or AWS Bedrock)
                   |              |
               Skills         Tool calls
            (shell, memory,    (namespaced as
@@ -44,6 +44,12 @@ cd mithai
 pip install -e ".[dev]"
 mithai init
 mithai chat
+```
+
+To use AWS Bedrock instead of the Anthropic API, install the `bedrock` extra and configure your AWS credentials — see [LLM providers](#llm-providers) below:
+
+```bash
+pip install 'mithai[bedrock]'
 ```
 
 ## Creating a skill
@@ -185,12 +191,31 @@ When using `types`, each adapter runs in its own thread sharing the same engine 
 
 ### LLM providers
 
-mithai supports two LLM providers:
+mithai supports two LLM providers. Select via `llm.provider` in `config.yaml`.
 
-- **Anthropic** (default): uses the `anthropic` Python SDK with an API key.
-- **AWS Bedrock**: uses Bedrock's Converse API via `boto3`. Requires `pip install 'mithai[bedrock]'`.
+**Anthropic (default)** — direct Claude API access via the `anthropic` Python SDK:
 
-Select the provider via `llm.provider` in `config.yaml`. See the sample config in this repo for the YAML shape of each.
+```yaml
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+```
+
+**AWS Bedrock** — unified Converse API across model families (Anthropic / Llama / Cohere / Mistral on Bedrock). Requires `pip install 'mithai[bedrock]'`:
+
+```yaml
+llm:
+  provider: bedrock
+  model: anthropic.claude-sonnet-4-20250514-v1:0   # Bedrock model ID
+  bedrock:
+    access_key_id: ${AWS_ACCESS_KEY_ID}
+    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+    region: ${AWS_REGION}
+```
+
+The IAM principal needs `bedrock:InvokeModel` for each model the agent will use. For full provider details, model IDs, and troubleshooting see the [Configuration › LLM](docs/configuration.md#llm) and [Troubleshooting](docs/troubleshooting.md) docs.
 
 ## Onboarding
 

@@ -120,3 +120,40 @@ def test_bedrock_provider_returns_tool_use_response():
     assert response.content == [
         {"type": "tool_use", "id": "tu_1", "name": "kubectl_get", "input": {"r": "p"}}
     ]
+
+
+def test_bedrock_provider_telemetry_uses_aws_bedrock_system(monkeypatch):
+    """Token usage and operation duration must be recorded with system=aws.bedrock,
+    not anthropic — otherwise Bedrock traffic mislabels as Anthropic in dashboards."""
+    captured_systems = []
+
+    def fake_record_token_usage(model, in_tokens, out_tokens, system="anthropic"):
+        captured_systems.append(("tokens", system))
+
+    def fake_record_operation_duration(model, finish_reason, duration_s, system="anthropic"):
+        captured_systems.append(("duration", system))
+
+    monkeypatch.setattr(
+        "mithai.telemetry.metrics.record_token_usage", fake_record_token_usage
+    )
+    monkeypatch.setattr(
+        "mithai.telemetry.metrics.record_operation_duration", fake_record_operation_duration
+    )
+
+    client = _stub_client(
+        {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1},
+            "modelId": "x",
+        }
+    )
+    p = BedrockProvider(
+        access_key_id="x", secret_access_key="y", region="us-east-1", model="x",
+    )
+    p._client = client
+
+    p.create_message(system="s", messages=[{"role": "user", "content": "hi"}], max_tokens=10)
+
+    assert ("tokens", "aws.bedrock") in captured_systems, captured_systems
+    assert ("duration", "aws.bedrock") in captured_systems, captured_systems

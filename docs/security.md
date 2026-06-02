@@ -35,7 +35,13 @@ llm:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 SLACK_BOT_TOKEN=xoxb-...
+# Or for the bedrock provider:
+# AWS_ACCESS_KEY_ID=AKIA...
+# AWS_SECRET_ACCESS_KEY=...
+# AWS_REGION=us-east-1
 ```
+
+When using the `bedrock` provider, give the IAM principal only `bedrock:InvokeModel` on the specific models the agent needs, plus `sts:GetCallerIdentity` (which is implicit on every principal). Avoid wildcard Bedrock permissions in production.
 
 `mithai init` adds `.env` to `.gitignore` automatically. Verify it's there:
 

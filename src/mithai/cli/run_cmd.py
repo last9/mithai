@@ -431,6 +431,28 @@ def _create_llm(config: dict):
             model=llm_config.get("model", "claude-sonnet-4-6"),
         )
 
+    elif provider == "bedrock":
+        from mithai.llm.bedrock import BedrockProvider
+
+        missing = [
+            k for k in ("access_key_id", "secret_access_key", "region")
+            if not llm_config.get(k)
+        ]
+        if missing:
+            raise click.ClickException(
+                "bedrock provider requires llm.bedrock."
+                + ", llm.bedrock.".join(missing)
+                + " in config.yaml"
+            )
+        return BedrockProvider(
+            access_key_id=llm_config["access_key_id"],
+            secret_access_key=llm_config["secret_access_key"],
+            region=llm_config["region"],
+            model=llm_config.get("model", "anthropic.claude-sonnet-4-20250514-v1:0"),
+            # Optional — only needed for temporary (STS) credentials.
+            session_token=llm_config.get("session_token"),
+        )
+
     else:
         raise click.ClickException(f"Unknown LLM provider: {provider}")
 

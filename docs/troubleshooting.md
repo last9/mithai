@@ -494,9 +494,63 @@ mithai calls `python-dotenv`'s `load_dotenv()` on the `.env` file in the config 
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 ANTHROPIC_API_KEY=sk-ant-...
+# Or for the bedrock provider:
+# AWS_ACCESS_KEY_ID=AKIA...
+# AWS_SECRET_ACCESS_KEY=...
+# AWS_REGION=us-east-1
 ```
 
 Then restart mithai.
+
+---
+
+### bedrock provider crashes at startup with KeyError or "boto3 is required"
+
+**Symptom:** `mithai run` exits with `KeyError: 'access_key_id'`, a ClickException `bedrock provider requires llm.bedrock.access_key_id...`, or `RuntimeError: boto3 is required for Bedrock`.
+
+**Diagnosis:**
+
+- Missing config keys: `llm.provider: bedrock` is set, but the `llm.bedrock:` block is missing one or more of `access_key_id`, `secret_access_key`, `region`.
+- boto3 not installed: the `bedrock` extra was not installed.
+
+**Fix:**
+
+```bash
+pip install 'mithai[bedrock]'
+```
+
+Then ensure `config.yaml` has the full Bedrock block:
+
+```yaml
+llm:
+  provider: bedrock
+  model: anthropic.claude-sonnet-4-20250514-v1:0
+  bedrock:
+    access_key_id: ${AWS_ACCESS_KEY_ID}
+    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+    region: ${AWS_REGION}
+```
+
+And the three `AWS_*` variables are in `.env` or the process environment.
+
+---
+
+### bedrock provider rejects credentials at runtime
+
+**Symptom:** `RuntimeError: bedrock converse failed for model ...: ExpiredToken`, `AccessDenied`, or `InvalidClientTokenId`.
+
+**Diagnosis:** The credentials are rejected when invoking the requested Bedrock model — usually one of:
+
+- The IAM principal lacks `bedrock:InvokeModel` for the model ID.
+- The model is not enabled in the configured region (Bedrock requires explicit model access).
+- Temporary STS credentials have expired (`ExpiredToken`).
+- Temporary credentials are configured without their session token (`InvalidClientTokenId`) — STS-issued keys are only valid together with `AWS_SESSION_TOKEN`.
+
+**Fix:**
+
+- Attach an IAM policy that grants `bedrock:InvokeModel` on `arn:aws:bedrock:<region>::foundation-model/<model-id>`.
+- In the AWS Bedrock console, request access to the foundation model in the target region.
+- For temporary credentials, set `llm.bedrock.session_token: ${AWS_SESSION_TOKEN}` in `config.yaml` and keep all three values (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) from the same STS response. When they expire, refresh them and update `.env`.
 
 ---
 

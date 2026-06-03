@@ -94,21 +94,31 @@ def get_meter():
     return _meter
 
 
-def record_token_usage(model: str, input_tokens: int, output_tokens: int) -> None:
+def record_token_usage(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    system: str = "anthropic",
+) -> None:
     if _token_usage is None:
         return
-    attrs = {"gen_ai.system": "anthropic", "gen_ai.request.model": model}
+    attrs = {"gen_ai.system": system, "gen_ai.request.model": model}
     _token_usage.record(input_tokens, {**attrs, "gen_ai.token.type": "input"})
     _token_usage.record(output_tokens, {**attrs, "gen_ai.token.type": "output"})
 
 
-def record_operation_duration(model: str, finish_reason: str, duration_s: float) -> None:
+def record_operation_duration(
+    model: str,
+    finish_reason: str,
+    duration_s: float,
+    system: str = "anthropic",
+) -> None:
     if _op_duration is None:
         return
     _op_duration.record(
         duration_s,
         {
-            "gen_ai.system": "anthropic",
+            "gen_ai.system": system,
             "gen_ai.request.model": model,
             "gen_ai.response.finish_reasons": finish_reason,
         },

@@ -33,6 +33,24 @@ def test_create_llm_bedrock():
     assert type(p).__name__ == "BedrockProvider"
 
 
+def test_create_llm_bedrock_plumbs_session_token():
+    """llm.bedrock.session_token must reach the provider (temporary STS creds)."""
+    config = {
+        "llm": {
+            "provider": "bedrock",
+            "model": "x",
+            "bedrock": {
+                "access_key_id": "AKIA-test",
+                "secret_access_key": "secret",
+                "region": "us-east-1",
+                "session_token": "token-123",
+            },
+        }
+    }
+    p = _create_llm(config)
+    assert p._session_token == "token-123"
+
+
 def test_create_llm_unknown_provider_raises():
     import click
 

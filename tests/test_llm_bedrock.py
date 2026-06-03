@@ -174,6 +174,59 @@ def test_bedrock_provider_rejects_empty_creds():
             BedrockProvider(**kwargs)
 
 
+def test_bedrock_provider_omits_empty_system():
+    """Bedrock rejects empty text blocks — empty system must not be sent."""
+    client = _stub_client(
+        {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1},
+            "modelId": "x",
+        }
+    )
+    p = BedrockProvider(
+        access_key_id="x", secret_access_key="y", region="us-east-1", model="x",
+    )
+    p._client = client
+
+    p.create_message(system="", messages=[{"role": "user", "content": "hi"}], max_tokens=10)
+    assert "system" not in client.converse.call_args.kwargs
+
+
+def test_bedrock_provider_passes_session_token_to_boto3(monkeypatch):
+    """Optional session_token must reach boto3.client as aws_session_token —
+    temporary (STS) credentials are invalid without it."""
+    import sys
+    import types
+
+    captured = {}
+
+    def fake_client(service, **kwargs):
+        captured["service"] = service
+        captured.update(kwargs)
+        return MagicMock()
+
+    fake_boto3 = types.ModuleType("boto3")
+    fake_boto3.client = fake_client
+    monkeypatch.setitem(sys.modules, "boto3", fake_boto3)
+
+    p = BedrockProvider(
+        access_key_id="x", secret_access_key="y", region="us-east-1", model="m",
+        session_token="token-123",
+    )
+    p._get_client()
+    assert captured["service"] == "bedrock-runtime"
+    assert captured["aws_session_token"] == "token-123"
+
+    # Without a session token, boto3 must receive None (treated as absent).
+    captured.clear()
+    p2 = BedrockProvider(
+        access_key_id="x", secret_access_key="y", region="us-east-1", model="m",
+    )
+    p2._get_client()
+    assert captured["aws_session_token"] is None
+
+
 def test_bedrock_provider_wraps_boto3_clienterror():
     """boto3 ClientError / EndpointConnectionError must be wrapped as RuntimeError."""
     import pytest

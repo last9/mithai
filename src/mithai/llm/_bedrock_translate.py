@@ -132,6 +132,11 @@ def bedrock_response_to_llm_response(response: dict) -> LLMResponse:
         elif "reasoningContent" in block:
             # Surface the reasoning text so the assistant message has content.
             # Shape: {"reasoningContent": {"reasoningText": {"text": "...", "signature": "..."}}}
+            # Known limitation: the `signature` is dropped. If extended thinking
+            # is enabled (Anthropic-on-Bedrock), re-submitting a reasoning turn
+            # without its signature can be rejected by the model. Full reasoning
+            # round-tripping would need a dedicated reasoning block type in
+            # LLMResponse rather than flattening to text.
             reasoning_text = (
                 block.get("reasoningContent", {}).get("reasoningText", {}).get("text")
             )

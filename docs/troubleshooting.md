@@ -539,17 +539,18 @@ And the three `AWS_*` variables are in `.env` or the process environment.
 
 **Symptom:** `RuntimeError: bedrock converse failed for model ...: ExpiredToken`, `AccessDenied`, or `InvalidClientTokenId`.
 
-**Diagnosis:** The credentials authenticate against STS but cannot invoke the requested Bedrock model — usually one of:
+**Diagnosis:** The credentials are rejected when invoking the requested Bedrock model — usually one of:
 
 - The IAM principal lacks `bedrock:InvokeModel` for the model ID.
 - The model is not enabled in the configured region (Bedrock requires explicit model access).
 - Temporary STS credentials have expired (`ExpiredToken`).
+- Temporary credentials are configured without their session token (`InvalidClientTokenId`) — STS-issued keys are only valid together with `AWS_SESSION_TOKEN`.
 
 **Fix:**
 
 - Attach an IAM policy that grants `bedrock:InvokeModel` on `arn:aws:bedrock:<region>::foundation-model/<model-id>`.
 - In the AWS Bedrock console, request access to the foundation model in the target region.
-- For temporary credentials, refresh them and update `.env`.
+- For temporary credentials, set `llm.bedrock.session_token: ${AWS_SESSION_TOKEN}` in `config.yaml` and keep all three values (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) from the same STS response. When they expire, refresh them and update `.env`.
 
 ---
 

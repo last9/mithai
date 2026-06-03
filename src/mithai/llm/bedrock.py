@@ -147,10 +147,12 @@ class BedrockProvider(LLMProvider):
             if tools:
                 span.set_attribute("llm.tool_count", len(tools))
 
-            # Record prompt events — system + messages
+            # Record prompt events — system + messages. The system entry is
+            # included only when non-empty, matching what is actually sent
+            # (empty system is omitted from the Converse call entirely).
             span.add_event("gen_ai.content.prompt", attributes={
                 "gen_ai.prompt": json.dumps(
-                    [{"role": "system", "content": system[:1000]}]
+                    ([{"role": "system", "content": system[:1000]}] if system else [])
                     + [
                         {"role": m.get("role", ""), "content": _summarise_content(m.get("content", ""))}
                         for m in messages[-4:]  # last 4 messages to bound size

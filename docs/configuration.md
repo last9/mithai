@@ -198,7 +198,10 @@ llm:
     access_key_id: ${AWS_ACCESS_KEY_ID}
     secret_access_key: ${AWS_SECRET_ACCESS_KEY}
     region: ${AWS_REGION}
+    session_token: ${AWS_SESSION_TOKEN}   # optional — only for temporary (STS) credentials
 ```
+
+`session_token` is only needed when using temporary credentials (STS-issued, assumed roles). Omit it for long-lived IAM user keys.
 
 The model name is the Bedrock model ID, not the Anthropic alias. Some examples:
 
@@ -211,7 +214,7 @@ The model name is the Bedrock model ID, not the Anthropic alias. Some examples:
 
 The Bedrock Converse API is uniform across model families, so switching models is just a config change. Install: `pip install 'mithai[bedrock]'`.
 
-**IAM permissions:** the credentials need `sts:GetCallerIdentity` (for connection validation) and `bedrock:InvokeModel` for every model the agent will use.
+**IAM permissions:** the credentials need `bedrock:InvokeModel` for every model the agent will use. If the agent is managed by external-orchestrator, the credentials additionally need `sts:GetCallerIdentity` — the orchestrator uses it for connection validation; standalone mithai never calls STS.
 
 ### Common settings
 

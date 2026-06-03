@@ -1,11 +1,9 @@
 """Tests for Bedrock format translation — pure functions, no boto3 needed."""
 
-import pytest  # noqa: F401 — used by Tasks 3 and 4 when they add parametrize/raises tests
-
 from mithai.llm._bedrock_translate import (
     anthropic_tools_to_bedrock,
+    bedrock_response_to_llm_response,
     messages_to_bedrock,
-    bedrock_response_to_llm_response,  # noqa: F401 — tested in Task 4
 )
 
 

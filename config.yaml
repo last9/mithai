@@ -35,6 +35,7 @@ llm:
   #   access_key_id: ${AWS_ACCESS_KEY_ID}
   #   secret_access_key: ${AWS_SECRET_ACCESS_KEY}
   #   region: ${AWS_REGION}
+  #   session_token: ${AWS_SESSION_TOKEN}  # optional — only for temporary (STS) credentials
   # Install: pip install 'mithai[bedrock]'
 
 # MCP servers — shared infrastructure for tool backends

@@ -449,6 +449,8 @@ def _create_llm(config: dict):
             secret_access_key=llm_config["secret_access_key"],
             region=llm_config["region"],
             model=llm_config.get("model", "anthropic.claude-sonnet-4-20250514-v1:0"),
+            # Optional — only needed for temporary (STS) credentials.
+            session_token=llm_config.get("session_token"),
         )
 
     else:

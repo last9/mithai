@@ -41,6 +41,14 @@ class SlackHTTPAdapter(SlackAdapterBase):
                  allowed_channels: list[str] | None = None,
                  approval_timeout: int = 300, respond: str = "all",
                  managed: bool = False):
+        # The Slack signature is the ONLY Slack-side authentication for HTTP/Events
+        # mode — without a signing secret, Bolt's SlackRequestHandler performs no
+        # HMAC verification and would accept arbitrary forged events. Fail fast.
+        if not signing_secret or signing_secret.startswith("${"):
+            raise RuntimeError(
+                "SlackHTTPAdapter requires a signing_secret (set SLACK_SIGNING_SECRET). "
+                "Without it, inbound Slack requests cannot be verified."
+            )
         super().__init__(bot_token, allowed_channels, approval_timeout,
                          signing_secret=signing_secret, respond=respond)
         self._host = host
@@ -64,6 +72,7 @@ class SlackHTTPAdapter(SlackAdapterBase):
                     "Managed SlackHTTPAdapter requires slack-bolt[starlette]. "
                     "Install with: pip install mithai[slack]"
                 )
+            self._stop_event.clear()  # reset in case stop() was called before start()
             self._bolt_handler = SlackRequestHandler(self._app)
             logger.info(
                 "Slack HTTP adapter in managed mode — events arrive via the embedded "
@@ -106,9 +115,14 @@ class SlackHTTPAdapter(SlackAdapterBase):
         Delegates to the Bolt SlackRequestHandler so signature verification, dedup,
         channel filtering, dispatch, and the reply all run through the standard
         pipeline using this workspace's bot token.
+
+        If the handler isn't registered yet (a brief window during startup, before
+        start() runs), return 503 so the control plane / Slack retries rather than
+        surfacing a 500.
         """
         if self._bolt_handler is None:
-            raise RuntimeError("Slack adapter not ready: managed start() has not completed")
+            from starlette.responses import JSONResponse
+            return JSONResponse({"error": "adapter not ready"}, status_code=503)
         return await self._bolt_handler.handle(request)
 
     def stop(self) -> None:

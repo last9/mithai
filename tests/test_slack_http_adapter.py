@@ -836,6 +836,32 @@ def test_managed_adapter_handle_event_delegates_to_bolt_handler():
     assert result == "delegated-response"
 
 
+def test_http_adapter_requires_signing_secret():
+    """HTTP/Events mode must fail fast without a signing secret — otherwise Bolt
+    skips HMAC verification and would accept forged events."""
+    mock_app_cls = MagicMock(return_value=_make_mock_app())
+    with patch("slack_bolt.App", mock_app_cls, create=True):
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        for bad in ("", "${SLACK_SIGNING_SECRET}"):
+            try:
+                SlackHTTPAdapter(bot_token="xoxb-test", signing_secret=bad)
+                assert False, f"expected RuntimeError for signing_secret={bad!r}"
+            except RuntimeError:
+                pass
+
+
+def test_managed_handle_event_returns_503_before_ready():
+    """Before start() registers the Bolt handler, handle_event returns 503 (not a
+    500) so the caller/Slack retries during the brief startup window."""
+    import asyncio
+    adapter, _, _ = _build_http_adapter()
+    adapter._managed = True
+    adapter._bolt_handler = None  # start() hasn't run yet
+
+    resp = asyncio.run(adapter.handle_event(MagicMock()))
+    assert resp.status_code == 503
+
+
 def test_create_adapter_passes_managed_flag():
     """run_cmd._create_adapter threads adapter.slack_http.managed into the adapter."""
     mock_app = _make_mock_app()

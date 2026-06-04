@@ -414,6 +414,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             allowed_channels=_parse_id_list(adapter_config.get("allowed_channels")),
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
+            managed=bool(adapter_config.get("managed", False)),
         )
 
     else:

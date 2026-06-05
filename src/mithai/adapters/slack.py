@@ -41,6 +41,14 @@ class SlackAdapterBase(Adapter):
         app_kwargs: dict = {"token": bot_token}
         if signing_secret:
             app_kwargs["signing_secret"] = signing_secret
+        # NOTE: we deliberately do NOT set process_before_response=True. Running the
+        # listener inline (before the HTTP ack) would block Bolt's event loop for
+        # the whole turn — including a human approval wait — so the approve/deny
+        # CLICK (a new POST to the same /slack/events) could not be served, and the
+        # approval would deadlock/time out. Fast-ack (the default) runs the turn in
+        # a background thread, keeping the endpoint responsive for the click. The
+        # control-plane durable queue guarantees DELIVERY (retry until a running
+        # agent 2xx-acks receipt); processing reliability matches Socket Mode.
         try:
             self._app = App(**app_kwargs)
         except Exception as exc:

@@ -231,6 +231,22 @@ class TestJSONAPI:
         data = resp.json()
         assert "DaemonSets" in data["content"]
 
+    def test_api_memory_file_create_and_edit(self, client):
+        # PUT creates a new file (the dashboard sends raw text), then edits it.
+        resp = client.put("/api/memory/notes/new.md", content="# Hello\nfirst")
+        assert resp.status_code == 200, resp.text
+        assert client.get("/api/memory/notes/new.md").json()["content"] == "# Hello\nfirst"
+        resp = client.put("/api/memory/notes/new.md", content="# Hello\nedited")
+        assert resp.status_code == 200
+        assert client.get("/api/memory/notes/new.md").json()["content"] == "# Hello\nedited"
+
+    def test_api_memory_file_delete(self, client):
+        client.put("/api/memory/scratch.md", content="temp")
+        assert client.delete("/api/memory/scratch.md").status_code == 200
+        assert client.get("/api/memory/scratch.md").status_code == 404
+        # Deleting a missing file → 404.
+        assert client.delete("/api/memory/scratch.md").status_code == 404
+
     def test_api_skills(self, client):
         resp = client.get("/api/skills")
         assert resp.status_code == 200

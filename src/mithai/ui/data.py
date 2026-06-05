@@ -99,6 +99,21 @@ class ControlRoomData:
             return None
         return self._memory.read(path)
 
+    def write_memory_file(self, path: str, content: str) -> bool:
+        """Create or overwrite a memory file. Returns False for an invalid path
+        (traversal/absolute) or when no memory backend is configured."""
+        if not self._memory or not self._memory.validate_path(path):
+            return False
+        self._memory.write(path, content)
+        return True
+
+    def delete_memory_file(self, path: str) -> bool:
+        """Delete a memory file. Returns False for an invalid path / no backend,
+        and False if the file did not exist."""
+        if not self._memory or not self._memory.validate_path(path):
+            return False
+        return self._memory.delete(path)
+
     def search_memory(self, query: str) -> list[dict]:
         if not self._memory:
             return []

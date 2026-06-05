@@ -279,8 +279,36 @@ def create_app(config: dict, engine=None, adapter=None) -> Starlette:
             background=BackgroundTask(engine.handle, msg, adapter),
         )
 
+    async def slack_events(request: Request) -> Response:
+        """Receive a Slack request forwarded by the external-orchestrator control plane.
+
+        The control plane verifies the app signature and routes by team_id, then
+        forwards the raw Slack request here. We delegate to the managed Slack
+        adapter's Bolt handler, which re-verifies, dedups, channel-filters,
+        dispatches to the engine, and posts the reply via the workspace bot token.
+
+        DURABILITY CONTRACT (receipt-ack): a 2xx here means RECEIVED, not
+        processed. The Bolt handler fast-acks and runs the turn in a background
+        thread (so a separate approval-click POST is never starved — setting
+        process_before_response=True would deadlock approvals). Consequently, if
+        this agent process dies between the 2xx and handle() completing, THIS
+        event is lost here. That is accepted by design: the control plane
+        (external-orchestrator internal/slackqueue) is the SOLE delivery-durability owner —
+        it persists every request before acking Slack and retries on any non-2xx
+        from this endpoint. Therefore a tenant MUST NOT be switched to managed
+        mode until that durable queue is deployed. An agent-side durable inbox
+        (persist-before-200 + replay-on-boot) is a possible future hardening if
+        the engine ever needs to own durability independently.
+        """
+        if err := await _check_auth(request):
+            return err
+        if adapter is None or not hasattr(adapter, "handle_event"):
+            return JSONResponse({"error": "no slack adapter"}, status_code=503)
+        return await adapter.handle_event(request)
+
     routes = [
         Route("/", dashboard),
+        Route("/slack/events", slack_events, methods=["POST"]),
         Route("/sessions", sessions_page),
         Route("/sessions/{session_id:path}", session_detail),
         Route("/approvals", approvals_page),

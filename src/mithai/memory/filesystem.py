@@ -82,6 +82,15 @@ class FilesystemMemoryBackend(MemoryBackend):
         target = self._resolve(path)
         return target is not None and target.exists()
 
+    def delete(self, path: str) -> bool:
+        target = self._resolve(path)
+        if target is None:
+            raise ValueError(f"Invalid path: {path}")
+        if not target.exists():
+            return False
+        target.unlink()
+        return True
+
     def search(
         self, query: str, *, glob: str = "**/*.md", max_matches_per_file: int = 5
     ) -> list[SearchResult]:

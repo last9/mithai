@@ -76,3 +76,9 @@ class MemoryBackend(ABC):
         """Check that path does not escape the memory root."""
         normalized = posixpath.normpath(path)
         return not normalized.startswith("..") and not normalized.startswith("/")
+
+    def delete(self, path: str) -> bool:
+        """Delete the file at path. Returns True if it existed and was removed,
+        False if it did not exist. Backends that don't support deletion raise
+        NotImplementedError (the default)."""
+        raise NotImplementedError(f"{type(self).__name__} does not support delete")

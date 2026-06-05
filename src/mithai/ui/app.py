@@ -205,6 +205,30 @@ def create_app(config: dict, engine=None, adapter=None) -> Starlette:
         if err := await _check_auth(request):
             return err
         file_path = request.path_params["path"]
+
+        if request.method == "PUT":
+            # Create or edit. The dashboard sends the raw file content as the body
+            # (Content-Type: text/plain).
+            body = await request.body()
+            try:
+                ok = ctrl.write_memory_file(file_path, body.decode("utf-8", errors="replace"))
+            except ValueError as e:
+                return JSONResponse({"error": str(e)}, status_code=400)
+            if not ok:
+                return JSONResponse({"error": "invalid path"}, status_code=400)
+            return JSONResponse({"path": file_path, "status": "written"})
+
+        if request.method == "DELETE":
+            try:
+                removed = ctrl.delete_memory_file(file_path)
+            except NotImplementedError:
+                return JSONResponse({"error": "delete not supported by this backend"}, status_code=501)
+            except ValueError as e:
+                return JSONResponse({"error": str(e)}, status_code=400)
+            if not removed:
+                return JSONResponse({"error": "not found"}, status_code=404)
+            return JSONResponse({"path": file_path, "status": "deleted"})
+
         content = ctrl.read_memory_file(file_path)
         if content is None:
             return JSONResponse({"error": "not found"}, status_code=404)
@@ -321,7 +345,7 @@ def create_app(config: dict, engine=None, adapter=None) -> Starlette:
         Route("/api/sessions/{session_id:path}", api_session_detail),
         Route("/api/approvals", api_approvals),
         Route("/api/memory", api_memory),
-        Route("/api/memory/{path:path}", api_memory_file),
+        Route("/api/memory/{path:path}", api_memory_file, methods=["GET", "PUT", "DELETE"]),
         Route("/api/skills", api_skills),
         Route("/api/config", api_config),
         Route("/api/stats", api_stats),

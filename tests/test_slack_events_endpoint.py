@@ -101,3 +101,22 @@ class TestSlackEventsEndpoint:
         resp = client.get("/slack/events")
 
         assert resp.status_code == 405
+
+
+def test_embedded_api_refuses_when_managed_and_token_unset(monkeypatch):
+    """Managed adapter + empty/unresolved MITHAI_UI_TOKEN must NOT start the
+    embedded API (it would be unauthenticated). Mirrors the signing-secret guard."""
+    import mithai.cli.run_cmd as rc
+
+    created = {"n": 0}
+    monkeypatch.setattr("mithai.ui.app.create_app",
+                        lambda *a, **k: created.__setitem__("n", created["n"] + 1) or object())
+    monkeypatch.setenv("MITHAI_UI_PORT", "8421")
+
+    class _Managed:
+        _managed = True
+
+    for tok in ("", "${MITHAI_UI_TOKEN}"):
+        monkeypatch.setenv("MITHAI_UI_TOKEN", tok)
+        rc._maybe_start_embedded_api({"ui": {}}, object(), _Managed())
+    assert created["n"] == 0, "embedded API must not start without a real token in managed mode"

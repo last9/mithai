@@ -116,6 +116,12 @@ class SlackHTTPAdapter(SlackAdapterBase):
         channel filtering, dispatch, and the reply all run through the standard
         pipeline using this workspace's bot token.
 
+        Receipt-ack contract: Bolt fast-acks and runs the turn in a background
+        thread, so a 2xx means RECEIVED (not processed). The control plane's
+        durable queue is the sole delivery-durability owner and retries on any
+        non-2xx — see the slack_events route docstring in mithai.ui.app for the
+        full contract and the deploy ordering it implies.
+
         If the handler isn't registered yet (a brief window during startup, before
         start() runs), return 503 so the control plane / Slack retries rather than
         surfacing a 500.

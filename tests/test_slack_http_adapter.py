@@ -850,6 +850,23 @@ def test_http_adapter_requires_signing_secret():
                 pass
 
 
+def test_managed_adapter_sets_process_before_response():
+    """Managed mode must build the Bolt App with process_before_response=True so a
+    2xx means processed, not merely received (durable-queue delivery contract)."""
+    mock_app = _make_mock_app()
+    mock_app_cls = MagicMock(return_value=mock_app)
+    with patch("slack_bolt.App", mock_app_cls, create=True):
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        SlackHTTPAdapter(bot_token="xoxb-test", signing_secret="sig", managed=True)
+    assert mock_app_cls.call_args.kwargs.get("process_before_response") is True
+
+
+def test_nonmanaged_adapter_no_process_before_response():
+    """Standalone (non-managed) slack_http keeps Bolt's default ack semantics."""
+    _, _, mock_app_cls = _build_http_adapter()
+    assert "process_before_response" not in mock_app_cls.call_args.kwargs
+
+
 def test_managed_handle_event_returns_503_before_ready():
     """Before start() registers the Bolt handler, handle_event returns 503 (not a
     500) so the caller/Slack retries during the brief startup window."""

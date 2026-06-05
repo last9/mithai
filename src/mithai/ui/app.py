@@ -286,6 +286,19 @@ def create_app(config: dict, engine=None, adapter=None) -> Starlette:
         forwards the raw Slack request here. We delegate to the managed Slack
         adapter's Bolt handler, which re-verifies, dedups, channel-filters,
         dispatches to the engine, and posts the reply via the workspace bot token.
+
+        DURABILITY CONTRACT (receipt-ack): a 2xx here means RECEIVED, not
+        processed. The Bolt handler fast-acks and runs the turn in a background
+        thread (so a separate approval-click POST is never starved — setting
+        process_before_response=True would deadlock approvals). Consequently, if
+        this agent process dies between the 2xx and handle() completing, THIS
+        event is lost here. That is accepted by design: the control plane
+        (multi-mithai internal/slackqueue) is the SOLE delivery-durability owner —
+        it persists every request before acking Slack and retries on any non-2xx
+        from this endpoint. Therefore a tenant MUST NOT be switched to managed
+        mode until that durable queue is deployed. An agent-side durable inbox
+        (persist-before-200 + replay-on-boot) is a possible future hardening if
+        the engine ever needs to own durability independently.
         """
         if err := await _check_auth(request):
             return err

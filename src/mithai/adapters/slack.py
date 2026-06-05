@@ -22,7 +22,7 @@ class SlackAdapterBase(Adapter):
 
     def __init__(self, bot_token: str, allowed_channels: list[str] | None = None,
                  approval_timeout: int = 300, signing_secret: str | None = None,
-                 respond: str = "all", process_before_response: bool = False):
+                 respond: str = "all"):
         try:
             from slack_bolt import App
         except ImportError:
@@ -41,13 +41,14 @@ class SlackAdapterBase(Adapter):
         app_kwargs: dict = {"token": bot_token}
         if signing_secret:
             app_kwargs["signing_secret"] = signing_secret
-        # process_before_response=True makes Bolt run the listener BEFORE returning
-        # the HTTP response, so a 2xx means the event was processed (not merely
-        # received). The managed Events path is fronted by the control-plane queue
-        # worker — which treats 2xx as "delivered"; there is no Slack 3-second ack
-        # budget on that hop — so the response must not return until handling runs.
-        if process_before_response:
-            app_kwargs["process_before_response"] = True
+        # NOTE: we deliberately do NOT set process_before_response=True. Running the
+        # listener inline (before the HTTP ack) would block Bolt's event loop for
+        # the whole turn — including a human approval wait — so the approve/deny
+        # CLICK (a new POST to the same /slack/events) could not be served, and the
+        # approval would deadlock/time out. Fast-ack (the default) runs the turn in
+        # a background thread, keeping the endpoint responsive for the click. The
+        # control-plane durable queue guarantees DELIVERY (retry until a running
+        # agent 2xx-acks receipt); processing reliability matches Socket Mode.
         try:
             self._app = App(**app_kwargs)
         except Exception as exc:

@@ -850,20 +850,16 @@ def test_http_adapter_requires_signing_secret():
                 pass
 
 
-def test_managed_adapter_sets_process_before_response():
-    """Managed mode must build the Bolt App with process_before_response=True so a
-    2xx means processed, not merely received (durable-queue delivery contract)."""
+def test_managed_adapter_uses_fast_ack_not_process_before_response():
+    """Managed mode must NOT set process_before_response — running the listener
+    inline would block Bolt's event loop for the whole turn (incl. a human approval
+    wait), starving the approval CLICK that arrives on the same endpoint and
+    deadlocking the approval. Fast-ack runs the turn in a background thread."""
     mock_app = _make_mock_app()
     mock_app_cls = MagicMock(return_value=mock_app)
     with patch("slack_bolt.App", mock_app_cls, create=True):
         from mithai.adapters.slack_http import SlackHTTPAdapter
         SlackHTTPAdapter(bot_token="xoxb-test", signing_secret="sig", managed=True)
-    assert mock_app_cls.call_args.kwargs.get("process_before_response") is True
-
-
-def test_nonmanaged_adapter_no_process_before_response():
-    """Standalone (non-managed) slack_http keeps Bolt's default ack semantics."""
-    _, _, mock_app_cls = _build_http_adapter()
     assert "process_before_response" not in mock_app_cls.call_args.kwargs
 
 

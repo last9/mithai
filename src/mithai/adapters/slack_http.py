@@ -49,12 +49,8 @@ class SlackHTTPAdapter(SlackAdapterBase):
                 "SlackHTTPAdapter requires a signing_secret (set SLACK_SIGNING_SECRET). "
                 "Without it, inbound Slack requests cannot be verified."
             )
-        # Managed mode is fronted by the control-plane durable queue: a 2xx must
-        # mean "processed", so the event isn't lost if this process crashes after
-        # acking. process_before_response makes Bolt run the listener inline.
         super().__init__(bot_token, allowed_channels, approval_timeout,
-                         signing_secret=signing_secret, respond=respond,
-                         process_before_response=managed)
+                         signing_secret=signing_secret, respond=respond)
         self._host = host
         self._port = port
         self._server = None

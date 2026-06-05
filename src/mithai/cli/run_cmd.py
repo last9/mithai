@@ -83,6 +83,16 @@ def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
 
     port = int(ui_port)
     ui_token = os.environ.get("MITHAI_UI_TOKEN", "")
+    # Fail fast for a managed Slack adapter: the embedded API (including
+    # /slack/events) is auth-gated only by this Bearer token. An empty token makes
+    # _check_auth allow everything, so on a multi-tenant host any local process
+    # could inject events. Refuse to start rather than expose an open endpoint.
+    if not ui_token and getattr(adapter, "_managed", False):
+        logger.error(
+            "MITHAI_UI_TOKEN is empty but the Slack adapter is managed — refusing to "
+            "start the embedded API server (it would be unauthenticated). Set MITHAI_UI_TOKEN."
+        )
+        return
     api_config = copy.deepcopy(config)
     api_config.setdefault("ui", {})
     api_config["ui"]["auth_token"] = ui_token

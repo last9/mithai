@@ -22,7 +22,7 @@ class SlackAdapterBase(Adapter):
 
     def __init__(self, bot_token: str, allowed_channels: list[str] | None = None,
                  approval_timeout: int = 300, signing_secret: str | None = None,
-                 respond: str = "all"):
+                 respond: str = "all", process_before_response: bool = False):
         try:
             from slack_bolt import App
         except ImportError:
@@ -41,6 +41,13 @@ class SlackAdapterBase(Adapter):
         app_kwargs: dict = {"token": bot_token}
         if signing_secret:
             app_kwargs["signing_secret"] = signing_secret
+        # process_before_response=True makes Bolt run the listener BEFORE returning
+        # the HTTP response, so a 2xx means the event was processed (not merely
+        # received). The managed Events path is fronted by the control-plane queue
+        # worker — which treats 2xx as "delivered"; there is no Slack 3-second ack
+        # budget on that hop — so the response must not return until handling runs.
+        if process_before_response:
+            app_kwargs["process_before_response"] = True
         try:
             self._app = App(**app_kwargs)
         except Exception as exc:

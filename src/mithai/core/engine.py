@@ -294,7 +294,62 @@ class Engine:
             except ImportError:
                 pass
 
-        while response.stop_reason == "tool_use":
+        # Recovery budget for max_tokens truncation mid-tool_use (see below).
+        max_truncation_recoveries = 2
+        truncation_recoveries = 0
+
+        while response.stop_reason == "tool_use" or any(
+            b["type"] == "tool_use" for b in response.content
+        ):
+            if response.stop_reason != "tool_use":
+                # max_tokens cut generation mid-tool_use: the response carries
+                # tool_use blocks that were never executed. Each one must be
+                # answered before the next API call, or the request fails with
+                # "tool_use ids were found without tool_result blocks".
+                orphans = [b for b in response.content if b["type"] == "tool_use"]
+                orphan_ids = [b["id"] for b in orphans]
+                truncation_recoveries += 1
+                logger.warning(
+                    "Response ended with %d unanswered tool_use block(s) "
+                    "(stop_reason=%s) — recovery %d/%d",
+                    len(orphan_ids), response.stop_reason,
+                    truncation_recoveries, max_truncation_recoveries,
+                )
+                if truncation_recoveries > max_truncation_recoveries:
+                    # Stop retrying. Strip the orphan blocks from the last
+                    # assistant message so the conversation stays valid for
+                    # any follow-up call (e.g. the silent-response nudge).
+                    cleaned = [b for b in messages[-1]["content"] if b["type"] != "tool_use"]
+                    # Placeholder keeps the assistant message non-empty for API
+                    # validity only — it is never returned to the user (the turn
+                    # falls through to the nudge / "(no response)" handling).
+                    messages[-1]["content"] = cleaned or [
+                        {"type": "text", "text": "(response truncated by output token limit)"}
+                    ]
+                    break
+                messages.append({"role": "user", "content": [
+                    LLMProvider.format_tool_result(oid, json.dumps({
+                        "error": "This tool call did not execute: the response was "
+                                 f"cut off before it completed (stop_reason="
+                                 f"{response.stop_reason}). Retry with a smaller "
+                                 "input, e.g. split the work into chunks.",
+                    }))
+                    for oid in orphan_ids
+                ]})
+                adapter.on_synthesizing()
+                t2 = time.monotonic()
+                response = self._llm.create_message(
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=self._llm_config.get("max_tokens", 4096),
+                    call_type="synthesis",
+                    after_tools=[b["name"] for b in orphans],
+                )
+                adapter.on_thinking_end(time.monotonic() - t2)
+                messages.append({"role": "assistant", "content": response.content})
+                continue
+
             tool_results = []
             round_tool_names = []
 

@@ -32,7 +32,13 @@ STALE_EVENT_NOTE = (
 
 
 def _staleness_note(event_ts: str) -> str:
-    """Staleness guidance for an event, or "" when fresh or ts is unusable."""
+    """Staleness guidance for an event, or "" when fresh or ts is unusable.
+
+    The Slack listeners are the sole writers of extra_system_prompt for live
+    Slack turns (scheduling injects on the CLI adapter, a separate transport).
+    If another Slack-side writer ever appears, this assignment must become a
+    merge — today it would silently overwrite.
+    """
     try:
         age = time.time() - float(event_ts)
     except (TypeError, ValueError):

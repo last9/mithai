@@ -891,3 +891,95 @@ def test_create_adapter_passes_managed_flag():
         adapter = _create_adapter({}, "slack_http", adapter_config=adapter_config)
 
     assert adapter._managed is True
+
+
+# ---------------------------------------------------------------------------
+# Stale-event handling: messages delivered long after they were sent (control
+# plane outage / retry backlog) carry a staleness note via extra_system_prompt
+# so the LLM can acknowledge the delay or absorb the message quietly.
+# ---------------------------------------------------------------------------
+
+def test_staleness_note_empty_for_fresh_event():
+    import time as _time
+    from mithai.adapters.slack import _staleness_note
+
+    assert _staleness_note(str(_time.time())) == ""
+
+
+def test_staleness_note_set_for_old_event():
+    import time as _time
+    from mithai.adapters.slack import _staleness_note, STALE_EVENT_THRESHOLD_SECONDS
+
+    old_ts = str(_time.time() - (STALE_EVENT_THRESHOLD_SECONDS + 47 * 60))
+    note = _staleness_note(old_ts)
+    assert "minutes ago" in note
+    # 47 minutes past the threshold → age is threshold + 47min; assert the
+    # rendered minute count matches the actual age, not the offset.
+    expected_minutes = (STALE_EVENT_THRESHOLD_SECONDS + 47 * 60) // 60
+    assert str(expected_minutes) in note
+
+
+def test_staleness_note_boundary_at_threshold():
+    import time as _time
+    from mithai.adapters.slack import _staleness_note, STALE_EVENT_THRESHOLD_SECONDS
+
+    # Just under the threshold → still fresh (the note fires strictly past it;
+    # a 2s margin absorbs the wall-clock time between building ts and checking).
+    near_threshold = str(_time.time() - (STALE_EVENT_THRESHOLD_SECONDS - 2))
+    assert _staleness_note(near_threshold) == ""
+
+
+def test_staleness_note_tolerates_missing_or_malformed_ts():
+    from mithai.adapters.slack import _staleness_note
+
+    assert _staleness_note("") == ""
+    assert _staleness_note(None) == ""
+    assert _staleness_note("not-a-ts") == ""
+
+
+def test_message_handler_attaches_staleness_note_for_old_event():
+    import time as _time
+
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
+    on_message = MagicMock(return_value="reply")
+    handler = _capture_message_handler(adapter, mock_app, on_message)
+
+    old_ts = str(_time.time() - 3600)  # one hour old
+    handler(message={"channel": "C1", "text": "hello", "ts": old_ts, "user": "U1"},
+            say=MagicMock())
+
+    on_message.assert_called_once()
+    incoming = on_message.call_args[0][0]
+    assert "minutes ago" in incoming.extra_system_prompt
+
+
+def test_message_handler_no_staleness_note_for_fresh_event():
+    import time as _time
+
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
+    on_message = MagicMock(return_value="reply")
+    handler = _capture_message_handler(adapter, mock_app, on_message)
+
+    handler(message={"channel": "C1", "text": "hello", "ts": str(_time.time()), "user": "U1"},
+            say=MagicMock())
+
+    on_message.assert_called_once()
+    incoming = on_message.call_args[0][0]
+    assert incoming.extra_system_prompt == ""
+
+
+def test_app_mention_handler_attaches_staleness_note_for_old_event():
+    import time as _time
+
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
+    on_message = MagicMock(return_value="reply")
+    handler = _capture_app_mention_handler(adapter, on_message)
+
+    old_ts = str(_time.time() - 3600)
+    handler(event={"channel": "C1", "text": "<@UBOT> what are the open PRs?",
+                   "ts": old_ts, "user": "U1"},
+            say=MagicMock())
+
+    on_message.assert_called_once()
+    incoming = on_message.call_args[0][0]
+    assert "minutes ago" in incoming.extra_system_prompt

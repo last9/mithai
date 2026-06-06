@@ -913,10 +913,12 @@ def test_staleness_note_set_for_old_event():
     old_ts = str(_time.time() - (STALE_EVENT_THRESHOLD_SECONDS + 47 * 60))
     note = _staleness_note(old_ts)
     assert "minutes ago" in note
-    # 47 minutes past the threshold → age is threshold + 47min; assert the
-    # rendered minute count matches the actual age, not the offset.
+    # 47 minutes past the threshold → age is threshold + 47min. The minute
+    # count is floored from live wall-clock, so allow a +1 drift if the test
+    # process crosses a minute boundary between building ts and rendering.
     expected_minutes = (STALE_EVENT_THRESHOLD_SECONDS + 47 * 60) // 60
-    assert str(expected_minutes) in note
+    assert (f"sent {expected_minutes} minutes ago" in note
+            or f"sent {expected_minutes + 1} minutes ago" in note)
 
 
 def test_staleness_note_boundary_at_threshold():

@@ -80,6 +80,10 @@ Skills are loaded dynamically by `skill_loader.py` via `importlib`.
 
 Tests use `pytest` with `pytest-asyncio` (async mode = `"auto"`). Test fixtures for skills and config are in `tests/conftest.py`. Tests create temporary skill directories with `prompt.md` + `tools.py` to test the full skill loading pipeline.
 
+## Documented Solutions
+
+`docs/solutions/` — documented solutions to past problems (bugs, integration issues, patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+
 ## Project Config
 
 - Python 3.11+, managed with `uv`

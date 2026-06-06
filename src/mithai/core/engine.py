@@ -457,11 +457,21 @@ class Engine:
 
         # Post-turn reflection — extract learnings in background
         if self._learning_config.get("reflection") and turn_tool_calls and self._memory:
+            logger.info(
+                "reflection: spawning background task (%d tool calls)",
+                len(turn_tool_calls),
+            )
             threading.Thread(
                 target=reflect,
                 args=(turn, self._llm, self._memory),
                 daemon=True,
             ).start()
+        elif not self._learning_config.get("reflection"):
+            logger.debug("reflection: skipped — disabled in config")
+        elif not turn_tool_calls:
+            logger.debug("reflection: skipped — no tool calls this turn")
+        else:
+            logger.debug("reflection: skipped — no memory backend configured")
 
         return response_text
 

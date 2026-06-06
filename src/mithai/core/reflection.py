@@ -52,13 +52,18 @@ def reflect(turn_data: dict, llm: LLMProvider, memory: MemoryBackend) -> None:
         text = text.strip()
 
         if not text or text.lower() == "none":
+            logger.info("reflection: nothing learned this turn")
             return
 
         path = f"daily/{date.today()}.md"
         timestamp = turn_data.get("timestamp", "")
         memory.write(path, f"\n### {timestamp}\n{text}\n", append=True)
 
-        logger.debug("Reflection written to %s", path)
+        logger.info(
+            "reflection: wrote %d learning(s) to %s",
+            len([ln for ln in text.splitlines() if ln.strip()]),
+            path,
+        )
 
     except Exception:
-        logger.debug("Reflection failed", exc_info=True)
+        logger.warning("reflection: failed", exc_info=True)

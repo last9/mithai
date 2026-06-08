@@ -227,7 +227,7 @@ Set to `True` to enable post-turn fact-checking for this skill. After each turn 
 VERIFY = True
 ```
 
-Use this for skills that query external systems with precise values (counts, sizes, versions, costs) where hallucinated summaries would be harmful. The built-in `aws` and `kubernetes` skills opt in by default.
+Use this for skills that query external systems with precise values (counts, sizes, versions, costs) where hallucinated summaries would be harmful — for example infrastructure skills like `aws` or `kubernetes`. No skill enables it by default.
 
 To use a cheaper model for the fact-check, configure it in `config.yaml`:
 
@@ -400,9 +400,8 @@ skills:
 Skills are loaded in order. If two skills define a tool with the same prefixed name, the last one wins.
 
 ```bash
-mithai skill list       # list loaded skills
+mithai skill list       # list loaded skills (and their tools)
 mithai skill validate   # validate all skills without starting the engine
-mithai skill show <name>  # show tools for a specific skill
 ```
 
 ---

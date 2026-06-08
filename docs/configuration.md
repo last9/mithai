@@ -277,7 +277,7 @@ verifier:
   model: claude-haiku-4-5    # cheap model; falls back to main LLM if omitted
 ```
 
-The verifier only runs when at least one skill that has opted in via `VERIFY = True` (in `tools.py`) was called during the turn. Built-in skills `aws` and `kubernetes` opt in by default. When a contradiction is detected, the agent's response is annotated with a ⚠️ warning.
+The verifier only runs when at least one skill that has opted in via `VERIFY = True` (in `tools.py`) was called during the turn. No skill opts in by default — it is opt-in per skill. When a contradiction is detected, the agent's response is annotated with a ⚠️ warning.
 
 To opt a custom skill into verification, add to its `tools.py`:
 

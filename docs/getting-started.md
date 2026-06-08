@@ -190,11 +190,7 @@ http_checker  1 tool    check_url         approval: auto
 memory        3 tools   read/write/search approval: auto
 ```
 
-To inspect a skill:
-
-```bash
-mithai skill show shell
-```
+The listing shows each skill's tools and approval level.
 
 ---
 

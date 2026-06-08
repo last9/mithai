@@ -6,6 +6,8 @@ description: "Diagnose and fix skill loading failures, Slack connectivity issues
 
 This guide covers the most common problems with a running mithai agent: skill loading failures, unexpected agent behavior, approval flow problems, configuration issues, and memory failures. Each section shows how to diagnose the problem and fix it.
 
+> The examples below use `services` as a sample skill — the one built in [Build your first skill](your-first-skill.md). It is not a built-in skill; substitute your own skill name.
+
 ---
 
 ## On this page
@@ -47,6 +49,11 @@ Key patterns to look for:
 | `Tool denied by human: services__restart_service` | User clicked Deny |
 | `LLM response: stop_reason=tool_use` | LLM called a tool |
 | `LLM response: stop_reason=end_turn` | LLM finished responding |
+| `reflection: spawning background task (N tool calls)` | Reflection triggered after the turn |
+| `reflection: skipped — disabled in config` | Reflection off (`learning.reflection` not set) |
+| `reflection: skipped — no tool calls this turn` | Nothing happened worth reflecting on |
+| `reflection: wrote N learning(s) to daily/YYYY-MM-DD.md` | Reflection saved a summary |
+| `reflection: nothing learned this turn` | Reflection ran but recorded nothing |
 
 For production deployments running as systemd:
 

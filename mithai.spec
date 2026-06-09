@@ -39,8 +39,8 @@ except Exception:
     otel_datas = otel_binaries = otel_hiddenimports = []
 
 # Last9 GenAI span processor — enriches LLM spans with Last9's GenAI semantics.
-# Optional: only present when built with the `telemetry` extra (which pins
-# last9-genai). Without it the binary still exports OTLP fine; mithai's tracer
+# Optional: only present when built with the `telemetry` extra (which depends
+# on last9-genai). Without it the binary still exports OTLP fine; mithai's tracer
 # just skips the processor (the `from last9_genai import ...` is guarded).
 try:
     last9_datas, last9_binaries, last9_hiddenimports = collect_all('last9_genai')

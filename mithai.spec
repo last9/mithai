@@ -38,6 +38,15 @@ try:
 except Exception:
     otel_datas = otel_binaries = otel_hiddenimports = []
 
+# Last9 GenAI span processor — enriches LLM spans with Last9's GenAI semantics.
+# Optional: only present when built with the `telemetry` extra (which pins
+# last9-genai). Without it the binary still exports OTLP fine; mithai's tracer
+# just skips the processor (the `from last9_genai import ...` is guarded).
+try:
+    last9_datas, last9_binaries, last9_hiddenimports = collect_all('last9_genai')
+except Exception:
+    last9_datas = last9_binaries = last9_hiddenimports = []
+
 block_cipher = None
 
 # Core skills to bundle in the binary
@@ -61,9 +70,9 @@ datas.append(('src/mithai/ui/static', 'mithai/ui/static'))
 a = Analysis(
     ['src/mithai/__main__.py'],
     pathex=['src'],
-    binaries=[] + uvicorn_binaries + starlette_binaries + otel_binaries,
-    datas=datas + uvicorn_datas + starlette_datas + otel_datas + mithai_metadata,
-    hiddenimports=[] + uvicorn_hiddenimports + starlette_hiddenimports + otel_hiddenimports + [
+    binaries=[] + uvicorn_binaries + starlette_binaries + otel_binaries + last9_binaries,
+    datas=datas + uvicorn_datas + starlette_datas + otel_datas + last9_datas + mithai_metadata,
+    hiddenimports=[] + uvicorn_hiddenimports + starlette_hiddenimports + otel_hiddenimports + last9_hiddenimports + [
         # Core mithai modules (lazy-imported, PyInstaller won't trace them)
         'mithai',
         'mithai.__main__',

@@ -23,29 +23,26 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 # with the silent fallback.
 mithai_metadata = copy_metadata('mithai')
 
-# Optional third-party collections — wrapped per-package so a missing dep
-# (e.g. building without ui extras) degrades gracefully without masking the
-# required PyInstaller helpers above.
-try:
-    uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all('uvicorn')
-    starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('starlette')
-except Exception:
-    uvicorn_datas = uvicorn_binaries = uvicorn_hiddenimports = []
-    starlette_datas = starlette_binaries = starlette_hiddenimports = []
+# Optional third-party collections — each wrapped so a missing dep (e.g.
+# building without an extra) degrades gracefully without masking the required
+# PyInstaller helpers above. _safe_collect keeps the (datas, binaries,
+# hiddenimports) tuple ordering in one place so a per-package block can't slot
+# the three lists into the wrong Analysis fields.
+def _safe_collect(pkg):
+    try:
+        return collect_all(pkg)
+    except Exception:
+        return [], [], []
 
-try:
-    otel_datas, otel_binaries, otel_hiddenimports = collect_all('opentelemetry')
-except Exception:
-    otel_datas = otel_binaries = otel_hiddenimports = []
+uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = _safe_collect('uvicorn')
+starlette_datas, starlette_binaries, starlette_hiddenimports = _safe_collect('starlette')
+otel_datas, otel_binaries, otel_hiddenimports = _safe_collect('opentelemetry')
 
 # Last9 GenAI span processor — enriches LLM spans with Last9's GenAI semantics.
 # Optional: only present when built with the `telemetry` extra (which depends
 # on last9-genai). Without it the binary still exports OTLP fine; mithai's tracer
 # just skips the processor (the `from last9_genai import ...` is guarded).
-try:
-    last9_datas, last9_binaries, last9_hiddenimports = collect_all('last9_genai')
-except Exception:
-    last9_datas = last9_binaries = last9_hiddenimports = []
+last9_datas, last9_binaries, last9_hiddenimports = _safe_collect('last9_genai')
 
 block_cipher = None
 

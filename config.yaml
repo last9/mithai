@@ -16,6 +16,39 @@ adapter:
     bot_token: ${SLACK_BOT_TOKEN}
     app_token: ${SLACK_APP_TOKEN}
     respond: mentions  # observe all messages, reply only to @mentions
+    # Advanced: opt-in response policy for side-effecting tools.
+    # When enabled, a tool can return:
+    #   {"response_policy": {"suppress_final_response": true}}
+    # The Slack adapter then decides whether to suppress final assistant text
+    # or Slack send-message tools based on the source channel class.
+    #
+    # response_policy:
+    #   enabled: true
+    #   channel_classes:
+    #     external:
+    #       # Exact Slack channel IDs.
+    #       ids:
+    #         - C0123ABCDEF
+    #       # Glob-style channel name patterns.
+    #       name_patterns:
+    #         - "customer-*"
+    #         - "last9-*"
+    #       # Optional regex patterns matched against channel names.
+    #       name_regex:
+    #         - "^shared-[a-z0-9-]+$"
+    #     internal:
+    #       ids:
+    #         - C0987FEDCBA
+    #   tool_result_policies:
+    #     suppress_final_response:
+    #       applies_in:
+    #         - external
+    #       blocks:
+    #         - final_response_to_source
+    #         - tool_send_to_source
+    #       # Optional strict mode. If omitted, non-source sends are allowed.
+    #       allow_sends_to_classes:
+    #         - internal
   telegram:
     bot_token: ${TELEGRAM_BOT_TOKEN}
     allowed_chat_ids:

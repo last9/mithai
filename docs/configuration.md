@@ -108,6 +108,68 @@ adapter:
 
 `respond: mentions` — the bot only responds when @mentioned. Use `respond: all` to respond to every message in channels it's invited to.
 
+#### Slack response policy
+
+`response_policy` is an advanced, opt-in Slack setting for workflows where a tool performs the visible acknowledgement or posts to an internal channel, and the agent must not also post final assistant text back into the source channel.
+
+When the config is missing or `enabled: false`, mithai preserves existing behavior and ignores response-policy markers.
+
+Tools declare intent by returning:
+
+```json
+{
+  "response_policy": {
+    "suppress_final_response": true,
+    "reason": "handled_by_side_effect"
+  }
+}
+```
+
+The Slack adapter decides whether that marker applies based on the source channel class:
+
+```yaml
+adapter:
+  slack:
+    response_policy:
+      enabled: true
+      channel_classes:
+        external:
+          ids:
+            - C0123ABCDEF
+          name_patterns:
+            - "customer-*"
+            - "last9-*"
+          name_regex:
+            - "^shared-[a-z0-9-]+$"
+        internal:
+          ids:
+            - C0987FEDCBA
+      tool_result_policies:
+        suppress_final_response:
+          applies_in:
+            - external
+          blocks:
+            - final_response_to_source
+            - tool_send_to_source
+          allow_sends_to_classes:
+            - internal
+```
+
+Channel matching supports:
+
+- `ids`: exact Slack channel IDs.
+- `name_patterns`: glob-style Slack channel names, such as `customer-*`.
+- `name_regex`: regular expressions matched against Slack channel names.
+
+`blocks` controls what is suppressed after a matching tool result:
+
+- `final_response_to_source`: do not post the final assistant response to the source channel.
+- `tool_send_to_source`: block Slack send-message tools and `adapter.send()` calls that target the source channel.
+
+If `allow_sends_to_classes` is omitted, sends to non-source channels are allowed. If it is set, non-source sends during a suppressed turn are allowed only when the target channel matches one of those classes.
+
+The legacy tool result field `do_not_mention: true` is treated as an alias only when `response_policy.enabled: true`.
+
 ### Telegram
 
 ```yaml

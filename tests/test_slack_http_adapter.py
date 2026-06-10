@@ -704,6 +704,65 @@ def test_app_mention_suppresses_final_response_for_external_glob_marker():
     say.assert_not_called()
 
 
+def test_response_policy_channel_name_lookup_failure_is_not_cached():
+    """A transient conversations_info failure must not fail open until restart."""
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        response_policy=_external_response_policy(),
+    )[:3]
+    mock_app.client.conversations_info.side_effect = [
+        Exception("slack timeout"),
+        {"channel": {"id": "C1", "name": "last9-prod"}},
+    ]
+
+    assert adapter._classify_response_policy_channel("C1") is None
+    assert adapter._classify_response_policy_channel("C1") == "external"
+
+
+def test_response_policy_name_regex_classifies_channel():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        response_policy=_external_response_policy(
+            channel_classes={
+                "external": {"name_regex": [r"^last9-[a-z]+$"]},
+            },
+        ),
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "name": "last9-prod"}
+    }
+
+    assert adapter._classify_response_policy_channel("C1") == "external"
+
+
+def test_suppressed_turn_blocks_source_slack_mcp_send_tool():
+    """MCP Slack send tools bypass adapter.send, so the adapter must veto them pre-route."""
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        response_policy=_external_response_policy(),
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "name": "last9-prod"}
+    }
+
+    adapter._reset_response_policy("C1")
+    adapter.on_tool_result(
+        "any_skill__side_effect",
+        {},
+        '{"response_policy": {"suppress_final_response": true}}',
+    )
+
+    result = adapter.before_tool_call(
+        "slack__slack_send_message",
+        {"channel_id": "C1", "message": "customer leak"},
+    )
+
+    assert result is not None
+    parsed = __import__("json").loads(result)
+    assert parsed["ok"] is True
+    assert parsed["suppressed"] is True
+
+
 def test_app_mention_policy_marker_ignored_for_non_external_source():
     """A marker only applies when the source channel is in applies_in."""
     adapter, mock_app, _ = _build_socket_adapter(

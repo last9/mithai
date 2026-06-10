@@ -17,10 +17,12 @@ Scenarios covered:
      synthetic error results before any further LLM call  [onboarding 400 fix]
 """
 
+import json
 from unittest.mock import MagicMock
 
 from mithai.adapters.base import IncomingMessage
 from mithai.core.engine import Engine
+from mithai.core.skill_loader import ToolDefinition
 from mithai.llm.base import LLMResponse
 from mithai.state.memory import MemoryStateBackend
 
@@ -141,6 +143,68 @@ class TestNudge:
             "test_skill__echo",
             {"message": "notify"},
             '{"echoed": "notify"}',
+        )
+
+    def test_adapter_can_block_followup_tool_before_route(self, tmp_skill_dir, tmp_path):
+        """Adapters can prevent side-effect tools after a prior tool activates policy."""
+        llm = MagicMock()
+        llm.create_message.side_effect = [
+            _tool_use_response("policy__mark_suppressed", {}),
+            _tool_use_response(
+                "slack__slack_send_message",
+                {"channel_id": "C1", "message": "customer leak"},
+            ),
+            _end_turn("done"),
+        ]
+        engine = _make_engine(tmp_skill_dir, llm)
+
+        engine._router.get_definition = MagicMock(return_value=ToolDefinition(
+            name="tool",
+            description="test tool",
+            input_schema={"type": "object"},
+        ))
+        engine._router.route = MagicMock(return_value=json.dumps({
+            "response_policy": {"suppress_final_response": True}
+        }))
+        engine._router.is_mcp_tool = MagicMock(return_value=False)
+
+        class BlockingAdapter:
+            def __init__(self):
+                self.suppressed = False
+                self.results = []
+
+            def fetch_thread_context(self, channel_id, thread_ts):
+                return None
+
+            def on_thinking_start(self): pass
+            def on_thinking_end(self, elapsed_s): pass
+            def on_tool_start(self, tool_name, tool_input): pass
+            def on_tool_end(self, tool_name, elapsed_s, approved): pass
+            def on_synthesizing(self): pass
+
+            def before_tool_call(self, tool_name, tool_input):
+                if (
+                    self.suppressed
+                    and tool_name == "slack__slack_send_message"
+                    and tool_input.get("channel_id") == "C1"
+                ):
+                    return json.dumps({"ok": True, "suppressed": True})
+                return None
+
+            def on_tool_result(self, tool_name, tool_input, result):
+                self.results.append((tool_name, result))
+                parsed = json.loads(result)
+                if parsed.get("response_policy", {}).get("suppress_final_response") is True:
+                    self.suppressed = True
+
+        adapter = BlockingAdapter()
+        engine.handle(_msg(), adapter)
+
+        engine._router.route.assert_called_once()
+        assert engine._router.route.call_args.args[0] == "policy__mark_suppressed"
+        assert adapter.results[-1] == (
+            "slack__slack_send_message",
+            '{"ok": true, "suppressed": true}',
         )
 
     def test_nudge_model_replies_after_tool_gap(self, tmp_skill_dir, tmp_path):

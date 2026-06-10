@@ -552,7 +552,8 @@ class SlackAdapterBase(Adapter):
             )
             channel_name = None
 
-        self._channel_name_cache[channel_id] = channel_name
+        if channel_name:
+            self._channel_name_cache[channel_id] = channel_name
         return channel_name
 
     def _is_response_policy_blocked(self, block: str) -> bool:
@@ -571,6 +572,40 @@ class SlackAdapterBase(Adapter):
             if self._response_policy_allow_sends_to_classes is None
             else set(self._response_policy_allow_sends_to_classes)
         )
+
+    @staticmethod
+    def _is_slack_send_message_tool(tool_name: str) -> bool:
+        return tool_name.split("__")[-1] == "slack_send_message"
+
+    def _suppressed_send_result(self, channel_id: str) -> str:
+        return json.dumps({
+            "ok": True,
+            "suppressed": True,
+            "reason": "suppressed_by_response_policy",
+            "channel_id": channel_id,
+        })
+
+    def _should_block_slack_tool_send(self, channel_id: str | None) -> bool:
+        if not channel_id or not getattr(self._local, "response_policy_suppressed", False):
+            return False
+
+        current_channel_id = getattr(self._local, "current_channel_id", None)
+        if (
+            channel_id == current_channel_id
+            and self._is_response_policy_blocked("tool_send_to_source")
+        ):
+            return True
+
+        allow_sends_to_classes = getattr(
+            self._local,
+            "response_policy_allow_sends_to_classes",
+            None,
+        )
+        if allow_sends_to_classes is None or channel_id == current_channel_id:
+            return False
+
+        target_class = self._classify_response_policy_channel(channel_id)
+        return target_class not in allow_sends_to_classes
 
     def startup_onboard(self, is_onboarded, on_join) -> None:
         """Onboard allowed channels that haven't been onboarded yet.
@@ -664,31 +699,9 @@ class SlackAdapterBase(Adapter):
             pass
 
     def send(self, message: OutgoingMessage) -> None:
-        if (
-            self._is_response_policy_blocked("tool_send_to_source")
-            and message.channel_id == getattr(self._local, "current_channel_id", None)
-        ):
+        if self._should_block_slack_tool_send(message.channel_id):
             logger.info("Suppressing Slack send to current channel during silent turn")
             return
-        if getattr(self._local, "response_policy_suppressed", False):
-            allow_sends_to_classes = getattr(
-                self._local,
-                "response_policy_allow_sends_to_classes",
-                None,
-            )
-            if allow_sends_to_classes is not None and message.channel_id != getattr(
-                self._local,
-                "current_channel_id",
-                None,
-            ):
-                target_class = self._classify_response_policy_channel(message.channel_id)
-                if target_class not in allow_sends_to_classes:
-                    logger.info(
-                        "Suppressing Slack send to %s during silent turn; class %r not allowed",
-                        message.channel_id,
-                        target_class,
-                    )
-                    return
 
         for chunk in self._formatter.format(message.text):
             try:
@@ -703,6 +716,15 @@ class SlackAdapterBase(Adapter):
             except (json.JSONDecodeError, TypeError):
                 pass
             self._app.client.chat_postMessage(channel=message.channel_id, text=chunk)
+
+    def before_tool_call(self, tool_name: str, tool_input: dict) -> str | None:
+        if not self._is_slack_send_message_tool(tool_name):
+            return None
+        channel_id = tool_input.get("channel_id") or tool_input.get("channel")
+        if not self._should_block_slack_tool_send(channel_id):
+            return None
+        logger.info("Suppressing Slack MCP send tool to %s during silent turn", channel_id)
+        return self._suppressed_send_result(channel_id)
 
     def on_tool_start(self, tool_name: str, tool_input: dict) -> None:
         return

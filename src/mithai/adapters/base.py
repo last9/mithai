@@ -112,6 +112,10 @@ class Adapter(ABC):
     def on_tool_start(self, tool_name: str, tool_input: dict) -> None:
         """Called before a tool is executed."""
 
+    def before_tool_call(self, tool_name: str, tool_input: dict) -> str | None:
+        """Return a synthetic tool result to skip execution, or None to continue."""
+        return None
+
     def on_tool_end(self, tool_name: str, elapsed_s: float, approved: bool) -> None:
         """Called after a tool finishes executing."""
 

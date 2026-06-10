@@ -420,7 +420,14 @@ class Engine:
                             logger.info("Executing tool: %s", prefixed_name)
                             adapter.on_tool_start(prefixed_name, tool_input)
                             t1 = time.monotonic()
-                            result = self._router.route(prefixed_name, tool_input, skill_ctx)
+                            before_tool_call = getattr(type(adapter), "before_tool_call", None)
+                            result = (
+                                before_tool_call(adapter, prefixed_name, tool_input)
+                                if before_tool_call
+                                else None
+                            )
+                            if result is None:
+                                result = self._router.route(prefixed_name, tool_input, skill_ctx)
                             tool_elapsed = time.monotonic() - t1
                             adapter.on_tool_end(prefixed_name, tool_elapsed, True)
                         else:

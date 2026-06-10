@@ -115,6 +115,9 @@ class Adapter(ABC):
     def on_tool_end(self, tool_name: str, elapsed_s: float, approved: bool) -> None:
         """Called after a tool finishes executing."""
 
+    def on_tool_result(self, tool_name: str, tool_input: dict, result: str) -> None:
+        """Called after a tool returns a result."""
+
     def on_synthesizing(self) -> None:
         """Called before the follow-up LLM call after tool results."""
 

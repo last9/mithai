@@ -1,7 +1,9 @@
 """Slack adapters: SlackAdapterBase (shared logic), SlackAdapter (Socket Mode)."""
 
+import fnmatch
 import json
 import logging
+import re
 import threading
 import time
 
@@ -57,7 +59,7 @@ class SlackAdapterBase(Adapter):
 
     def __init__(self, bot_token: str, allowed_channels: list[str] | None = None,
                  approval_timeout: int = 300, signing_secret: str | None = None,
-                 respond: str = "all"):
+                 respond: str = "all", response_policy: dict | None = None):
         try:
             from slack_bolt import App
         except ImportError:
@@ -109,6 +111,8 @@ class SlackAdapterBase(Adapter):
         # Per-thread storage for the current message ts — prevents concurrent
         # messages from overwriting each other's thread context.
         self._local = threading.local()
+        self._channel_name_cache: dict[str, str | None] = {}
+        self._configure_response_policy(response_policy)
 
         # Bot's own user ID — resolved on start via auth.test
         self._bot_user_id: str | None = None
@@ -285,14 +289,17 @@ class SlackAdapterBase(Adapter):
 
             ts = message.get("ts", "")
             self._local.thread_ts = ts
+            self._reset_response_policy(channel)
             self._react(channel, ts, "thinking_face")
             try:
                 response = on_message(incoming, self)
-                self._send_formatted(say, response, thread_ts=ts)
-                if on_bot_reply and self._bot_user_id and response:
+                if not self._should_suppress_final_response():
+                    self._send_formatted(say, response, thread_ts=ts)
+                if on_bot_reply and self._bot_user_id and response and not self._should_suppress_final_response():
                     on_bot_reply(channel, self._bot_user_id, response, ts)
             finally:
                 self._unreact(channel, ts, "thinking_face")
+                self._clear_response_policy()
 
         @self._app.event("app_mention")
         def handle_app_mention(event, say):
@@ -338,14 +345,17 @@ class SlackAdapterBase(Adapter):
 
             ts = event.get("ts", "")
             self._local.thread_ts = ts
+            self._reset_response_policy(channel)
             self._react(channel, ts, "thinking_face")
             try:
                 response = on_message(incoming, self)
-                self._send_formatted(say, response, thread_ts=ts)
-                if on_bot_reply and self._bot_user_id and response:
+                if not self._should_suppress_final_response():
+                    self._send_formatted(say, response, thread_ts=ts)
+                if on_bot_reply and self._bot_user_id and response and not self._should_suppress_final_response():
                     on_bot_reply(channel, self._bot_user_id, response, ts)
             finally:
                 self._unreact(channel, ts, "thinking_face")
+                self._clear_response_policy()
 
             if on_observe:
                 on_observe(incoming)
@@ -404,6 +414,163 @@ class SlackAdapterBase(Adapter):
             except (json.JSONDecodeError, TypeError):
                 pass
             say(text=chunk, thread_ts=thread_ts)
+
+    def _should_suppress_final_response(self) -> bool:
+        return self._is_response_policy_blocked("final_response_to_source")
+
+    def _reset_response_policy(self, channel: str) -> None:
+        self._local.current_channel_id = channel
+        self._local.current_channel_class = self._classify_response_policy_channel(channel)
+        self._local.response_policy_suppressed = False
+        self._local.response_policy_blocks = set()
+        self._local.response_policy_allow_sends_to_classes = None
+
+    def _clear_response_policy(self) -> None:
+        self._local.current_channel_id = None
+        self._local.current_channel_class = None
+        self._local.response_policy_suppressed = False
+        self._local.response_policy_blocks = set()
+        self._local.response_policy_allow_sends_to_classes = None
+
+    def _configure_response_policy(self, response_policy: dict | None) -> None:
+        self._response_policy_enabled = False
+        self._response_policy_exact_ids: dict[str, str] = {}
+        self._response_policy_name_patterns: dict[str, list[str]] = {}
+        self._response_policy_name_regex: dict[str, list[re.Pattern]] = {}
+        self._response_policy_suppress_applies_in: set[str] = set()
+        self._response_policy_suppress_blocks: set[str] = set()
+        self._response_policy_allow_sends_to_classes: set[str] | None = None
+
+        if not response_policy:
+            return
+        if not isinstance(response_policy, dict):
+            raise ValueError("adapter.slack.response_policy must be a mapping")
+        if not response_policy.get("enabled", False):
+            return
+
+        channel_classes = response_policy.get("channel_classes") or {}
+        if not isinstance(channel_classes, dict):
+            raise ValueError("adapter.slack.response_policy.channel_classes must be a mapping")
+
+        self._response_policy_enabled = True
+        for class_name, class_config in channel_classes.items():
+            if class_config is None:
+                class_config = {}
+            if not isinstance(class_config, dict):
+                raise ValueError(f"response policy channel class {class_name!r} must be a mapping")
+
+            for channel_id in self._string_list(class_config.get("ids")):
+                existing_class = self._response_policy_exact_ids.get(channel_id)
+                if existing_class and existing_class != class_name:
+                    raise ValueError(
+                        f"Slack channel ID {channel_id!r} appears in both "
+                        f"{existing_class!r} and {class_name!r} response policy classes"
+                    )
+                self._response_policy_exact_ids[channel_id] = class_name
+
+            self._response_policy_name_patterns[class_name] = self._string_list(
+                class_config.get("name_patterns")
+            )
+            self._response_policy_name_regex[class_name] = [
+                re.compile(pattern) for pattern in self._string_list(class_config.get("name_regex"))
+            ]
+
+        policies = response_policy.get("tool_result_policies") or {}
+        if not isinstance(policies, dict):
+            raise ValueError("adapter.slack.response_policy.tool_result_policies must be a mapping")
+        suppress_policy = policies.get("suppress_final_response") or {}
+        if not isinstance(suppress_policy, dict):
+            raise ValueError(
+                "adapter.slack.response_policy.tool_result_policies.suppress_final_response "
+                "must be a mapping"
+            )
+
+        self._response_policy_suppress_applies_in = set(
+            self._string_list(suppress_policy.get("applies_in"))
+        )
+        self._response_policy_suppress_blocks = set(
+            self._string_list(suppress_policy.get("blocks"))
+        )
+        if "allow_sends_to_classes" in suppress_policy:
+            self._response_policy_allow_sends_to_classes = set(
+                self._string_list(suppress_policy.get("allow_sends_to_classes"))
+            )
+
+    @staticmethod
+    def _string_list(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        raise ValueError(f"Expected a string or list of strings, got {type(value).__name__}")
+
+    def _classify_response_policy_channel(self, channel_id: str | None) -> str | None:
+        if not self._response_policy_enabled or not channel_id:
+            return None
+
+        exact_class = self._response_policy_exact_ids.get(channel_id)
+        if exact_class:
+            return exact_class
+
+        channel_name = self._response_policy_channel_name(channel_id)
+        if not channel_name:
+            return None
+
+        matches: list[str] = []
+        for class_name, patterns in self._response_policy_name_patterns.items():
+            if any(fnmatch.fnmatchcase(channel_name, pattern) for pattern in patterns):
+                matches.append(class_name)
+        for class_name, regexes in self._response_policy_name_regex.items():
+            if any(regex.search(channel_name) for regex in regexes):
+                matches.append(class_name)
+
+        unique_matches = list(dict.fromkeys(matches))
+        if len(unique_matches) > 1:
+            logger.warning(
+                "Slack channel %s (#%s) matched multiple response policy classes: %s",
+                channel_id,
+                channel_name,
+                ", ".join(unique_matches),
+            )
+            return None
+        return unique_matches[0] if unique_matches else None
+
+    def _response_policy_channel_name(self, channel_id: str) -> str | None:
+        if channel_id in self._channel_name_cache:
+            return self._channel_name_cache[channel_id]
+
+        try:
+            info = self._app.client.conversations_info(channel=channel_id)
+            channel_name = info.get("channel", {}).get("name")
+        except Exception:
+            logger.warning(
+                "Could not resolve Slack channel name for response policy: %s",
+                channel_id,
+                exc_info=True,
+            )
+            channel_name = None
+
+        self._channel_name_cache[channel_id] = channel_name
+        return channel_name
+
+    def _is_response_policy_blocked(self, block: str) -> bool:
+        if not getattr(self._local, "response_policy_suppressed", False):
+            return False
+        return block in getattr(self._local, "response_policy_blocks", set())
+
+    def _activate_response_policy_suppression(self) -> None:
+        source_class = getattr(self._local, "current_channel_class", None)
+        if source_class not in self._response_policy_suppress_applies_in:
+            return
+        self._local.response_policy_suppressed = True
+        self._local.response_policy_blocks = set(self._response_policy_suppress_blocks)
+        self._local.response_policy_allow_sends_to_classes = (
+            None
+            if self._response_policy_allow_sends_to_classes is None
+            else set(self._response_policy_allow_sends_to_classes)
+        )
 
     def startup_onboard(self, is_onboarded, on_join) -> None:
         """Onboard allowed channels that haven't been onboarded yet.
@@ -497,6 +664,32 @@ class SlackAdapterBase(Adapter):
             pass
 
     def send(self, message: OutgoingMessage) -> None:
+        if (
+            self._is_response_policy_blocked("tool_send_to_source")
+            and message.channel_id == getattr(self._local, "current_channel_id", None)
+        ):
+            logger.info("Suppressing Slack send to current channel during silent turn")
+            return
+        if getattr(self._local, "response_policy_suppressed", False):
+            allow_sends_to_classes = getattr(
+                self._local,
+                "response_policy_allow_sends_to_classes",
+                None,
+            )
+            if allow_sends_to_classes is not None and message.channel_id != getattr(
+                self._local,
+                "current_channel_id",
+                None,
+            ):
+                target_class = self._classify_response_policy_channel(message.channel_id)
+                if target_class not in allow_sends_to_classes:
+                    logger.info(
+                        "Suppressing Slack send to %s during silent turn; class %r not allowed",
+                        message.channel_id,
+                        target_class,
+                    )
+                    return
+
         for chunk in self._formatter.format(message.text):
             try:
                 blocks = json.loads(chunk)
@@ -510,6 +703,28 @@ class SlackAdapterBase(Adapter):
             except (json.JSONDecodeError, TypeError):
                 pass
             self._app.client.chat_postMessage(channel=message.channel_id, text=chunk)
+
+    def on_tool_start(self, tool_name: str, tool_input: dict) -> None:
+        return
+
+    def on_tool_result(self, tool_name: str, tool_input: dict, result: str) -> None:
+        if not self._response_policy_enabled:
+            return
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if not isinstance(parsed, dict):
+            return
+
+        response_policy = parsed.get("response_policy")
+        has_generic_marker = (
+            isinstance(response_policy, dict)
+            and response_policy.get("suppress_final_response") is True
+        )
+        has_legacy_marker = parsed.get("do_not_mention") is True
+        if has_generic_marker or has_legacy_marker:
+            self._activate_response_policy_suppression()
 
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
         """
@@ -647,7 +862,8 @@ class SlackAdapter(SlackAdapterBase):
     """
 
     def __init__(self, bot_token: str, app_token: str, allowed_channels: list[str] | None = None,
-                 approval_timeout: int = 300, respond: str = "all"):
+                 approval_timeout: int = 300, respond: str = "all",
+                 response_policy: dict | None = None):
         try:
             from slack_bolt.adapter.socket_mode import SocketModeHandler
         except ImportError:
@@ -663,7 +879,13 @@ class SlackAdapter(SlackAdapterBase):
                 "  3. Add SLACK_APP_TOKEN=xapp-... to your .env file"
             )
 
-        super().__init__(bot_token, allowed_channels, approval_timeout, respond=respond)
+        super().__init__(
+            bot_token,
+            allowed_channels,
+            approval_timeout,
+            respond=respond,
+            response_policy=response_policy,
+        )
         self._handler = SocketModeHandler(self._app, app_token)
 
     def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None,

@@ -434,6 +434,9 @@ class Engine:
 
                         from mithai.telemetry.metrics import record_tool_call
                         record_tool_call(prefixed_name, approved, tool_elapsed)
+                        on_tool_result = getattr(adapter, "on_tool_result", None)
+                        if on_tool_result:
+                            on_tool_result(prefixed_name, tool_input, result)
 
                     turn_tool_calls.append({
                         "tool": prefixed_name,

@@ -400,12 +400,16 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
 
     elif adapter_type == "slack":
         from mithai.adapters.slack import SlackAdapter
+        kwargs = {}
+        if "response_policy" in adapter_config:
+            kwargs["response_policy"] = adapter_config.get("response_policy")
         return SlackAdapter(
             bot_token=adapter_config["bot_token"],
             app_token=adapter_config["app_token"],
             allowed_channels=_parse_id_list(adapter_config.get("allowed_channels")),
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
+            **kwargs,
         )
 
     elif adapter_type == "telegram":
@@ -417,6 +421,9 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
 
     elif adapter_type == "slack_http":
         from mithai.adapters.slack_http import SlackHTTPAdapter
+        kwargs = {}
+        if "response_policy" in adapter_config:
+            kwargs["response_policy"] = adapter_config.get("response_policy")
         return SlackHTTPAdapter(
             bot_token=adapter_config["bot_token"],
             signing_secret=adapter_config["signing_secret"],
@@ -426,6 +433,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
             managed=bool(adapter_config.get("managed", False)),
+            **kwargs,
         )
 
     else:

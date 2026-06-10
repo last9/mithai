@@ -125,6 +125,24 @@ class TestNudge:
         assert nudge_call_kwargs["tools"] is not None
         assert len(nudge_call_kwargs["tools"]) > 0
 
+    def test_tool_result_callback_receives_raw_result(self, tmp_skill_dir, tmp_path):
+        """Adapters can enforce response policy from tool outputs."""
+        llm = MagicMock()
+        llm.create_message.side_effect = [
+            _tool_use_response("test_skill__echo", {"message": "notify"}),
+            _end_turn("done"),
+        ]
+        engine = _make_engine(tmp_skill_dir, llm)
+        adapter = MagicMock()
+
+        engine.handle(_msg(), adapter)
+
+        adapter.on_tool_result.assert_called_once_with(
+            "test_skill__echo",
+            {"message": "notify"},
+            '{"echoed": "notify"}',
+        )
+
     def test_nudge_model_replies_after_tool_gap(self, tmp_skill_dir, tmp_path):
         """
         Turn-8/9 scenario: model reads memory, goes silent, nudge fires with tools

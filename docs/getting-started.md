@@ -23,7 +23,9 @@ This guide walks you through installing mithai, configuring it, and having your 
 ## Prerequisites
 
 - Python 3.11 or later
-- An [Anthropic API key](https://console.anthropic.com/)
+- One of:
+  - An [Anthropic API key](https://console.anthropic.com/) (default), or
+  - AWS credentials with `bedrock:InvokeModel` permission (see [Configuration › LLM](configuration.md#llm))
 - `uv` (recommended) or `pip`
 
 ---
@@ -36,12 +38,20 @@ This guide walks you through installing mithai, configuring it, and having your 
 pip install mithai
 ```
 
+To use AWS Bedrock instead of the Anthropic API, install the `bedrock` extra:
+
+```bash
+pip install 'mithai[bedrock]'
+```
+
 **From source** (to use the latest or contribute):
 
 ```bash
 git clone https://github.com/last9/mithai.git
 cd mithai
 pip install -e ".[dev]"
+# Add ,bedrock to the extras for AWS Bedrock support:
+# pip install -e ".[dev,bedrock]"
 ```
 
 Verify the install:
@@ -76,6 +86,14 @@ Open `.env` and add your key:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
+```
+
+To use AWS Bedrock instead, set `llm.provider: bedrock` in `config.yaml` (see [Configuration › LLM](configuration.md#aws-bedrock)) and put AWS credentials in `.env`:
+
+```
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
 ```
 
 > **Never commit `.env`.** `mithai init` adds it to `.gitignore` automatically.
@@ -172,11 +190,7 @@ http_checker  1 tool    check_url         approval: auto
 memory        3 tools   read/write/search approval: auto
 ```
 
-To inspect a skill:
-
-```bash
-mithai skill show shell
-```
+The listing shows each skill's tools and approval level.
 
 ---
 

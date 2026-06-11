@@ -4,6 +4,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 from mithai.adapters.base import OutgoingMessage
+from mithai.human.mcp import HumanRequest
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +601,7 @@ def test_external_channel_posting_allowed_by_default():
     handler = _register_simple_app_mention(adapter, mock_app)
 
     say = MagicMock()
-    handler(_app_mention_event(), say)
+    handler(_app_mention_event() | {"text": "<@UBOT>"}, say)
 
     say.assert_called_once()
 
@@ -625,6 +626,83 @@ def test_external_channel_guard_suppresses_final_app_mention_response():
 
     say.assert_not_called()
     on_bot_reply.assert_not_called()
+
+
+def test_external_channel_guard_suppresses_empty_app_mention_canned_reply():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_ext_shared": True}
+    }
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_not_called()
+
+
+def test_external_channel_guard_suppresses_channel_join_onboarding():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.auth_test.return_value = {"user_id": "UBOT"}
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "name": "shared", "is_ext_shared": True}
+    }
+
+    registered = {}
+
+    def capture_event(name):
+        def decorator(fn):
+            registered[name] = fn
+            return fn
+        return decorator
+
+    class ImmediateThread:
+        def __init__(self, target, daemon=False):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    mock_app.event.side_effect = capture_event
+    with patch("mithai.adapters.slack.threading.Thread", ImmediateThread):
+        adapter._register_message_handlers(
+            MagicMock(),
+            on_channel_join=MagicMock(return_value="Welcome"),
+        )
+        say = MagicMock()
+        registered["member_joined_channel"]({"user": "UBOT", "channel": "C1"}, say)
+
+    say.assert_not_called()
+
+
+def test_external_channel_guard_suppresses_startup_onboarding():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {
+            "id": "C1",
+            "name": "shared",
+            "is_member": True,
+            "is_ext_shared": True,
+        }
+    }
+    adapter._slack_client = MagicMock()
+
+    with patch("mithai.adapters.slack.time.sleep", MagicMock()):
+        adapter.startup_onboard(
+            is_onboarded=MagicMock(return_value=False),
+            on_join=MagicMock(return_value="Welcome"),
+        )
+
+    adapter._slack_client.post_message.assert_not_called()
 
 
 def test_external_channel_guard_allows_internal_app_mention_response():
@@ -751,6 +829,30 @@ def test_external_channel_guard_blocks_slack_mcp_send_tool_to_external_channel()
     assert parsed["ok"] is True
     assert parsed["suppressed"] is True
     assert parsed["reason"] == "posting_to_external_slack_channel_disabled"
+
+
+def test_external_channel_guard_suppresses_human_approval_prompt():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_ext_shared": True}
+    }
+
+    approved = adapter.request_human_approval(
+        HumanRequest(
+            request_id="req-1",
+            tool_name="slack__slack_send_message",
+            description="Send customer-visible text",
+            level="approve",
+            tool_input={"channel_id": "C1", "message": "customer leak"},
+        ),
+        "C1",
+    )
+
+    assert approved is False
+    mock_app.client.chat_postMessage.assert_not_called()
 
 
 def test_external_channel_guard_mcp_send_tool_allows_by_default():

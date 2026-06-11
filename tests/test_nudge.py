@@ -165,6 +165,7 @@ class TestNudge:
         ))
         engine._router.route = MagicMock(return_value=json.dumps({"handled": True}))
         engine._router.is_mcp_tool = MagicMock(return_value=False)
+        engine._human.request_approval = MagicMock(return_value=True)
 
         class BlockingAdapter:
             def __init__(self):
@@ -200,6 +201,7 @@ class TestNudge:
 
         engine._router.route.assert_called_once()
         assert engine._router.route.call_args.args[0] == "policy__mark_suppressed"
+        engine._human.request_approval.assert_called_once()
         assert adapter.results[-1] == (
             "slack__slack_send_message",
             '{"ok": true, "suppressed": true}',

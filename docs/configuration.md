@@ -126,11 +126,13 @@ When set to `false`, the Slack adapter uses `conversations.info` metadata to ide
 - `is_pending_ext_shared: true`
 - `is_shared: true` with `is_org_shared` not true
 
-For detected external channels, mithai suppresses:
+For detected external channels, mithai suppresses adapter-originated text posts, including:
 
 - Final assistant responses from Slack message handlers.
 - Direct Slack adapter sends through `adapter.send()`.
 - Slack MCP send-message tools before the tool call is routed.
+- Human approval prompts and timeout notices.
+- Canned app-mention replies and onboarding messages.
 
 Internal channels, including Enterprise Grid org-shared channels, keep normal posting behavior. If Slack channel metadata cannot be fetched while this setting is `false`, mithai fails closed and suppresses the attempted post rather than risking an external-channel message.
 

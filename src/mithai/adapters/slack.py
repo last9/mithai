@@ -234,7 +234,7 @@ class SlackAdapterBase(Adapter):
                 def _run():
                     try:
                         intro = on_channel_join(channel_id, channel_name)
-                        if intro:
+                        if intro and self._can_post_to_slack_channel(channel_id):
                             self._send_formatted(say, intro, thread_ts=None)
                     except Exception:
                         logger.exception("Onboarding failed for #%s", channel_name)
@@ -321,6 +321,8 @@ class SlackAdapterBase(Adapter):
             ).strip()
             images, skipped_files = self._extract_images(event)
             if not text and not images:
+                if not self._can_post_to_slack_channel(channel):
+                    return
                 if skipped_files:
                     say(f"I can only read images right now — I can't process files like {', '.join(skipped_files)}. "
                         "Try sharing a screenshot or image instead!")
@@ -474,6 +476,9 @@ class SlackAdapterBase(Adapter):
             return True
         return bool(channel_info.get("is_shared") and not channel_info.get("is_org_shared"))
 
+    def _can_post_to_slack_channel(self, channel_id: str | None) -> bool:
+        return not self._is_external_slack_channel(channel_id)
+
     @staticmethod
     def _is_slack_send_message_tool(tool_name: str) -> bool:
         return tool_name.split("__")[-1] == "slack_send_message"
@@ -526,7 +531,7 @@ class SlackAdapterBase(Adapter):
             else:
                 try:
                     intro = on_join(channel_id, channel_name)
-                    if intro:
+                    if intro and self._can_post_to_slack_channel(channel_id):
                         self._slack_client.post_message(channel_id, intro)
                 except Exception:
                     logger.exception("Startup onboarding failed for #%s", channel_name)
@@ -545,13 +550,14 @@ class SlackAdapterBase(Adapter):
             self._leaving_channels.add(channel_id)
 
         try:
-            self._app.client.chat_postMessage(
-                channel=channel_id,
-                text=(
-                    "I'm not onboarded in this channel. "
-                    "Please contact your workspace admin to onboard me here."
-                ),
-            )
+            if self._can_post_to_slack_channel(channel_id):
+                self._app.client.chat_postMessage(
+                    channel=channel_id,
+                    text=(
+                        "I'm not onboarded in this channel. "
+                        "Please contact your workspace admin to onboard me here."
+                    ),
+                )
         except Exception:
             logger.warning("Could not send decline message to %s", channel_id, exc_info=True)
         try:
@@ -578,7 +584,7 @@ class SlackAdapterBase(Adapter):
             pass
 
     def send(self, message: OutgoingMessage) -> None:
-        if self._is_external_slack_channel(message.channel_id):
+        if not self._can_post_to_slack_channel(message.channel_id):
             logger.info("Suppressing Slack send to external channel %s", message.channel_id)
             return
 
@@ -600,7 +606,7 @@ class SlackAdapterBase(Adapter):
         if not self._is_slack_send_message_tool(tool_name):
             return None
         channel_id = tool_input.get("channel_id") or tool_input.get("channel")
-        if not self._is_external_slack_channel(channel_id):
+        if self._can_post_to_slack_channel(channel_id):
             return None
         logger.info("Suppressing Slack MCP send tool to external channel %s", channel_id)
         return self._suppressed_send_result(channel_id)
@@ -615,6 +621,10 @@ class SlackAdapterBase(Adapter):
         Uses a threading.Event to synchronize between the action handler
         (called by Bolt on button click) and this blocking call.
         """
+        if not self._can_post_to_slack_channel(channel_id):
+            logger.info("Suppressing Slack human approval prompt in external channel %s", channel_id)
+            return False
+
         event = threading.Event()
         self._pending_approvals[request.request_id] = {
             "event": event,

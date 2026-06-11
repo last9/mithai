@@ -112,7 +112,7 @@ adapter:
 
 `allow_posting_in_external_channels` is an advanced Slack safety setting for teams that want mithai to read and react to Slack Connect or externally shared channels, but never post assistant text back into those channels.
 
-The default is `true`, which preserves existing behavior.
+The default is `true`, which preserves existing behavior. Set it to `false` only when the agent should observe or process external shared channel messages without writing text back to those channels.
 
 ```yaml
 adapter:
@@ -120,11 +120,13 @@ adapter:
     allow_posting_in_external_channels: false
 ```
 
-When set to `false`, the Slack adapter uses `conversations.info` metadata to identify external channels:
+When set to `false`, the Slack adapter uses Slack `conversations.info` metadata to identify external channels:
 
 - `is_ext_shared: true`
 - `is_pending_ext_shared: true`
 - `is_shared: true` with `is_org_shared` not true
+
+This means channel names, glob patterns, and deployment-specific customer-channel conventions are not part of the policy. Slack is the source of truth for whether a channel is external. Enterprise Grid org-shared channels (`is_org_shared: true`) are treated as internal and keep normal posting behavior.
 
 For detected external channels, mithai suppresses adapter-originated text posts, including:
 
@@ -134,7 +136,9 @@ For detected external channels, mithai suppresses adapter-originated text posts,
 - Human approval prompts and timeout notices.
 - Canned app-mention replies and onboarding messages.
 
-Internal channels, including Enterprise Grid org-shared channels, keep normal posting behavior. If Slack channel metadata cannot be fetched while this setting is `false`, mithai fails closed and suppresses the attempted post rather than risking an external-channel message.
+Reactions and read-only Slack operations are still allowed. If Slack channel metadata cannot be fetched while this setting is `false`, mithai fails closed and suppresses the attempted text post rather than risking an external-channel message. Failed metadata lookups are not cached, so a transient Slack API failure can recover on the next attempt.
+
+Make sure the Slack app has enough channel visibility for `conversations.info` on the channels where the bot runs. If metadata lookup fails, logs include `Could not resolve Slack channel info for external posting guard`.
 
 ### Telegram
 

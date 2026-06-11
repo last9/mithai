@@ -294,6 +294,32 @@ Restart the agent after changing this.
 
 ---
 
+### Agent is silent in Slack Connect channels
+
+**Symptom:** The bot reacts to a message or runs tools, but does not post text back in a Slack Connect / externally shared channel. Internal channels still receive replies.
+
+**Diagnosis:** Check whether external-channel posting is disabled:
+
+```yaml
+adapter:
+  slack:
+    allow_posting_in_external_channels: false
+```
+
+When this setting is `false`, mithai uses Slack `conversations.info` metadata to detect external shared channels and suppresses adapter-originated text posts there. This includes final assistant replies, Slack send-message tools, approval prompts, onboarding messages, and canned app-mention replies.
+
+Look for this log line when metadata cannot be fetched:
+
+```text
+Could not resolve Slack channel info for external posting guard
+```
+
+If metadata lookup fails, mithai fails closed and suppresses the attempted text post.
+
+**Fix:** If the silence is expected, no action is needed. If the channel should receive replies, either set `allow_posting_in_external_channels: true` or move the workflow to an internal or Enterprise Grid org-shared channel. If the channel is internal but is being treated as external, verify the Slack app can call `conversations.info` for that channel and inspect the channel metadata returned by Slack.
+
+---
+
 ### Agent forgetting context between messages
 
 **Symptom:** The agent does not remember things said earlier in the same thread. Each message is treated as a new conversation.

@@ -147,6 +147,16 @@ TOOLS = [
 
 **Verify the workspace.** mithai responds to anyone who can @mention it. If your Slack workspace allows external guests, they can interact with the agent. Restrict the bot to specific channels using Slack's channel restrictions feature, or add an `allowed_user_ids` list in your skill's `resolve_human`.
 
+**Disable text posting in external shared channels when needed.** For agents that operate in Slack Connect or other externally shared channels, set:
+
+```yaml
+adapter:
+  slack:
+    allow_posting_in_external_channels: false
+```
+
+With this enabled, mithai still receives events and can react or run internal workflows, but it suppresses adapter-originated text posts to external channels. The Slack adapter uses Slack's own `conversations.info` metadata instead of channel-name conventions, and fails closed if it cannot verify channel sharing status.
+
 **Rotate tokens regularly.** Slack bot tokens don't expire by default, but should be rotated when team members with access leave. Revoke tokens under **OAuth & Permissions → Revoke Token**.
 
 > **Warning:** Anyone who can @mention the bot and get an approval request through can trigger approved actions. Keep your Slack workspace access controls tight, and review who has access to channels where the bot operates.

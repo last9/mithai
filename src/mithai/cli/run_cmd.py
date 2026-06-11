@@ -1,9 +1,12 @@
 """mithai run — start the bot with configured adapters."""
 
+import atexit
 import copy
 import logging
 import os
 import socket
+import stat
+import sys
 import threading
 import time
 
@@ -64,15 +67,185 @@ def _maybe_startup_onboard(engine, adapter, on_join) -> None:
         ).start()
 
 
-def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
-    """Start an embedded API server in a daemon thread if MITHAI_UI_PORT is set.
+def _resolve_ui_transport(environ, *, uds_supported=None):
+    """Decide where the embedded API server should listen, from the platform's env.
 
-    This allows external-orchestrator's procmgr to proxy API requests (including /api/trigger)
-    to the running engine process without needing a separate `mithai ui` process.
+    Returns (use_uds, socket_path, port), or None when no embedded API was
+    requested. MITHAI_UI_SOCKET takes precedence over MITHAI_UI_PORT so a
+    dual-mode agent works under both an old (port) and new (socket) platform.
+
+    Unix domain sockets are POSIX-only: Windows CPython has no socket.AF_UNIX
+    and uvicorn's uds= cannot bind there. When the platform asks for a socket on
+    such a host, fall back to MITHAI_UI_PORT if provided, else disable the
+    embedded API rather than crash. uds_supported defaults to actual platform
+    support; it is injectable for tests.
+
+    Pure apart from log lines (Windows fallback, non-numeric port); unit-testable.
     """
-    ui_port = os.environ.get("MITHAI_UI_PORT")
-    if not ui_port:
+    if uds_supported is None:
+        uds_supported = hasattr(socket, "AF_UNIX")
+
+    ui_socket = environ.get("MITHAI_UI_SOCKET")
+    ui_port = environ.get("MITHAI_UI_PORT")
+    if not ui_socket and not ui_port:
+        return None
+
+    use_uds = bool(ui_socket)
+    # Parse the port to a usable value or 0. A non-numeric value OR a
+    # non-positive one (e.g. "0", which uvicorn would treat as "bind any
+    # ephemeral port" — a port the platform never assigned, locally "healthy"
+    # but unreachable) both collapse to 0, meaning "no usable port".
+    port = 0
+    if ui_port:
+        try:
+            parsed = int(ui_port)
+        except ValueError:
+            logger.error("MITHAI_UI_PORT=%r is not an integer; ignoring it", ui_port)
+        else:
+            if parsed > 0:
+                port = parsed
+            else:
+                logger.error("MITHAI_UI_PORT=%r is not a usable port; ignoring it", ui_port)
+    if not use_uds and port == 0:
+        # No socket and no usable port: nothing to listen on.
+        return None
+
+    if use_uds and not uds_supported:
+        # Gate on the parsed port, not the raw env string: a non-numeric
+        # MITHAI_UI_PORT leaves port == 0, and falling back to it would bind an
+        # ephemeral port the platform never assigned (locally "healthy" but
+        # unreachable). Treat that like the no-port case and disable the API.
+        if port:
+            logger.warning(
+                "MITHAI_UI_SOCKET set but this platform has no AF_UNIX (Windows); "
+                "falling back to TCP port %d",
+                port,
+            )
+            return (False, "", port)
+        logger.error(
+            "MITHAI_UI_SOCKET set but this platform has no AF_UNIX (Windows) and no "
+            "MITHAI_UI_PORT fallback; embedded API disabled"
+        )
+        return None
+
+    return (use_uds, ui_socket or "", port)
+
+
+def _prepare_socket_path(ui_socket: str) -> bool:
+    """Ready a Unix-socket path for binding, in the caller (main) thread.
+
+    Doing the stale-socket clear here, before the serve thread starts, means
+    the readiness probe cannot connect to a prior process's still-present
+    socket and false-positive: once we unlink the path it is gone until the
+    new server binds it, so a successful probe proves the new server is up.
+
+    Ensures the parent dir exists at 0o700 (defense in depth; the platform
+    pre-creates it too) so other local UIDs cannot traverse to the socket.
+    Clears a stale entry at the path: a socket or a regular file is removed; a
+    directory is refused with a clear error (better than a silent ~5s bind
+    failure that only surfaces as a readiness timeout). Returns True when the
+    path is ready to bind.
+    """
+    # AF_UNIX sun_path is bounded by the kernel (108 bytes on Linux, 104 on
+    # macOS, including the NUL terminator). A longer path fails bind() inside
+    # the serve thread, where the broad except swallows it, and only surfaces
+    # as an opaque readiness timeout. Check up front for a clear diagnostic.
+    max_len = 104 if sys.platform == "darwin" else 108
+    if len(os.fsencode(ui_socket)) >= max_len:
+        logger.error(
+            "MITHAI_UI_SOCKET path %s is too long for AF_UNIX (limit %d bytes); "
+            "refusing to start the embedded API server",
+            ui_socket,
+            max_len,
+        )
+        return False
+
+    parent = os.path.dirname(ui_socket)
+    if parent:
+        try:
+            os.makedirs(parent, mode=0o700, exist_ok=True)
+        except OSError as e:
+            logger.error("could not create socket dir %s: %s", parent, e)
+            return False
+    try:
+        st = os.lstat(ui_socket)
+    except FileNotFoundError:
+        return True
+    except OSError as e:
+        logger.error("could not stat socket path %s: %s", ui_socket, e)
+        return False
+    if stat.S_ISDIR(st.st_mode):
+        logger.error(
+            "MITHAI_UI_SOCKET path %s is a directory; refusing to start the "
+            "embedded API server (remove it or set a file path)",
+            ui_socket,
+        )
+        return False
+    # A socket from a prior run, or a stray regular file: remove so bind() succeeds.
+    try:
+        os.unlink(ui_socket)
+    except OSError as e:
+        logger.error("could not remove stale socket %s: %s", ui_socket, e)
+        return False
+    return True
+
+
+def _cleanup_socket(path: str, expected_ino: int) -> None:
+    """Best-effort unlink of the agent's Unix socket on process exit, so a
+    shared socket dir does not accumulate orphans for agents that never
+    restart. Registered via atexit once the socket is bound.
+
+    Only unlink when the file still carries the inode this process bound. The
+    socket path is deterministic, so a successor process may have already
+    rebound the same path while we are exiting; deleting its live socket would
+    darken it. Mirrors the platform-side reclaim guard in external-orchestrator's Stop."""
+    try:
+        if os.stat(path).st_ino == expected_ino:
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+def _harden_bound_socket(ui_socket: str) -> None:
+    """chmod a bound Unix socket to owner-only and register its exit cleanup.
+
+    uvicorn creates the socket at the process umask (often world-connectable).
+    Restrict it to the owner; the 0o700 parent dir already blocks other UIDs,
+    this is defense in depth so the Bearer token is not the only gate. The
+    atexit cleanup is pinned to the bound inode so it only removes OUR socket,
+    never one a successor process rebound on the same deterministic path.
+
+    Called on a successful readiness probe, and again on a probe timeout when
+    the socket exists anyway (a slow bind that lost the ~5s race), so the
+    socket is never left world-connectable or orphaned on the timeout path.
+    """
+    try:
+        os.chmod(ui_socket, 0o600)
+    except OSError as e:
+        logger.warning("could not chmod socket %s to 0600: %s", ui_socket, e)
+    try:
+        atexit.register(_cleanup_socket, ui_socket, os.stat(ui_socket).st_ino)
+    except OSError as e:
+        logger.warning("could not stat socket %s for cleanup registration: %s", ui_socket, e)
+
+
+def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
+    """Start an embedded API server in a daemon thread when the platform asks for one.
+
+    external-orchestrator's procmgr proxies API requests (including /api/trigger and
+    /slack/events) to this server. It tells the agent where to listen via env:
+
+      - MITHAI_UI_SOCKET=<path>  -> listen on that Unix domain socket (preferred);
+      - MITHAI_UI_PORT=<port>    -> listen on that localhost TCP port (fallback).
+
+    Dual-mode: the socket takes precedence so a single binary works under both an
+    old (port-assigning) and new (socket-assigning) platform with no flag-day.
+    See external-orchestrator docs/agent-uds-contract.md.
+    """
+    transport = _resolve_ui_transport(os.environ)
+    if transport is None:
         return
+    use_uds, ui_socket, port = transport
 
     try:
         import uvicorn
@@ -81,7 +254,6 @@ def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
         logger.warning("uvicorn/starlette not available, embedded API server disabled: %s", e)
         return
 
-    port = int(ui_port)
     ui_token = os.environ.get("MITHAI_UI_TOKEN", "")
     # Fail fast for a managed Slack adapter: the embedded API (including
     # /slack/events) is auth-gated only by this Bearer token. An empty OR
@@ -90,7 +262,7 @@ def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
     # events. Refuse to start rather than expose an open endpoint.
     if (not ui_token or ui_token.startswith("${")) and getattr(adapter, "_managed", False):
         logger.error(
-            "MITHAI_UI_TOKEN is empty but the Slack adapter is managed — refusing to "
+            "MITHAI_UI_TOKEN is empty but the Slack adapter is managed: refusing to "
             "start the embedded API server (it would be unauthenticated). Set MITHAI_UI_TOKEN."
         )
         return
@@ -101,25 +273,54 @@ def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
 
     app = create_app(api_config, engine=engine, adapter=adapter)
 
+    # Prepare the socket path in this (main) thread before starting the serve
+    # thread, so the readiness probe below cannot race a prior process's socket.
+    if use_uds:
+        if not _prepare_socket_path(ui_socket):
+            return
+        # Cleanup is registered AFTER the socket binds (below), so it can pin the
+        # bound inode and avoid unlinking a successor's socket on the same path.
+
     def _serve():
         try:
-            uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+            if use_uds:
+                uvicorn.run(app, uds=ui_socket, log_level="warning")
+            else:
+                uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
         except Exception as e:
             logger.error("Embedded API server failed to start: %s", e)
 
     t = threading.Thread(target=_serve, daemon=True)
     t.start()
 
+    target = ui_socket if use_uds else f"port {port}"
     for _ in range(50):
         try:
-            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-            s.close()
-            logger.info("Embedded API server listening on port %d", port)
+            if use_uds:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                # close() in finally so a refused/absent socket on the retry
+                # path does not leak an fd per iteration (up to 50 on a slow
+                # start). The TCP branch's create_connection self-closes.
+                try:
+                    s.settimeout(0.1)
+                    s.connect(ui_socket)
+                finally:
+                    s.close()
+            else:
+                socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
+            if use_uds:
+                _harden_bound_socket(ui_socket)
+            logger.info("Embedded API server listening on %s", target)
             break
         except OSError:
             time.sleep(0.1)
     else:
-        logger.warning("Embedded API server did not become ready on port %d", port)
+        logger.warning("Embedded API server did not become ready on %s", target)
+        # The probe lost the ~5s race but uvicorn may have bound the socket a
+        # moment later. Harden it anyway so a slow bind is not left
+        # world-connectable and orphaned (chmod + inode-pinned exit cleanup).
+        if use_uds and os.path.exists(ui_socket):
+            _harden_bound_socket(ui_socket)
 
 
 def _run_single_agent(config: dict, adapter_override: str | None):

@@ -108,67 +108,31 @@ adapter:
 
 `respond: mentions` — the bot only responds when @mentioned. Use `respond: all` to respond to every message in channels it's invited to.
 
-#### Slack response policy
+#### External Slack channels
 
-`response_policy` is an advanced, opt-in Slack setting for workflows where a tool performs the visible acknowledgement or posts to an internal channel, and the agent must not also post final assistant text back into the source channel.
+`allow_posting_in_external_channels` is an advanced Slack safety setting for teams that want mithai to read and react to Slack Connect or externally shared channels, but never post assistant text back into those channels.
 
-When the config is missing or `enabled: false`, mithai preserves existing behavior and ignores response-policy markers.
-
-Tools declare intent by returning:
-
-```json
-{
-  "response_policy": {
-    "suppress_final_response": true,
-    "reason": "handled_by_side_effect"
-  }
-}
-```
-
-The Slack adapter decides whether that marker applies based on the source channel class:
+The default is `true`, which preserves existing behavior.
 
 ```yaml
 adapter:
   slack:
-    response_policy:
-      enabled: true
-      channel_classes:
-        external:
-          ids:
-            - C0123ABCDEF
-          name_patterns:
-            - "customer-*"
-            - "last9-*"
-          name_regex:
-            - "^shared-[a-z0-9-]+$"
-        internal:
-          ids:
-            - C0987FEDCBA
-      tool_result_policies:
-        suppress_final_response:
-          applies_in:
-            - external
-          blocks:
-            - final_response_to_source
-            - tool_send_to_source
-          allow_sends_to_classes:
-            - internal
+    allow_posting_in_external_channels: false
 ```
 
-Channel matching supports:
+When set to `false`, the Slack adapter uses `conversations.info` metadata to identify external channels:
 
-- `ids`: exact Slack channel IDs.
-- `name_patterns`: glob-style Slack channel names, such as `customer-*`.
-- `name_regex`: regular expressions matched against Slack channel names.
+- `is_ext_shared: true`
+- `is_pending_ext_shared: true`
+- `is_shared: true` with `is_org_shared` not true
 
-`blocks` controls what is suppressed after a matching tool result:
+For detected external channels, mithai suppresses:
 
-- `final_response_to_source`: do not post the final assistant response to the source channel.
-- `tool_send_to_source`: block Slack send-message tools and `adapter.send()` calls that target the source channel.
+- Final assistant responses from Slack message handlers.
+- Direct Slack adapter sends through `adapter.send()`.
+- Slack MCP send-message tools before the tool call is routed.
 
-If `allow_sends_to_classes` is omitted, sends to non-source channels are allowed. If it is set, non-source sends during a suppressed turn are allowed only when the target channel matches one of those classes.
-
-The legacy tool result field `do_not_mention: true` is treated as an alias only when `response_policy.enabled: true`.
+Internal channels, including Enterprise Grid org-shared channels, keep normal posting behavior. If Slack channel metadata cannot be fetched while this setting is `false`, mithai fails closed and suppresses the attempted post rather than risking an external-channel message.
 
 ### Telegram
 

@@ -40,7 +40,8 @@ class SlackHTTPAdapter(SlackAdapterBase):
                  host: str = "0.0.0.0", port: int = 3000,
                  allowed_channels: list[str] | None = None,
                  approval_timeout: int = 300, respond: str = "all",
-                 managed: bool = False, response_policy: dict | None = None):
+                 managed: bool = False,
+                 allow_posting_in_external_channels: bool = True):
         # The Slack signature is the ONLY Slack-side authentication for HTTP/Events
         # mode — without a signing secret, Bolt's SlackRequestHandler performs no
         # HMAC verification and would accept arbitrary forged events. Fail fast.
@@ -51,7 +52,7 @@ class SlackHTTPAdapter(SlackAdapterBase):
             )
         super().__init__(bot_token, allowed_channels, approval_timeout,
                          signing_secret=signing_secret, respond=respond,
-                         response_policy=response_policy)
+                         allow_posting_in_external_channels=allow_posting_in_external_channels)
         self._host = host
         self._port = port
         self._server = None

@@ -146,7 +146,7 @@ class TestNudge:
         )
 
     def test_adapter_can_block_followup_tool_before_route(self, tmp_skill_dir, tmp_path):
-        """Adapters can prevent side-effect tools after a prior tool activates policy."""
+        """Adapters can prevent side-effect tools before they reach the router."""
         llm = MagicMock()
         llm.create_message.side_effect = [
             _tool_use_response("policy__mark_suppressed", {}),
@@ -163,9 +163,7 @@ class TestNudge:
             description="test tool",
             input_schema={"type": "object"},
         ))
-        engine._router.route = MagicMock(return_value=json.dumps({
-            "response_policy": {"suppress_final_response": True}
-        }))
+        engine._router.route = MagicMock(return_value=json.dumps({"handled": True}))
         engine._router.is_mcp_tool = MagicMock(return_value=False)
 
         class BlockingAdapter:
@@ -194,7 +192,7 @@ class TestNudge:
             def on_tool_result(self, tool_name, tool_input, result):
                 self.results.append((tool_name, result))
                 parsed = json.loads(result)
-                if parsed.get("response_policy", {}).get("suppress_final_response") is True:
+                if parsed.get("handled") is True:
                     self.suppressed = True
 
         adapter = BlockingAdapter()

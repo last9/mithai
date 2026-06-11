@@ -401,8 +401,10 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
     elif adapter_type == "slack":
         from mithai.adapters.slack import SlackAdapter
         kwargs = {}
-        if "response_policy" in adapter_config:
-            kwargs["response_policy"] = adapter_config.get("response_policy")
+        if "allow_posting_in_external_channels" in adapter_config:
+            kwargs["allow_posting_in_external_channels"] = adapter_config.get(
+                "allow_posting_in_external_channels"
+            )
         return SlackAdapter(
             bot_token=adapter_config["bot_token"],
             app_token=adapter_config["app_token"],
@@ -422,8 +424,10 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
     elif adapter_type == "slack_http":
         from mithai.adapters.slack_http import SlackHTTPAdapter
         kwargs = {}
-        if "response_policy" in adapter_config:
-            kwargs["response_policy"] = adapter_config.get("response_policy")
+        if "allow_posting_in_external_channels" in adapter_config:
+            kwargs["allow_posting_in_external_channels"] = adapter_config.get(
+                "allow_posting_in_external_channels"
+            )
         return SlackHTTPAdapter(
             bot_token=adapter_config["bot_token"],
             signing_secret=adapter_config["signing_secret"],

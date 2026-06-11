@@ -9,6 +9,7 @@ Optional skills (kubernetes, aws, last9, github, etc.) are installed separately
 via `mithai skill install <name>`.
 """
 
+import os
 import platform
 
 # PyInstaller helpers — required, unconditional. pyproject.toml pins
@@ -23,20 +24,41 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 # with the silent fallback.
 mithai_metadata = copy_metadata('mithai')
 
-# Optional third-party collections — wrapped per-package so a missing dep
-# (e.g. building without ui extras) degrades gracefully without masking the
-# required PyInstaller helpers above.
-try:
-    uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all('uvicorn')
-    starlette_datas, starlette_binaries, starlette_hiddenimports = collect_all('starlette')
-except Exception:
-    uvicorn_datas = uvicorn_binaries = uvicorn_hiddenimports = []
-    starlette_datas = starlette_binaries = starlette_hiddenimports = []
+# Optional third-party collections — each wrapped so a missing dep (e.g.
+# building without an extra) degrades gracefully without masking the required
+# PyInstaller helpers above. _safe_collect keeps the (datas, binaries,
+# hiddenimports) tuple ordering in one place so a per-package block can't slot
+# the three lists into the wrong Analysis fields.
+def _safe_collect(pkg):
+    try:
+        return collect_all(pkg)
+    except ImportError:
+        # Package genuinely absent (extra not installed) — degrade gracefully.
+        # Any other failure (broken install, bad transitive dep) surfaces as a
+        # build error instead of silently shipping without the package.
+        return [], [], []
 
-try:
-    otel_datas, otel_binaries, otel_hiddenimports = collect_all('opentelemetry')
-except Exception:
-    otel_datas = otel_binaries = otel_hiddenimports = []
+uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = _safe_collect('uvicorn')
+starlette_datas, starlette_binaries, starlette_hiddenimports = _safe_collect('starlette')
+otel_datas, otel_binaries, otel_hiddenimports = _safe_collect('opentelemetry')
+
+# Last9 GenAI span processor — enriches LLM spans with Last9's GenAI semantics.
+# Optional: only present when built with the `telemetry` extra (which depends
+# on last9-genai). Without it the binary still exports OTLP fine; mithai's tracer
+# just skips the processor (the `from last9_genai import ...` is guarded).
+last9_datas, last9_binaries, last9_hiddenimports = _safe_collect('last9_genai')
+
+# Release builds must not silently drop the GenAI processor: collect_all on a
+# missing package returns empty lists without raising, so a build pipeline that
+# forgets the `telemetry` extra would otherwise ship a binary minus last9_genai
+# with zero signal (build green, runtime only logs at debug). Setting
+# MITHAI_REQUIRE_TELEMETRY=1 (done in CI/release workflows) turns that into a
+# loud build failure; dev builds without the extra keep graceful degradation.
+if os.environ.get('MITHAI_REQUIRE_TELEMETRY', '').strip() == '1' and not last9_hiddenimports:
+    raise SystemExit(
+        "MITHAI_REQUIRE_TELEMETRY=1 but collect_all('last9_genai') returned nothing — "
+        "install the 'telemetry' extra (pip install 'mithai[telemetry]') before building."
+    )
 
 block_cipher = None
 
@@ -61,9 +83,9 @@ datas.append(('src/mithai/ui/static', 'mithai/ui/static'))
 a = Analysis(
     ['src/mithai/__main__.py'],
     pathex=['src'],
-    binaries=[] + uvicorn_binaries + starlette_binaries + otel_binaries,
-    datas=datas + uvicorn_datas + starlette_datas + otel_datas + mithai_metadata,
-    hiddenimports=[] + uvicorn_hiddenimports + starlette_hiddenimports + otel_hiddenimports + [
+    binaries=[] + uvicorn_binaries + starlette_binaries + otel_binaries + last9_binaries,
+    datas=datas + uvicorn_datas + starlette_datas + otel_datas + last9_datas + mithai_metadata,
+    hiddenimports=[] + uvicorn_hiddenimports + starlette_hiddenimports + otel_hiddenimports + last9_hiddenimports + [
         # Core mithai modules (lazy-imported, PyInstaller won't trace them)
         'mithai',
         'mithai.__main__',
@@ -178,7 +200,6 @@ pyz = PYZ(a.pure, cipher=block_cipher)
 # Determine platform suffix for binary name.
 # MITHAI_TARGET_ARCH overrides the detected arch for cross-compilation
 # (e.g. building x86_64 binary on ARM macOS).
-import os
 _target_arch = os.environ.get('MITHAI_TARGET_ARCH', '').strip()
 arch = _target_arch or platform.machine()
 if arch == 'x86_64':

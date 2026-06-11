@@ -85,6 +85,10 @@ jobs:
         run: uv run pytest tests/ -v
 
       - name: Build binary
+        env:
+          # Fail the build loudly if the last9_genai collection comes back
+          # empty (telemetry extra missing) instead of shipping without it.
+          MITHAI_REQUIRE_TELEMETRY: "1"
         run: |
           uv run pyinstaller mithai.spec --noconfirm
           ls -lh dist/mithai-*

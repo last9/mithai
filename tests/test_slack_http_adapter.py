@@ -752,3 +752,236 @@ def test_socket_adapter_start_logs_warning_when_no_allowed_channels(caplog):
         t.join(timeout=0.2)
 
     assert any("allowed_channels" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Managed mode: events arrive via the embedded API server's /slack/events
+# endpoint (fed by the external-orchestrator control plane), NOT the adapter's own
+# uvicorn server. A distributed Slack app routes ALL workspaces' events to one
+# control-plane URL; the control plane verifies + routes by team_id and forwards
+# to this engine. The adapter must therefore NOT bind its own HTTP port (every
+# agent on a host would collide on :3000) and NOT open a Socket Mode WebSocket.
+# ---------------------------------------------------------------------------
+
+def test_managed_adapter_constructor_stores_flag():
+    """managed defaults to False; managed=True is recorded."""
+    adapter_default, _, _ = _build_http_adapter()
+    assert adapter_default._managed is False
+
+    mock_app = _make_mock_app()
+    with patch("slack_bolt.App", MagicMock(return_value=mock_app), create=True):
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        adapter_managed = SlackHTTPAdapter(
+            bot_token="xoxb-test", signing_secret="sig", managed=True,
+        )
+    assert adapter_managed._managed is True
+
+
+def test_managed_adapter_start_builds_handler_without_own_server():
+    """Managed start() registers handlers and builds a Bolt request handler,
+    but does NOT start its own uvicorn server. The thread blocks until stop()."""
+    import threading
+
+    mock_app = _make_mock_app()
+    mock_app_cls = MagicMock(return_value=mock_app)
+    mock_uvicorn = MagicMock()
+    mock_bolt_starlette = MagicMock()
+    mock_bolt_handler = MagicMock()
+    mock_bolt_starlette.SlackRequestHandler.return_value = mock_bolt_handler
+
+    fake_modules = {
+        "uvicorn": mock_uvicorn,
+        "slack_bolt.adapter.starlette": mock_bolt_starlette,
+    }
+
+    with patch("slack_bolt.App", mock_app_cls, create=True), \
+         patch.dict(sys.modules, fake_modules):
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        adapter = SlackHTTPAdapter(bot_token="xoxb-test", signing_secret="sig", managed=True)
+
+        t = threading.Thread(target=adapter.start, args=(MagicMock(),), daemon=True)
+        t.start()
+        try:
+            assert adapter._ready.wait(timeout=1.0), "managed start did not signal ready"
+            # No own server in managed mode
+            mock_uvicorn.Server.assert_not_called()
+            mock_uvicorn.run.assert_not_called()
+            # Bolt request handler built for the embedded endpoint to delegate to
+            mock_bolt_starlette.SlackRequestHandler.assert_called_once_with(mock_app)
+            assert adapter._bolt_handler is mock_bolt_handler
+        finally:
+            adapter.stop()
+            t.join(timeout=1.0)
+        assert not t.is_alive(), "stop() must unblock managed start()"
+
+
+def test_managed_adapter_handle_event_delegates_to_bolt_handler():
+    """handle_event() forwards the request to the Bolt SlackRequestHandler."""
+    import asyncio
+
+    adapter, _, _ = _build_http_adapter()
+    adapter._managed = True
+    bolt_handler = MagicMock()
+
+    async def _fake_handle(request):
+        return "delegated-response"
+
+    bolt_handler.handle = MagicMock(side_effect=_fake_handle)
+    adapter._bolt_handler = bolt_handler
+
+    fake_request = MagicMock()
+    result = asyncio.run(adapter.handle_event(fake_request))
+
+    bolt_handler.handle.assert_called_once_with(fake_request)
+    assert result == "delegated-response"
+
+
+def test_http_adapter_requires_signing_secret():
+    """HTTP/Events mode must fail fast without a signing secret — otherwise Bolt
+    skips HMAC verification and would accept forged events."""
+    mock_app_cls = MagicMock(return_value=_make_mock_app())
+    with patch("slack_bolt.App", mock_app_cls, create=True):
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        for bad in ("", "${SLACK_SIGNING_SECRET}"):
+            try:
+                SlackHTTPAdapter(bot_token="xoxb-test", signing_secret=bad)
+                assert False, f"expected RuntimeError for signing_secret={bad!r}"
+            except RuntimeError:
+                pass
+
+
+def test_managed_adapter_uses_fast_ack_not_process_before_response():
+    """Managed mode must NOT set process_before_response — running the listener
+    inline would block Bolt's event loop for the whole turn (incl. a human approval
+    wait), starving the approval CLICK that arrives on the same endpoint and
+    deadlocking the approval. Fast-ack runs the turn in a background thread."""
+    mock_app = _make_mock_app()
+    mock_app_cls = MagicMock(return_value=mock_app)
+    with patch("slack_bolt.App", mock_app_cls, create=True):
+        from mithai.adapters.slack_http import SlackHTTPAdapter
+        SlackHTTPAdapter(bot_token="xoxb-test", signing_secret="sig", managed=True)
+    assert "process_before_response" not in mock_app_cls.call_args.kwargs
+
+
+def test_managed_handle_event_returns_503_before_ready():
+    """Before start() registers the Bolt handler, handle_event returns 503 (not a
+    500) so the caller/Slack retries during the brief startup window."""
+    import asyncio
+    adapter, _, _ = _build_http_adapter()
+    adapter._managed = True
+    adapter._bolt_handler = None  # start() hasn't run yet
+
+    resp = asyncio.run(adapter.handle_event(MagicMock()))
+    assert resp.status_code == 503
+
+
+def test_create_adapter_passes_managed_flag():
+    """run_cmd._create_adapter threads adapter.slack_http.managed into the adapter."""
+    mock_app = _make_mock_app()
+    mock_app_cls = MagicMock(return_value=mock_app)
+
+    adapter_config = {
+        "bot_token": "xoxb-test",
+        "signing_secret": "secret123",
+        "managed": True,
+    }
+
+    with patch("slack_bolt.App", mock_app_cls, create=True):
+        from mithai.cli.run_cmd import _create_adapter
+        adapter = _create_adapter({}, "slack_http", adapter_config=adapter_config)
+
+    assert adapter._managed is True
+
+
+# ---------------------------------------------------------------------------
+# Stale-event handling: messages delivered long after they were sent (control
+# plane outage / retry backlog) carry a staleness note via extra_system_prompt
+# so the LLM can acknowledge the delay or absorb the message quietly.
+# ---------------------------------------------------------------------------
+
+def test_staleness_note_empty_for_fresh_event():
+    import time as _time
+    from mithai.adapters.slack import _staleness_note
+
+    assert _staleness_note(str(_time.time())) == ""
+
+
+def test_staleness_note_set_for_old_event():
+    import time as _time
+    from mithai.adapters.slack import _staleness_note, STALE_EVENT_THRESHOLD_SECONDS
+
+    old_ts = str(_time.time() - (STALE_EVENT_THRESHOLD_SECONDS + 47 * 60))
+    note = _staleness_note(old_ts)
+    assert "minutes ago" in note
+    # 47 minutes past the threshold → age is threshold + 47min. The minute
+    # count is floored from live wall-clock, so allow a +1 drift if the test
+    # process crosses a minute boundary between building ts and rendering.
+    expected_minutes = (STALE_EVENT_THRESHOLD_SECONDS + 47 * 60) // 60
+    assert (f"sent {expected_minutes} minutes ago" in note
+            or f"sent {expected_minutes + 1} minutes ago" in note)
+
+
+def test_staleness_note_boundary_at_threshold():
+    import time as _time
+    from mithai.adapters.slack import _staleness_note, STALE_EVENT_THRESHOLD_SECONDS
+
+    # Just under the threshold → still fresh (the note fires strictly past it;
+    # a 2s margin absorbs the wall-clock time between building ts and checking).
+    near_threshold = str(_time.time() - (STALE_EVENT_THRESHOLD_SECONDS - 2))
+    assert _staleness_note(near_threshold) == ""
+
+
+def test_staleness_note_tolerates_missing_or_malformed_ts():
+    from mithai.adapters.slack import _staleness_note
+
+    assert _staleness_note("") == ""
+    assert _staleness_note(None) == ""
+    assert _staleness_note("not-a-ts") == ""
+
+
+def test_message_handler_attaches_staleness_note_for_old_event():
+    import time as _time
+
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
+    on_message = MagicMock(return_value="reply")
+    handler = _capture_message_handler(adapter, mock_app, on_message)
+
+    old_ts = str(_time.time() - 3600)  # one hour old
+    handler(message={"channel": "C1", "text": "hello", "ts": old_ts, "user": "U1"},
+            say=MagicMock())
+
+    on_message.assert_called_once()
+    incoming = on_message.call_args[0][0]
+    assert "minutes ago" in incoming.extra_system_prompt
+
+
+def test_message_handler_no_staleness_note_for_fresh_event():
+    import time as _time
+
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
+    on_message = MagicMock(return_value="reply")
+    handler = _capture_message_handler(adapter, mock_app, on_message)
+
+    handler(message={"channel": "C1", "text": "hello", "ts": str(_time.time()), "user": "U1"},
+            say=MagicMock())
+
+    on_message.assert_called_once()
+    incoming = on_message.call_args[0][0]
+    assert incoming.extra_system_prompt == ""
+
+
+def test_app_mention_handler_attaches_staleness_note_for_old_event():
+    import time as _time
+
+    adapter, mock_app, _ = _build_http_adapter(allowed_channels=["C1"])
+    on_message = MagicMock(return_value="reply")
+    handler = _capture_app_mention_handler(adapter, on_message)
+
+    old_ts = str(_time.time() - 3600)
+    handler(event={"channel": "C1", "text": "<@UBOT> what are the open PRs?",
+                   "ts": old_ts, "user": "U1"},
+            say=MagicMock())
+
+    on_message.assert_called_once()
+    incoming = on_message.call_args[0][0]
+    assert "minutes ago" in incoming.extra_system_prompt

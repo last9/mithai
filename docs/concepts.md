@@ -202,6 +202,8 @@ adapter:
 
 **Thread context**: When you @mention the bot in a thread it didn't start, it fetches prior messages in that thread for context. This means you can drop the bot into an ongoing incident thread and it catches up immediately.
 
+**Stale messages**: If a message reaches the adapter more than 10 minutes after it was sent — for example after an agent outage or a delivery-retry backlog — the agent is told how old the message is and that it arrived late. It then decides whether to answer and briefly acknowledge it is catching up, or to stay quiet when the conversation has clearly moved on. The age is computed from Slack's event timestamp, so no extra configuration is needed.
+
 ### Telegram
 
 Long-polling (no server needed). Conversations are per-chat. Access control via `allowed_chat_ids`.
@@ -350,7 +352,7 @@ The agent also runs a reflection pass after each conversation (when `learning.re
 
 After each turn, when a skill with `VERIFY = True` was called, mithai runs a secondary LLM call to check that the agent's response does not contradict what the tools returned. If a numerical or factual contradiction is found, the response is annotated with ⚠️.
 
-This is opt-in per skill. Built-in skills `aws` and `kubernetes` opt in by default. To add verification to a custom skill:
+This is opt-in per skill; no skill opts in by default. To add verification to a skill:
 
 ```python
 # skills/my_skill/tools.py

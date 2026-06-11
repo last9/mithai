@@ -12,6 +12,41 @@ from mithai.integrations.slack import SlackClient
 
 logger = logging.getLogger(__name__)
 
+# A message older than this when it reaches the adapter is "stale" — it sat in
+# the control plane's delivery queue (agent outage, retry backlog) rather than
+# arriving live. Slack's event `ts` is the original send time, so age is
+# computable here with no extra protocol plumbing.
+STALE_EVENT_THRESHOLD_SECONDS = 600
+
+# Injected via IncomingMessage.extra_system_prompt so the response posture is
+# prompt-tunable, not hardcoded: acknowledge the delay when a reply is still
+# useful, absorb quietly when the moment has passed.
+STALE_EVENT_NOTE = (
+    "Delivery notice: this message was sent {age_minutes} minutes ago and is only "
+    "reaching you now (delayed delivery — e.g. an outage or a retry backlog). "
+    "If a reply is still useful, answer it and briefly acknowledge you are "
+    "catching up on an older message. If the conversation has clearly moved on "
+    "or the question was already handled, do not re-answer it — note the "
+    "content for your own context and keep any reply minimal."
+)
+
+
+def _staleness_note(event_ts: str) -> str:
+    """Staleness guidance for an event, or "" when fresh or ts is unusable.
+
+    The Slack listeners are the sole writers of extra_system_prompt for live
+    Slack turns (scheduling injects on the CLI adapter, a separate transport).
+    If another Slack-side writer ever appears, this assignment must become a
+    merge — today it would silently overwrite.
+    """
+    try:
+        age = time.time() - float(event_ts)
+    except (TypeError, ValueError):
+        return ""
+    if age <= STALE_EVENT_THRESHOLD_SECONDS:
+        return ""
+    return STALE_EVENT_NOTE.format(age_minutes=int(age // 60))
+
 
 class SlackAdapterBase(Adapter):
     """
@@ -41,6 +76,14 @@ class SlackAdapterBase(Adapter):
         app_kwargs: dict = {"token": bot_token}
         if signing_secret:
             app_kwargs["signing_secret"] = signing_secret
+        # NOTE: we deliberately do NOT set process_before_response=True. Running the
+        # listener inline (before the HTTP ack) would block Bolt's event loop for
+        # the whole turn — including a human approval wait — so the approve/deny
+        # CLICK (a new POST to the same /slack/events) could not be served, and the
+        # approval would deadlock/time out. Fast-ack (the default) runs the turn in
+        # a background thread, keeping the endpoint responsive for the click. The
+        # control-plane durable queue guarantees DELIVERY (retry until a running
+        # agent 2xx-acks receipt); processing reliability matches Socket Mode.
         try:
             self._app = App(**app_kwargs)
         except Exception as exc:
@@ -237,6 +280,7 @@ class SlackAdapterBase(Adapter):
                 message_id=message.get("ts", ""),
                 thread_id=message.get("thread_ts") or message.get("ts", ""),
                 images=self._extract_images(message)[0],
+                extra_system_prompt=_staleness_note(message.get("ts", "")),
             )
 
             ts = message.get("ts", "")
@@ -289,6 +333,7 @@ class SlackAdapterBase(Adapter):
                 message_id=event.get("ts", ""),
                 thread_id=event.get("thread_ts") or event.get("ts", ""),
                 images=images,
+                extra_system_prompt=_staleness_note(event.get("ts", "")),
             )
 
             ts = event.get("ts", "")

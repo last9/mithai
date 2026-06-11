@@ -83,6 +83,17 @@ def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
 
     port = int(ui_port)
     ui_token = os.environ.get("MITHAI_UI_TOKEN", "")
+    # Fail fast for a managed Slack adapter: the embedded API (including
+    # /slack/events) is auth-gated only by this Bearer token. An empty OR
+    # unresolved-placeholder token (${VAR} left un-substituted) makes _check_auth
+    # allow everything, so on a multi-tenant host any local process could inject
+    # events. Refuse to start rather than expose an open endpoint.
+    if (not ui_token or ui_token.startswith("${")) and getattr(adapter, "_managed", False):
+        logger.error(
+            "MITHAI_UI_TOKEN is empty but the Slack adapter is managed — refusing to "
+            "start the embedded API server (it would be unauthenticated). Set MITHAI_UI_TOKEN."
+        )
+        return
     api_config = copy.deepcopy(config)
     api_config.setdefault("ui", {})
     api_config["ui"]["auth_token"] = ui_token
@@ -414,6 +425,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             allowed_channels=_parse_id_list(adapter_config.get("allowed_channels")),
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
+            managed=bool(adapter_config.get("managed", False)),
         )
 
     else:
@@ -429,6 +441,28 @@ def _create_llm(config: dict):
         return AnthropicProvider(
             api_key=llm_config["api_key"],
             model=llm_config.get("model", "claude-sonnet-4-6"),
+        )
+
+    elif provider == "bedrock":
+        from mithai.llm.bedrock import BedrockProvider
+
+        missing = [
+            k for k in ("access_key_id", "secret_access_key", "region")
+            if not llm_config.get(k)
+        ]
+        if missing:
+            raise click.ClickException(
+                "bedrock provider requires llm.bedrock."
+                + ", llm.bedrock.".join(missing)
+                + " in config.yaml"
+            )
+        return BedrockProvider(
+            access_key_id=llm_config["access_key_id"],
+            secret_access_key=llm_config["secret_access_key"],
+            region=llm_config["region"],
+            model=llm_config.get("model", "anthropic.claude-sonnet-4-20250514-v1:0"),
+            # Optional — only needed for temporary (STS) credentials.
+            session_token=llm_config.get("session_token"),
         )
 
     else:

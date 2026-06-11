@@ -32,6 +32,7 @@ class SlackHTTPAdapterConfig(BaseModel):
     allowed_channels: str | list[str] | None = None  # str for comma-separated env var
     approval_timeout: int | None = None
     respond: str | None = None
+    managed: bool | None = None  # True → events via embedded API, no own server / no Socket Mode
 
 
 # Telegram Bot adapter (adapter.telegram)

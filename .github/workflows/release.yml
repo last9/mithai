@@ -51,6 +51,28 @@ jobs:
             exit 1
           fi
 
+  # ── Fast Linux test job — ECR gates on this, not the full binary matrix ──
+  test:
+    name: Test (linux-amd64)
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run tests
+        run: uv run pytest tests/ -v
+
   # ── Build platform binaries ──
   build-binaries:
     name: Build ${{ matrix.platform }}
@@ -185,3 +207,45 @@ jobs:
             $PRERELEASE_FLAG \
             release/mithai-* \
             release/checksums.txt
+
+  # ── Push base image to ECR (used by supervisor and other agents) ──
+  ecr:
+    name: Push to ECR
+    needs: [meta, test]
+    if: ${{ needs.meta.outputs.is_tag == 'true' && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.REGISTRY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build
+        run: docker build -f deploy/Dockerfile -t mithai:build .
+
+      - name: Smoke test
+        run: docker run --rm --entrypoint mithai mithai:build --version
+
+      - name: Push
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          ECR_REPO: EXAMPLE_ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com/mithai
+        run: |
+          docker tag mithai:build ${ECR_REPO}:${VERSION}
+          docker push ${ECR_REPO}:${VERSION}
+          # Only promote :latest for stable releases (not prerelease tags like v0.10.0-rc1)
+          case "${VERSION}" in
+            *-*) echo "Prerelease ${VERSION} — skipping :latest" ;;
+            *)   docker tag mithai:build ${ECR_REPO}:latest
+                 docker push ${ECR_REPO}:latest ;;
+          esac

@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 
 WORKDIR /app
 
-# Venv built at /app/.venv in builder — shebang #!/app/.venv/bin/python3.11
+# Venv built at /app/.venv in builder — shebang #!/app/.venv/bin/python3.13
 # matches this path in the runtime stage too
 COPY --from=builder /app/.venv /app/.venv
 COPY skills/ /app/skills/

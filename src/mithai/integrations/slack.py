@@ -1,10 +1,24 @@
 """SlackClient — low-level Slack Web API access for integrations and skills."""
 
 import base64
+import html
 import logging
 import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_SLACK_LINK_RE = re.compile(r"<(https?://[^>|]+)(?:\|[^>]*)?>")
+_BARE_URL_RE = re.compile(r"https?://[^\s<>]+")
+
+
+def _clean_bare_url(url: str) -> str:
+    """Strip punctuation/mrkdwn that belongs to surrounding prose, not the URL."""
+    trailing = ".,;:!?'\"*_]"
+    url = url.rstrip(trailing)
+    while url.endswith(")") and url.count(")") > url.count("("):
+        url = url[:-1].rstrip(trailing)
+    return url
 
 
 def _extract_message_text(msg: dict) -> str:
@@ -40,6 +54,51 @@ def _extract_message_text(msg: dict) -> str:
     return msg.get("text", "").strip()
 
 
+def _extract_links(msg: dict) -> list[str]:
+    """Collect external links from attachments, blocks, and message text."""
+    links: list[str] = []
+    for att in msg.get("attachments") or []:
+        if not isinstance(att, dict):
+            continue
+        for key in ("title_link", "from_url", "original_url"):
+            url = att.get(key)
+            if isinstance(url, str) and url.startswith("http"):
+                links.append(url)
+
+    text = _extract_message_text(msg)
+    links.extend(m.group(1) for m in _SLACK_LINK_RE.finditer(text))
+    # Bare URLs (Slack leaves bot/attachment text unwrapped): scan the text with
+    # Slack-formatted links blanked out so they aren't double-counted or mangled.
+    bare_text = _SLACK_LINK_RE.sub(" ", text)
+    links.extend(_clean_bare_url(url) for url in _BARE_URL_RE.findall(bare_text))
+
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for link in links:
+        # Slack escapes &, <, > as HTML entities in message text; unescape so
+        # extracted URLs (e.g. query params with &amp;) are usable as-is.
+        link = html.unescape(link)
+        if link not in seen:
+            seen.add(link)
+            deduped.append(link)
+    return deduped
+
+
+def _message_sender_name(msg: dict, user_map: dict[str, str]) -> str:
+    """Resolve a display name for human and bot/integration messages."""
+    if uid := msg.get("user"):
+        return user_map.get(uid, uid)
+    if username := msg.get("username"):
+        return username
+    bot_profile = msg.get("bot_profile") or {}
+    if isinstance(bot_profile, dict):
+        if name := bot_profile.get("name"):
+            return name
+    if bot_id := msg.get("bot_id"):
+        return f"bot:{bot_id}"
+    return "unknown"
+
+
 class SlackClient:
     """Thin wrapper around slack_sdk.WebClient for Slack API calls.
 
@@ -51,24 +110,104 @@ class SlackClient:
         self._token = bot_token
         self._client = WebClient(token=bot_token)
 
-    def get_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
-        """
-        Fetch recent messages from a channel.
+    def get_history_window(
+        self,
+        channel_id: str,
+        *,
+        limit: int = 200,
+        oldest: str | None = None,
+        latest: str | None = None,
+        max_pages: int = 10,
+    ) -> dict[str, Any]:
+        """Fetch channel history with pagination, time bounds, and structured output.
 
-        Returns (formatted_messages, user_id_to_name_map).
-        User IDs in messages are replaced with real display names.
+        Returns messages oldest-first with per-message links and coverage metadata.
+
+        Truncation semantics: when `oldest` is set, Slack paginates forward from
+        the oldest end of the window, so hitting `limit` or `max_pages` drops the
+        NEWEST messages in the window (coverage.newest_ts will lag the window end).
+        Without `oldest`, pagination walks backward from now and truncation drops
+        the oldest messages instead. Check coverage.has_more / truncated_reason.
         """
+        total_limit = max(1, min(int(limit), 1000))
+        raw_messages: list[dict] = []
+        cursor: str | None = None
+        pages_fetched = 0
+        truncated_reason: str | None = None
+        has_more = False
+
         try:
-            resp = self._client.conversations_history(channel=channel_id, limit=limit)
+            while pages_fetched < max(1, int(max_pages)):
+                if len(raw_messages) >= total_limit:
+                    has_more = True
+                    truncated_reason = truncated_reason or "limit"
+                    break
+
+                remaining = total_limit - len(raw_messages)
+                page_limit = max(1, min(remaining, 1000))
+                kwargs: dict[str, Any] = {"channel": channel_id, "limit": page_limit}
+                if oldest:
+                    kwargs["oldest"] = oldest
+                if latest:
+                    kwargs["latest"] = latest
+                if cursor:
+                    kwargs["cursor"] = cursor
+
+                resp = self._client.conversations_history(**kwargs)
+                if not resp.get("ok"):
+                    logger.warning(
+                        "conversations_history error for %s: %s",
+                        channel_id,
+                        resp.get("error"),
+                    )
+                    if not raw_messages:
+                        return {
+                            "messages": [],
+                            "coverage": {
+                                "count": 0,
+                                "oldest_ts": None,
+                                "newest_ts": None,
+                                "has_more": False,
+                                "pages_fetched": pages_fetched,
+                                "truncated_reason": resp.get("error"),
+                            },
+                            "user_map": {},
+                        }
+                    truncated_reason = resp.get("error")
+                    break
+
+                raw_messages.extend(resp.get("messages", []))
+                pages_fetched += 1
+                cursor = resp.get("response_metadata", {}).get("next_cursor") or None
+
+                if len(raw_messages) >= total_limit:
+                    raw_messages = raw_messages[:total_limit]
+                    if cursor:
+                        has_more = True
+                        truncated_reason = truncated_reason or "limit"
+                    break
+                if not cursor:
+                    break
+            else:
+                if cursor:
+                    has_more = True
+                    truncated_reason = truncated_reason or "max_pages"
         except Exception as exc:
             logger.warning("Failed to fetch history for channel %s: %s", channel_id, exc)
-            return [], {}
-
-        if not resp.get("ok"):
-            logger.warning("conversations_history error for %s: %s", channel_id, resp.get("error"))
-            return [], {}
-
-        raw_messages = resp.get("messages", [])
+            if not raw_messages:
+                return {
+                    "messages": [],
+                    "coverage": {
+                        "count": 0,
+                        "oldest_ts": None,
+                        "newest_ts": None,
+                        "has_more": False,
+                        "pages_fetched": pages_fetched,
+                        "truncated_reason": str(exc),
+                    },
+                    "user_map": {},
+                }
+            truncated_reason = truncated_reason or str(exc)
 
         all_user_ids: set[str] = set()
         for msg in raw_messages:
@@ -86,17 +225,59 @@ class SlackClient:
                 text,
             )
 
-        formatted = []
-        for msg in reversed(raw_messages):  # oldest first
-            uid = msg.get("user")
-            if not uid:
-                continue  # skip bot/system messages with no user field
-            name = user_map.get(uid, uid)
-            text = _replace_mentions(_extract_message_text(msg)).strip()
-            if text:
-                formatted.append(f"{name}: {text}")
+        def _ts_key(msg: dict) -> float:
+            try:
+                return float(msg.get("ts") or 0)
+            except (TypeError, ValueError):
+                return 0.0
 
-        return formatted, user_map
+        structured: list[dict[str, Any]] = []
+        timestamps: list[str] = []
+        # Sort by ts rather than reversing page order: with `oldest` set, Slack
+        # paginates forward (later pages are newer) while each page is internally
+        # newest-first, so concatenated page order is not chronological. Sorting
+        # over the reversed list keeps ts-less messages ordered among themselves
+        # as before (stable sort); real Slack messages always carry ts.
+        for msg in sorted(reversed(raw_messages), key=_ts_key):
+            text = _replace_mentions(_extract_message_text(msg)).strip()
+            if not text:
+                continue
+            ts = msg.get("ts", "")
+            if ts:
+                timestamps.append(ts)
+            structured.append({
+                "user": _message_sender_name(msg, user_map),
+                "text": text,
+                "ts": ts,
+                "links": _extract_links(msg),
+            })
+
+        return {
+            "messages": structured,
+            "coverage": {
+                "count": len(structured),
+                "oldest_ts": timestamps[0] if timestamps else None,
+                "newest_ts": timestamps[-1] if timestamps else None,
+                "has_more": has_more,
+                "pages_fetched": pages_fetched,
+                "truncated_reason": truncated_reason,
+            },
+            "user_map": user_map,
+        }
+
+    def get_history(self, channel_id: str, limit: int) -> tuple[list[str], dict[str, str]]:
+        """
+        Fetch recent messages from a channel.
+
+        Returns (formatted_messages, user_id_to_name_map).
+        User IDs in messages are replaced with real display names.
+        """
+        window = self.get_history_window(channel_id, limit=limit, max_pages=1)
+        formatted = [
+            f"{msg['user']}: {msg['text']}"
+            for msg in window.get("messages", [])
+        ]
+        return formatted, window.get("user_map", {})
 
     @staticmethod
     def _is_valid_slack_ts(ts: str) -> bool:

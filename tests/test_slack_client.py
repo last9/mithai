@@ -85,23 +85,455 @@ def test_get_history_replaces_user_mentions():
     assert "<@U2>" not in messages[0]
 
 
-def test_get_history_skips_bot_messages_without_user():
-    """Messages with no 'user' field (bot/system messages) must be excluded from output."""
+def test_get_history_includes_bot_messages_without_user():
+    """Bot/integration posts without a user field must be included in output."""
     client = _make_client()
     client._client.conversations_history.return_value = {
         "ok": True,
         "messages": [
-            {"text": "bot alert: deploy done"},  # no user field — should be skipped
-            {"user": "U1", "text": "thanks"},
+            {"user": "U1", "text": "thanks", "ts": "1718000001.000100"},
+            {
+                "bot_id": "B1",
+                "username": "ClickUp",
+                "text": "New Feedback Submitted",
+                "ts": "1718000000.000100",
+            },
         ],
+        "response_metadata": {"next_cursor": ""},
     }
     client._client.users_info.return_value = {
         "user": {"profile": {"display_name": "alice"}, "name": "alice"}
     }
 
     messages, _ = client.get_history("C1", 10)
-    assert len(messages) == 1
-    assert messages[0] == "alice: thanks"
+    assert len(messages) == 2
+    assert messages[0] == "ClickUp: New Feedback Submitted"
+    assert messages[1] == "alice: thanks"
+
+
+def test_get_history_window_paginates():
+    client = _make_client()
+    client._client.conversations_history.side_effect = [
+        {
+            "ok": True,
+            "messages": [{"user": "U2", "text": "second", "ts": "2.0"}],
+            "response_metadata": {"next_cursor": "cur1"},
+        },
+        {
+            "ok": True,
+            "messages": [{"user": "U1", "text": "first", "ts": "1.0"}],
+            "response_metadata": {"next_cursor": ""},
+        },
+    ]
+
+    def users_info(user):
+        names = {"U1": "alice", "U2": "bob"}
+        return {"user": {"profile": {"display_name": names[user]}, "name": names[user]}}
+
+    client._client.users_info.side_effect = users_info
+    window = client.get_history_window("C1", limit=10, max_pages=5)
+
+    assert window["coverage"]["pages_fetched"] == 2
+    assert window["coverage"]["count"] == 2
+    assert window["messages"][0]["text"] == "first"
+    assert window["messages"][1]["text"] == "second"
+    assert client._client.conversations_history.call_count == 2
+
+
+def test_get_history_window_stops_at_total_limit():
+    """limit applies across all pages, not per page."""
+    client = _make_client()
+    client._client.conversations_history.side_effect = [
+        {
+            "ok": True,
+            "messages": [
+                {"user": "U3", "text": "third", "ts": "3.0"},
+                {"user": "U2", "text": "second", "ts": "2.0"},
+                {"user": "U1", "text": "first", "ts": "1.0"},
+            ],
+            "response_metadata": {"next_cursor": "cur1"},
+        },
+        {
+            "ok": True,
+            "messages": [{"user": "U0", "text": "zeroth", "ts": "0.0"}],
+            "response_metadata": {"next_cursor": ""},
+        },
+    ]
+
+    def users_info(user):
+        names = {"U1": "a", "U2": "b", "U3": "c", "U0": "z"}
+        return {"user": {"profile": {"display_name": names[user]}, "name": names[user]}}
+
+    client._client.users_info.side_effect = users_info
+    window = client.get_history_window("C1", limit=3, max_pages=5)
+
+    assert window["coverage"]["count"] == 3
+    assert window["coverage"]["has_more"] is True
+    assert window["coverage"]["truncated_reason"] == "limit"
+    assert client._client.conversations_history.call_count == 1
+    first_call_limit = client._client.conversations_history.call_args_list[0][1]["limit"]
+    assert first_call_limit == 3
+
+
+def test_get_history_window_shrinks_follow_up_page_limit():
+    client = _make_client()
+    client._client.conversations_history.side_effect = [
+        {
+            "ok": True,
+            "messages": [
+                {"user": "U3", "text": "third", "ts": "3.0"},
+                {"user": "U2", "text": "second", "ts": "2.0"},
+            ],
+            "response_metadata": {"next_cursor": "cur1"},
+        },
+        {
+            "ok": True,
+            "messages": [
+                {"user": "U1", "text": "first", "ts": "1.0"},
+                {"user": "U0", "text": "zeroth", "ts": "0.0"},
+                {"user": "U9", "text": "ninth", "ts": "0.5"},
+            ],
+            "response_metadata": {"next_cursor": ""},
+        },
+    ]
+
+    def users_info(user):
+        names = {"U1": "a", "U2": "b", "U3": "c", "U0": "z", "U9": "n"}
+        return {"user": {"profile": {"display_name": names[user]}, "name": names[user]}}
+
+    client._client.users_info.side_effect = users_info
+    window = client.get_history_window("C1", limit=5, max_pages=5)
+
+    assert window["coverage"]["count"] == 5
+    assert window["coverage"]["has_more"] is False
+    assert client._client.conversations_history.call_count == 2
+    second_call_limit = client._client.conversations_history.call_args_list[1][1]["limit"]
+    assert second_call_limit == 3
+
+
+def test_get_history_window_extracts_clickup_links():
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "username": "ClickUp",
+                "text": "Feedback: game lag",
+                "attachments": [{"title_link": "https://app.clickup.com/t/abc123"}],
+                "ts": "1718000000.000100",
+            },
+        ],
+        "response_metadata": {"next_cursor": ""},
+    }
+
+    window = client.get_history_window("C1", limit=10)
+    assert window["messages"][0]["links"] == ["https://app.clickup.com/t/abc123"]
+
+
+def _window_for_text(text: str) -> dict:
+    """Build a window from a single bot message with the given raw text."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [{"username": "bot", "text": text, "ts": "1.0"}],
+        "response_metadata": {"next_cursor": ""},
+    }
+    return client.get_history_window("C1", limit=10)
+
+
+def test_extract_links_bare_urls_from_any_tool():
+    """Bare URLs (unwrapped by Slack, e.g. in bot/attachment text) are extracted
+    regardless of which tool they point at."""
+    window = _window_for_text(
+        "see https://github.com/last9/mithai/pull/99 and "
+        "https://linear.app/example/issue/ABC-1 and "
+        "https://app.clickup.com/t/abc123"
+    )
+    assert window["messages"][0]["links"] == [
+        "https://github.com/last9/mithai/pull/99",
+        "https://linear.app/example/issue/ABC-1",
+        "https://app.clickup.com/t/abc123",
+    ]
+
+
+def test_extract_links_trims_trailing_punctuation():
+    window = _window_for_text(
+        "done: https://github.com/last9/mithai/pull/99. also https://linear.app/x/FDE-1, ok?"
+    )
+    assert window["messages"][0]["links"] == [
+        "https://github.com/last9/mithai/pull/99",
+        "https://linear.app/x/FDE-1",
+    ]
+
+
+def test_extract_links_keeps_balanced_parens_in_url():
+    """Wikipedia-style URLs with balanced parens keep them; a closing paren that
+    just wraps the URL is trimmed."""
+    window = _window_for_text(
+        "ref https://en.wikipedia.org/wiki/Foo_(bar) and "
+        "(see https://github.com/last9/mithai)"
+    )
+    assert window["messages"][0]["links"] == [
+        "https://en.wikipedia.org/wiki/Foo_(bar)",
+        "https://github.com/last9/mithai",
+    ]
+
+
+def test_extract_links_slack_formatted_not_duplicated_by_bare_scan():
+    """Slack-formatted <url|label> links must not also be picked up (or mangled)
+    by the bare-URL scan."""
+    window = _window_for_text(
+        "<https://github.com/last9/mithai/pull/99|PR 99> and bare https://linear.app/x/FDE-1"
+    )
+    assert window["messages"][0]["links"] == [
+        "https://github.com/last9/mithai/pull/99",
+        "https://linear.app/x/FDE-1",
+    ]
+
+
+def test_extract_links_dedupes_across_sources():
+    """Same URL appearing as attachment link, Slack-formatted, and bare appears once."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {
+                "username": "bot",
+                "text": "<https://app.clickup.com/t/abc123|task> https://app.clickup.com/t/abc123",
+                "attachments": [{"title_link": "https://app.clickup.com/t/abc123"}],
+                "ts": "1.0",
+            },
+        ],
+        "response_metadata": {"next_cursor": ""},
+    }
+    window = client.get_history_window("C1", limit=10)
+    assert window["messages"][0]["links"] == ["https://app.clickup.com/t/abc123"]
+
+
+def test_extract_links_ignores_non_http_schemes():
+    window = _window_for_text("mail me mailto:a@b.c or ftp://x.y/z but https://ok.io/a works")
+    assert window["messages"][0]["links"] == ["https://ok.io/a"]
+
+
+def test_extract_links_unescapes_html_entities_in_urls():
+    """Slack escapes & as &amp; in message text; extracted URLs must be usable."""
+    window = _window_for_text(
+        "<https://a.io/q?x=1&amp;y=2|res> and bare https://b.io/q?a=1&amp;b=2"
+    )
+    assert window["messages"][0]["links"] == [
+        "https://a.io/q?x=1&y=2",
+        "https://b.io/q?a=1&b=2",
+    ]
+
+
+def test_extract_links_trims_mrkdwn_emphasis_and_brackets():
+    window = _window_for_text("see *https://a.io/x* or [https://b.io/y] or _https://c.io/z_")
+    assert window["messages"][0]["links"] == [
+        "https://a.io/x",
+        "https://b.io/y",
+        "https://c.io/z",
+    ]
+
+
+def test_get_history_window_orders_by_ts_with_forward_pagination():
+    """With `oldest` set, Slack paginates forward (page 2 is NEWER than page 1)
+    while each page is internally newest-first. Output must still be oldest-first
+    by ts, not page-concatenation order."""
+    client = _make_client()
+    client._client.conversations_history.side_effect = [
+        {
+            "ok": True,
+            "messages": [
+                {"user": "U1", "text": "second", "ts": "2.0"},
+                {"user": "U1", "text": "first", "ts": "1.0"},
+            ],
+            "response_metadata": {"next_cursor": "cur1"},
+        },
+        {
+            "ok": True,
+            "messages": [
+                {"user": "U1", "text": "fourth", "ts": "4.0"},
+                {"user": "U1", "text": "third", "ts": "3.0"},
+            ],
+            "response_metadata": {"next_cursor": ""},
+        },
+    ]
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    window = client.get_history_window("C1", limit=10, oldest="0.5", max_pages=5)
+
+    assert [m["text"] for m in window["messages"]] == ["first", "second", "third", "fourth"]
+    assert window["coverage"]["oldest_ts"] == "1.0"
+    assert window["coverage"]["newest_ts"] == "4.0"
+
+
+def test_get_history_window_stops_at_max_pages():
+    """Exhausting max_pages with a live cursor must set truncated_reason='max_pages'."""
+    client = _make_client()
+    client._client.conversations_history.side_effect = [
+        {
+            "ok": True,
+            "messages": [{"user": "U1", "text": f"msg{i}", "ts": f"{i}.0"}],
+            "response_metadata": {"next_cursor": f"cur{i}"},
+        }
+        for i in range(3)
+    ]
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    window = client.get_history_window("C1", limit=100, max_pages=3)
+
+    assert window["coverage"]["pages_fetched"] == 3
+    assert window["coverage"]["has_more"] is True
+    assert window["coverage"]["truncated_reason"] == "max_pages"
+    assert client._client.conversations_history.call_count == 3
+
+
+def test_get_history_window_returns_partial_results_on_mid_pagination_error():
+    """An API error after a successful page keeps fetched messages and records the error."""
+    client = _make_client()
+    client._client.conversations_history.side_effect = [
+        {
+            "ok": True,
+            "messages": [{"user": "U1", "text": "kept", "ts": "1.0"}],
+            "response_metadata": {"next_cursor": "cur1"},
+        },
+        {"ok": False, "error": "ratelimited"},
+    ]
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    window = client.get_history_window("C1", limit=100, max_pages=5)
+
+    assert window["coverage"]["count"] == 1
+    assert window["messages"][0]["text"] == "kept"
+    assert window["coverage"]["truncated_reason"] == "ratelimited"
+    # Current contract: errors set truncated_reason but not has_more; callers
+    # must check both fields to detect an incomplete window.
+    assert window["coverage"]["has_more"] is False
+
+
+def test_get_history_window_keeps_partial_results_on_mid_pagination_exception():
+    """An exception after a successful page keeps fetched messages and records it."""
+    client = _make_client()
+    client._client.conversations_history.side_effect = [
+        {
+            "ok": True,
+            "messages": [{"user": "U1", "text": "kept", "ts": "1.0"}],
+            "response_metadata": {"next_cursor": "cur1"},
+        },
+        Exception("network down"),
+    ]
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    window = client.get_history_window("C1", limit=100, max_pages=5)
+
+    assert window["coverage"]["count"] == 1
+    assert window["messages"][0]["text"] == "kept"
+    assert window["coverage"]["truncated_reason"] == "network down"
+
+
+def test_get_history_window_returns_empty_structure_on_first_page_error():
+    client = _make_client()
+    client._client.conversations_history.return_value = {"ok": False, "error": "channel_not_found"}
+
+    window = client.get_history_window("C1", limit=100)
+
+    assert window["messages"] == []
+    assert window["user_map"] == {}
+    assert window["coverage"]["count"] == 0
+    assert window["coverage"]["oldest_ts"] is None
+    assert window["coverage"]["truncated_reason"] == "channel_not_found"
+
+
+def test_get_history_window_returns_empty_structure_on_exception():
+    client = _make_client()
+    client._client.conversations_history.side_effect = Exception("network down")
+
+    window = client.get_history_window("C1", limit=100)
+
+    assert window["messages"] == []
+    assert window["coverage"]["count"] == 0
+    assert window["coverage"]["truncated_reason"] == "network down"
+
+
+def test_get_history_window_passes_time_bounds_to_api():
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [],
+        "response_metadata": {"next_cursor": ""},
+    }
+
+    client.get_history_window("C1", limit=10, oldest="100.0", latest="200.0")
+
+    kwargs = client._client.conversations_history.call_args[1]
+    assert kwargs["oldest"] == "100.0"
+    assert kwargs["latest"] == "200.0"
+
+
+def test_get_history_window_clamps_limit():
+    """limit is clamped to [1, 1000]; per-page API limit never exceeds 1000."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [],
+        "response_metadata": {"next_cursor": ""},
+    }
+
+    client.get_history_window("C1", limit=5000)
+    assert client._client.conversations_history.call_args[1]["limit"] == 1000
+
+    client.get_history_window("C1", limit=0)
+    assert client._client.conversations_history.call_args[1]["limit"] == 1
+
+
+def test_get_history_window_includes_bot_messages_without_user():
+    """Window output must keep bot/integration posts that lack a user field."""
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {"user": "U1", "text": "thanks", "ts": "2.0"},
+            {"bot_id": "B1", "username": "ClickUp", "text": "New Feedback", "ts": "1.0"},
+        ],
+        "response_metadata": {"next_cursor": ""},
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    window = client.get_history_window("C1", limit=10)
+
+    assert window["coverage"]["count"] == 2
+    assert window["messages"][0]["user"] == "ClickUp"
+    assert window["messages"][1]["user"] == "alice"
+
+
+def test_get_history_window_coverage_timestamps():
+    client = _make_client()
+    client._client.conversations_history.return_value = {
+        "ok": True,
+        "messages": [
+            {"user": "U1", "text": "newest", "ts": "3.0"},
+            {"user": "U1", "text": "oldest", "ts": "1.0"},
+        ],
+        "response_metadata": {"next_cursor": ""},
+    }
+    client._client.users_info.return_value = {
+        "user": {"profile": {"display_name": "alice"}, "name": "alice"}
+    }
+
+    window = client.get_history_window("C1", limit=10)
+
+    assert window["coverage"]["oldest_ts"] == "1.0"
+    assert window["coverage"]["newest_ts"] == "3.0"
 
 
 def test_get_history_returns_empty_list_for_no_messages():

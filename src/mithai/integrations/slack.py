@@ -105,10 +105,15 @@ class SlackClient:
     Used by both SlackAdapterBase (internally) and skills (via adapter.slack_client).
     """
 
+    # Per-request HTTP timeout (seconds). slack_sdk defaults to 30s, which lets a
+    # paginated get_history_window (up to max_pages requests) hang for minutes;
+    # 10s bounds each call and a mid-scan timeout surfaces as truncated_reason.
+    _REQUEST_TIMEOUT = 10
+
     def __init__(self, bot_token: str):
         from slack_sdk import WebClient
         self._token = bot_token
-        self._client = WebClient(token=bot_token)
+        self._client = WebClient(token=bot_token, timeout=self._REQUEST_TIMEOUT)
 
     def get_history_window(
         self,

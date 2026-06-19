@@ -31,6 +31,66 @@ from mithai.state.base import StateBackend
 logger = logging.getLogger(__name__)
 
 
+# Tool-call scaffolding the model sometimes emits as *text* (e.g. after a tool
+# denial) instead of a structured tool_use block. It must never reach a human or
+# be replayed into history as if it were a valid reply. Detection is
+# quote-agnostic so single- and double-quoted attribute renderings both trip it.
+_TOOL_CALL_MARKERS = ("<function_calls>", "<invoke name=", "<parameter name=")
+
+
+def _sweep_tool_call_tags(text: str) -> str:
+    """Unconditionally remove tool-call scaffolding tags (any quote style).
+
+    The safety net behind the recovery path: unwraps ``<parameter>`` bodies and
+    deletes ``<function_calls>``/``<invoke>`` wrappers plus any orphaned or
+    truncated scaffolding tag left by partial model output.
+    """
+    text = re.sub(r"<parameter\b[^>]*>(.*?)</parameter>", r"\1", text, flags=re.S)
+    text = re.sub(r"</?(?:function_calls|invoke|parameter)\b[^>]*>?", "", text)
+    return text.strip()
+
+
+def _strip_tool_call_syntax(text: str) -> str:
+    """Remove leaked tool-call XML from a reply, recovering inner content.
+
+    When the model narrates a tool call as text, the human-meant message lives in
+    a ``message``/``text`` parameter; fabricated ``result`` blocks are pure
+    scaffolding. Recover the former, drop the latter, and as a last resort strip
+    the wrapper tags. A bounded terminal sweep guarantees no marker survives for
+    any input that tripped detection — including nested scaffolding inside a
+    recovered value or partial/truncated tags.
+    """
+    if not text:
+        return text
+    # Only act when the reply LEADS with tool-call scaffolding — the signature of
+    # the model narrating a call as its whole response. Prose that merely mentions
+    # or quotes tool-call syntax (code review, this very post-mortem) is left
+    # untouched, so the guard never mangles a legitimate reply.
+    if not text.lstrip().startswith(("<function_calls>", "<invoke name=")):
+        return text
+    # Acting here means the model narrated a tool call as text — a real incident
+    # (usually post-denial). Log it so operators can see it without diffing
+    # what the user saw against the session store.
+    logger.warning("stripped leaked tool-call scaffolding from model output (%d chars)", len(text))
+    # Fabricated tool-result blocks are never human content (either quote style).
+    cleaned = re.sub(
+        r"<parameter name=[\"']result[\"']>.*?</parameter>", "", text, flags=re.S
+    )
+    # Prefer the actual message/text the model intended to send.
+    recovered = re.findall(
+        r"<parameter name=[\"'](?:message|text)[\"']>(.*?)</parameter>",
+        cleaned,
+        flags=re.S,
+    )
+    result = "\n".join(p.strip() for p in recovered).strip() if recovered else _sweep_tool_call_tags(cleaned)
+    # Terminal guarantee: sweep until marker-free (bounded against pathological nesting).
+    for _ in range(3):
+        if not any(m in result for m in _TOOL_CALL_MARKERS):
+            break
+        result = _sweep_tool_call_tags(result)
+    return result
+
+
 class Engine:
     """
     The brain of mithai.
@@ -471,7 +531,13 @@ class Engine:
 
         # Extract raw text first (no fallback yet) so the nudge check sees "" not "(no response)"
         response_text = self._extract_raw_text(response)
-        response_text = re.sub(r"^\[Tools called:.*?\]\n?", "", response_text).strip()
+        # Re-sanitize after the prefix strip: removing a leading "[Tools called:]"
+        # marker could re-expose a scaffolding wrapper that _extract_raw_text's
+        # lead-with guard had skipped. If this strips to empty, the
+        # silent-after-tools nudge below re-asks the model for prose.
+        response_text = _strip_tool_call_syntax(
+            re.sub(r"^\[Tools called:.*?\]\n?", "", response_text).strip()
+        )
 
         # If the model went silent after a tool chain, nudge it to produce a reply.
         # Pass tools so it can take corrective action (e.g. memory_write after reading a gap)
@@ -802,8 +868,15 @@ class Engine:
                 messages.append({"role": "assistant", "content": tool_use_blocks})
                 messages.append({"role": "user", "content": tool_result_blocks})
 
-            # Final assistant text response
-            messages.append({"role": "assistant", "content": turn["assistant_response"]})
+            # Final assistant text response. Sanitize so a past turn that led with
+            # leaked tool-call XML can't be replayed as a valid example. Coerce
+            # None/missing and never emit an empty content block (the API rejects
+            # it) — fall back to the same sentinel used on the live reply path.
+            assistant_response = turn.get("assistant_response") or ""
+            messages.append({
+                "role": "assistant",
+                "content": _strip_tool_call_syntax(assistant_response) or "(no response)",
+            })
 
         return messages
 
@@ -845,12 +918,18 @@ class Engine:
 
     @staticmethod
     def _extract_raw_text(response) -> str:
-        """Extract text content from LLM response, returning '' when empty."""
+        """Extract text content from an LLM response, sanitized, '' when empty.
+
+        Sanitization runs at this chokepoint so every text-extraction path —
+        live reply, post-tool nudge, and the onboarding intro (via
+        ``_extract_text``) — is protected against leaked tool-call scaffolding
+        without each caller having to remember. See ``_strip_tool_call_syntax``.
+        """
         parts = []
         for block in response.content:
             if block.get("type") == "text":
                 parts.append(block["text"])
-        return "\n".join(parts).strip()
+        return _strip_tool_call_syntax("\n".join(parts).strip())
 
     @staticmethod
     def _extract_text(response) -> str:

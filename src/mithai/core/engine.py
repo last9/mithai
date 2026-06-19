@@ -33,62 +33,61 @@ logger = logging.getLogger(__name__)
 
 # Tool-call scaffolding the model sometimes emits as *text* (e.g. after a tool
 # denial) instead of a structured tool_use block. It must never reach a human or
-# be replayed into history as if it were a valid reply. Detection is
-# quote-agnostic so single- and double-quoted attribute renderings both trip it.
+# be replayed into history as if it were a valid reply. Markers are lowercase;
+# detection lowercases the input, so casing and quote style do not matter.
 _TOOL_CALL_MARKERS = ("<function_calls>", "<invoke name=", "<parameter name=")
 
+# Realistic agent replies are bounded by max_tokens (~16k chars at 4096). Above
+# this, the paired-tag regexes could backtrack toward O(n^2) on unclosed tags, so
+# oversized/degenerate input falls back to a linear, backtracking-free strip.
+_MAX_SANITIZE_LEN = 20_000
 
-def _sweep_tool_call_tags(text: str) -> str:
-    """Unconditionally remove tool-call scaffolding tags (any quote style).
+# The human-meant value lives in a message/text parameter — unwrap it in place.
+_CONTENT_PARAM_RE = re.compile(
+    r"<parameter\s+name=[\"']?(?:message|text)[\"']?\s*>(.*?)</parameter>", re.S | re.I
+)
+# Any remaining parameter block is a machine value (result, channel_id, …) — drop it.
+_ANY_PARAM_RE = re.compile(r"<parameter\b[^>]*>.*?</parameter>", re.S | re.I)
+# Linear, backtracking-free removal of any scaffolding tag, incl. orphaned/partial.
+_ORPHAN_TAG_RE = re.compile(r"</?(?:function_calls|invoke|parameter)\b[^>]*>?", re.I)
 
-    The safety net behind the recovery path: unwraps ``<parameter>`` bodies and
-    deletes ``<function_calls>``/``<invoke>`` wrappers plus any orphaned or
-    truncated scaffolding tag left by partial model output.
+
+def _strip_tool_call_syntax(text):
+    """Remove leaked tool-call scaffolding from a reply, in place.
+
+    The model sometimes narrates a tool call as *text* (e.g. after a denial)
+    instead of a structured tool_use block; that scaffolding must never reach a
+    human or be replayed into history. Act whenever a marker appears ANYWHERE — a
+    leading prose preamble ("Posting now:") must not be a bypass — and strip the
+    tag spans IN PLACE: unwrap the human-meant ``message``/``text`` value, drop
+    machine params (``result``, ``channel_id``, …) and the call wrappers, and keep
+    all surrounding prose. So a narrated call is cleaned to its message while a
+    reply that merely quotes tool-call syntax keeps its sentences (only the literal
+    tags go). Case-insensitive and quote-agnostic.
     """
-    text = re.sub(r"<parameter\b[^>]*>(.*?)</parameter>", r"\1", text, flags=re.S)
-    text = re.sub(r"</?(?:function_calls|invoke|parameter)\b[^>]*>?", "", text)
-    return text.strip()
-
-
-def _strip_tool_call_syntax(text: str) -> str:
-    """Remove leaked tool-call XML from a reply, recovering inner content.
-
-    When the model narrates a tool call as text, the human-meant message lives in
-    a ``message``/``text`` parameter; fabricated ``result`` blocks are pure
-    scaffolding. Recover the former, drop the latter, and as a last resort strip
-    the wrapper tags. A bounded terminal sweep guarantees no marker survives for
-    any input that tripped detection — including nested scaffolding inside a
-    recovered value or partial/truncated tags.
-    """
-    if not text:
+    if not isinstance(text, str):
+        return ""
+    if not text or not any(m in text.lower() for m in _TOOL_CALL_MARKERS):
         return text
-    # Only act when the reply LEADS with tool-call scaffolding — the signature of
-    # the model narrating a call as its whole response. Prose that merely mentions
-    # or quotes tool-call syntax (code review, this very post-mortem) is left
-    # untouched, so the guard never mangles a legitimate reply.
-    if not text.lstrip().startswith(("<function_calls>", "<invoke name=")):
-        return text
-    # Acting here means the model narrated a tool call as text — a real incident
-    # (usually post-denial). Log it so operators can see it without diffing
-    # what the user saw against the session store.
+    # A real incident (usually post-denial). Log it so operators see narrate-as-text
+    # without diffing what the user saw against the session store.
     logger.warning("stripped leaked tool-call scaffolding from model output (%d chars)", len(text))
-    # Fabricated tool-result blocks are never human content (either quote style).
-    cleaned = re.sub(
-        r"<parameter name=[\"']result[\"']>.*?</parameter>", "", text, flags=re.S
-    )
-    # Prefer the actual message/text the model intended to send.
-    recovered = re.findall(
-        r"<parameter name=[\"'](?:message|text)[\"']>(.*?)</parameter>",
-        cleaned,
-        flags=re.S,
-    )
-    result = "\n".join(p.strip() for p in recovered).strip() if recovered else _sweep_tool_call_tags(cleaned)
-    # Terminal guarantee: sweep until marker-free (bounded against pathological nesting).
+    if len(text) > _MAX_SANITIZE_LEN:
+        # Avoid backtracking on huge/degenerate input.
+        return _ORPHAN_TAG_RE.sub("", text).strip()
+    # Unwrap the intended message/text value(s); drop other (machine) params; remove
+    # the call wrappers — all in place so surrounding prose survives.
+    cleaned = _CONTENT_PARAM_RE.sub(lambda m: m.group(1).strip(), text)
+    cleaned = _ANY_PARAM_RE.sub("", cleaned)
+    cleaned = re.sub(r"</?function_calls\s*>", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"</?invoke\b[^>]*>", "", cleaned, flags=re.I)
+    # Terminal guarantee: clear any orphaned/partial scaffolding tags (linear,
+    # bounded against pathological nesting).
     for _ in range(3):
-        if not any(m in result for m in _TOOL_CALL_MARKERS):
+        if not any(m in cleaned.lower() for m in _TOOL_CALL_MARKERS):
             break
-        result = _sweep_tool_call_tags(result)
-    return result
+        cleaned = _ORPHAN_TAG_RE.sub("", cleaned)
+    return cleaned.strip()
 
 
 class Engine:
@@ -868,14 +867,13 @@ class Engine:
                 messages.append({"role": "assistant", "content": tool_use_blocks})
                 messages.append({"role": "user", "content": tool_result_blocks})
 
-            # Final assistant text response. Sanitize so a past turn that led with
-            # leaked tool-call XML can't be replayed as a valid example. Coerce
-            # None/missing and never emit an empty content block (the API rejects
-            # it) — fall back to the same sentinel used on the live reply path.
-            assistant_response = turn.get("assistant_response") or ""
+            # Final assistant text response. Sanitize so a past turn that leaked
+            # tool-call scaffolding can't be replayed as a valid example.
+            # _strip_tool_call_syntax coerces None/non-string to ""; the sentinel
+            # then avoids an empty content block (the API rejects those).
             messages.append({
                 "role": "assistant",
-                "content": _strip_tool_call_syntax(assistant_response) or "(no response)",
+                "content": _strip_tool_call_syntax(turn.get("assistant_response")) or "(no response)",
             })
 
         return messages

@@ -87,13 +87,19 @@ def test_outbound_reply_recovers_intended_message_and_drops_scaffolding():
     assert reply == INTENDED, f"intended message not recovered: {reply!r}"
 
 
-def test_legitimate_prose_quoting_tool_syntax_is_preserved():
-    """A code-review/post-mortem reply that QUOTES tool-call syntax must survive."""
+def test_prose_quoting_tool_syntax_keeps_prose_strips_tags():
+    """A reply that quotes tool-call syntax keeps its prose; the tags are removed.
+
+    Contract trade-off: a pure text-shape sanitizer cannot distinguish a narrated
+    call from prose quoting one without a leakable bypass. We strip the scaffolding
+    tags IN PLACE — the surrounding sentences survive (no destruction), but the
+    literal markers do not (no leak). Meta-discussion is degraded, never lost.
+    """
     engine, llm = _make_engine()
     prose = (
         "The bug: the model emits a literal "
-        '<function_calls>\n<invoke name="slack__slack_send_message">… blob. '
-        'It also fabricates a <parameter name="result"> block. Fix the sanitizer."'
+        '<function_calls>\n<invoke name="slack__slack_send_message"> blob. '
+        'It also fabricates a <parameter name="result">x</parameter> block. Fix it.'
     )
     resp = MagicMock()
     resp.content = [{"type": "text", "text": prose}]
@@ -103,7 +109,23 @@ def test_legitimate_prose_quoting_tool_syntax_is_preserved():
     msg = IncomingMessage(text="review this", channel_id="C1", user_id="alice", platform="slack")
     reply = engine.handle(msg, _adapter())
 
-    assert reply == prose, f"legitimate prose was mangled: {reply!r}"
+    assert not _has_marker(reply), f"scaffolding leaked: {reply!r}"
+    assert "The bug:" in reply and "Fix it." in reply, f"prose was destroyed: {reply!r}"
+
+
+def test_prefix_before_wrapper_is_sanitized():
+    """A narrated call with a non-marker prefix must NOT bypass the sanitizer."""
+    engine, llm = _make_engine()
+    resp = MagicMock()
+    resp.content = [{"type": "text", "text": "Posting now:\n" + LEAKED_XML}]
+    resp.stop_reason = "end_turn"
+    llm.create_message.return_value = resp
+
+    msg = IncomingMessage(text="introduce yourself", channel_id="C1", user_id="alice", platform="slack")
+    reply = engine.handle(msg, _adapter())
+
+    assert not _has_marker(reply), f"prefix bypass leaked: {reply!r}"
+    assert "Posting now:" in reply and INTENDED in reply, f"content lost: {reply!r}"
 
 
 # --- Onboarding Phase-2 intro path (the actual incident surface) ------------
@@ -176,9 +198,57 @@ def test_passthrough_when_no_markers():
     assert _strip_tool_call_syntax("Hello, how can I help?") == "Hello, how can I help?"
 
 
-def test_passthrough_when_markers_mid_prose():
-    s = 'See the docs about <parameter name="message"> usage; it matters.'
-    assert _strip_tool_call_syntax(s) == s  # does not lead with a wrapper
+def test_markers_mid_prose_are_stripped_prose_kept():
+    """Presence-triggered: tags are removed in place; the prose around them stays."""
+    s = 'See the docs about <parameter name="message">x</parameter> usage; it matters.'
+    out = _strip_tool_call_syntax(s)
+    assert not _has_marker(out)
+    assert "See the docs about" in out and "usage; it matters." in out
+
+
+def test_bare_parameter_lead_is_stripped():
+    """A reply leading with a bare <parameter ...> (not a full wrapper) must not leak."""
+    assert _strip_tool_call_syntax('<parameter name="message">hello</parameter>') == "hello"
+    # A leading fabricated result block (the incident appends one OUTSIDE </function_calls>).
+    assert _has_marker('<parameter name="result">{"ok":true}</parameter>')
+    assert not _has_marker(_strip_tool_call_syntax('<parameter name="result">{"ok":true}</parameter>'))
+
+
+def test_machine_params_are_not_surfaced():
+    """Non-message params (channel_id, result) are dropped, not shown to the user."""
+    s = '<invoke name="slack__slack_send_message"><parameter name="channel_id">C0123TEST01</parameter></invoke>'
+    out = _strip_tool_call_syntax(s)
+    assert not _has_marker(out)
+    assert "C0123TEST01" not in out, f"leaked a machine param value: {out!r}"
+
+
+def test_trailing_prose_after_call_is_kept():
+    """Prose AFTER the narrated call must survive (not collapsed away)."""
+    s = (
+        '<function_calls><invoke name="slack__slack_send_message">'
+        '<parameter name="message">Done!</parameter></invoke></function_calls>'
+        '\nAlso: the deploy failed — please check.'
+    )
+    out = _strip_tool_call_syntax(s)
+    assert not _has_marker(out)
+    assert "Done!" in out and "the deploy failed" in out, f"trailing prose lost: {out!r}"
+
+
+def test_oversized_input_is_bounded_and_marker_free():
+    """Pathological large input (many unclosed params) must not leak or hang."""
+    s = "<function_calls>" + '<parameter name="result">x</parameter>' * 6000
+    out = _strip_tool_call_syntax(s)
+    assert not _has_marker(out), "oversized input leaked markers"
+
+
+def test_history_handles_nonstring_assistant_response():
+    """A stored turn with a non-string (list/dict) response must not crash."""
+    engine, _ = _make_engine()
+    session = {"turns": [{
+        "user_message": "hi", "tool_calls": [], "assistant_response": ["a", "b"], "images": None,
+    }]}
+    messages = engine._build_history(session)  # must not raise
+    assert all(isinstance(m["content"], (str, list)) for m in messages)
 
 
 def test_single_quoted_attributes_are_stripped():

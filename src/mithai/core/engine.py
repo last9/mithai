@@ -150,6 +150,72 @@ class Engine:
                 except Exception:
                     logger.warning("Skill %s bind() failed", skill_name, exc_info=True)
 
+        self._inject_slack_roster(adapters)
+
+    _ROSTER_PATH = "team/roster.md"
+    _ROSTER_ID_RE = r"U[A-Z0-9]{6,}"
+
+    @classmethod
+    def _parse_roster_pairs(cls, text: str | None) -> dict[str, str]:
+        """Extract {name: slack_id} pairs from a roster file, tolerant of format.
+
+        Handles the three shapes seen in agent rosters: `Name (Uxxxx)` (headings /
+        bold prose), `Name - Uxxxx` (dash/colon separated), and `| Uxxxx | Name |`
+        (table rows). First match for a name wins. Returns {} on empty/None.
+        """
+        pairs: dict[str, str] = {}
+        if not text:
+            return pairs
+
+        def clean(s: str) -> str:
+            return re.sub(r"[*`_>#]", "", s).strip(" -•|\t").strip()
+
+        uid = cls._ROSTER_ID_RE
+        # 1) Name (Uxxxx)
+        for m in re.finditer(rf"([A-Za-z][\w .'\-/]{{0,60}}?)[\s*`_]*\(({uid})\)", text):
+            name = clean(m.group(1))
+            if name:
+                pairs.setdefault(name, m.group(2))
+        # 2) Name - Uxxxx  (dash/colon separated, no parens)
+        for m in re.finditer(rf"([A-Za-z][\w .'\-/]{{0,60}}?)[\s*`_]*[-–:]\s*({uid})\b", text):
+            name = clean(m.group(1))
+            if name:
+                pairs.setdefault(name, m.group(2))
+        # 3) Table row | Uxxxx | Name |
+        for m in re.finditer(rf"\|\s*({uid})\s*\|\s*([^|\n]+?)\s*\|", text):
+            name = clean(m.group(2))
+            if name:
+                pairs.setdefault(name, m.group(1))
+        return pairs
+
+    def _inject_slack_roster(self, adapters: list[tuple[str, "Adapter"]]) -> None:
+        """Push roster name->id pairs to every Slack adapter's SlackClient.
+
+        Framework-owned injection point (not a skill bind() hook, which agents
+        override). Reads the roster from memory and hands the integration layer a
+        plain dict, so integrations stays memory-ignorant. Never raises.
+        """
+        slack_clients = [
+            client
+            for _, adapter in adapters
+            if (client := getattr(adapter, "slack_client", None)) is not None
+            and hasattr(client, "set_roster_fallback")
+        ]
+        if not slack_clients:
+            return
+        roster_text = None
+        if self._memory is not None:
+            try:
+                roster_text = self._memory.read(self._ROSTER_PATH)
+            except Exception:
+                logger.warning("Failed to read roster for mention fallback", exc_info=True)
+        pairs = self._parse_roster_pairs(roster_text)
+        for client in slack_clients:
+            try:
+                client.set_roster_fallback(pairs)
+            except Exception:
+                logger.warning("set_roster_fallback failed", exc_info=True)
+
     def handle(self, message: IncomingMessage, adapter: Adapter) -> str:
         """
         Process an incoming message and return the response text.

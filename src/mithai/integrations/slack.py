@@ -4,6 +4,8 @@ import base64
 import html
 import logging
 import re
+import threading
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -417,3 +419,110 @@ class SlackClient:
             except Exception:
                 result[uid] = uid
         return result
+
+    # -- Outbound mention resolution: @name -> user id (inverse of resolve_user_ids) --
+    #
+    # The inbound path rewrites <@id> -> @display_name before the LLM sees a message,
+    # so the LLM only ever learns names. This builds the reverse map (name -> id) from
+    # users.list, cached with a TTL, plus an injected roster fallback, so outbound text
+    # like "cc: @alice" can be encoded back to a real <@id> mention.
+    _MENTION_CACHE_TTL = 600.0  # seconds
+
+    def _ensure_mention_state(self) -> None:
+        """Lazily init mention-cache attributes (instances may bypass __init__ in tests)."""
+        if not hasattr(self, "_name_lock"):
+            self._name_lock = threading.Lock()
+            self._name_full: dict[str, set[str]] | None = None
+            self._name_first: dict[str, set[str]] | None = None
+            self._name_built = 0.0
+            self._roster_fallback: dict[str, str] = {}
+
+    @staticmethod
+    def _mention_name_keys(name: str | None):
+        """Yield ('full'|'first', key) normalized lookup keys for a name string."""
+        norm = (name or "").strip().lower()
+        if not norm:
+            return
+        yield ("full", norm)
+        parts = norm.split()
+        if len(parts) > 1:
+            yield ("first", parts[0])
+
+    def set_roster_fallback(self, pairs: dict[str, str]) -> None:
+        """Inject name->id pairs (e.g. from agent memory) as a resolution fallback.
+
+        Used for users absent from users.list. Never raises. Invalidates the cached
+        map so the next resolve folds the roster in.
+        """
+        self._ensure_mention_state()
+        self._roster_fallback = dict(pairs or {})
+        self._name_full = None
+
+    def _build_mention_map(self) -> None:
+        full: dict[str, set[str]] = {}
+        first: dict[str, set[str]] = {}
+
+        def add(name: str | None, uid: str) -> None:
+            for kind, key in self._mention_name_keys(name):
+                (full if kind == "full" else first).setdefault(key, set()).add(uid)
+
+        try:
+            cursor: str | None = None
+            for _ in range(20):  # bound pagination
+                kwargs = {"limit": 200}
+                if cursor:
+                    kwargs["cursor"] = cursor
+                resp = self._client.users_list(**kwargs)
+                if not resp.get("ok", False):
+                    break
+                for member in resp.get("members", []):
+                    if member.get("deleted"):
+                        continue
+                    uid = member.get("id")
+                    if not uid:
+                        continue
+                    profile = member.get("profile", {}) or {}
+                    for nm in (profile.get("display_name"), profile.get("real_name"), member.get("name")):
+                        add(nm, uid)
+                cursor = (resp.get("response_metadata") or {}).get("next_cursor") or None
+                if not cursor:
+                    break
+        except Exception:
+            logger.warning("users.list failed while building mention map", exc_info=True)
+
+        # Roster fallback folds in after users.list (authority); conflicting ids
+        # become a collision (multiple ids for one key) and resolve to None.
+        for nm, uid in (self._roster_fallback or {}).items():
+            if uid:
+                add(nm, uid)
+
+        self._name_full = full
+        self._name_first = first
+        self._name_built = time.monotonic()
+
+    def resolve_mention_name(self, token: str) -> str | None:
+        """Map an @name token to a Slack user id, or None.
+
+        Conservative: returns an id only when the token exactly matches a known name
+        with a single id, or is a single-token unique first name. Collisions and
+        unknowns return None. Never raises (falls back to None on any error).
+        """
+        self._ensure_mention_state()
+        norm = (token or "").strip().lower()
+        if not norm:
+            return None
+        try:
+            with self._name_lock:
+                if self._name_full is None or (time.monotonic() - self._name_built) > self._MENTION_CACHE_TTL:
+                    self._build_mention_map()
+                ids = self._name_full.get(norm)
+                if ids:
+                    return next(iter(ids)) if len(ids) == 1 else None
+                if " " not in norm:
+                    ids = self._name_first.get(norm)
+                    if ids and len(ids) == 1:
+                        return next(iter(ids))
+                return None
+        except Exception:
+            logger.warning("resolve_mention_name failed for %r", token, exc_info=True)
+            return None

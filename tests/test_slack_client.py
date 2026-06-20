@@ -950,3 +950,101 @@ def test_download_images_handles_multiple_images(monkeypatch):
     assert len(result) == 2
     assert result[0] == {"media_type": "image/png", "data": base64.b64encode(png_bytes).decode("ascii")}
     assert result[1] == {"media_type": "image/jpeg", "data": base64.b64encode(jpg_bytes).decode("ascii")}
+
+
+# ---------------------------------------------------------------------------
+# resolve_mention_name() — outbound @name -> user id reverse resolution (U1)
+# ---------------------------------------------------------------------------
+
+def _members(*entries):
+    """Build a users.list payload from (id, display, real, name) tuples."""
+    members = []
+    for uid, display, real, name in entries:
+        members.append({
+            "id": uid,
+            "name": name,
+            "deleted": False,
+            "profile": {"display_name": display, "real_name": real},
+        })
+    return {"ok": True, "members": members, "response_metadata": {"next_cursor": ""}}
+
+
+def test_resolve_mention_name_exact_unique():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U012", "alice", "Alice Example", "alice"),
+    )
+    assert client.resolve_mention_name("alice") == "U012"
+
+
+def test_resolve_mention_name_full_multiword_unique():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U012", "Alice Example", "Alice Example", "aexample"),
+    )
+    assert client.resolve_mention_name("alice example") == "U012"
+
+
+def test_resolve_mention_name_unique_first_name():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U012", "Alice Example", "Alice Example", "aexample"),
+    )
+    # single-token @alice resolves via unique first name
+    assert client.resolve_mention_name("alice") == "U012"
+
+
+def test_resolve_mention_name_collision_returns_none():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U1", "alex", "Alex", "alex"),
+        ("U2", "alex", "Alex", "alex2"),
+    )
+    assert client.resolve_mention_name("alex") is None
+
+
+def test_resolve_mention_name_first_name_collision_returns_none():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U1", "Alex Carter", "Alex Carter", "ksharma"),
+        ("U2", "Alex Rivera", "Alex Rivera", "kranjan"),
+    )
+    assert client.resolve_mention_name("alex") is None
+
+
+def test_resolve_mention_name_unknown_returns_none():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U012", "alice", "Alice Example", "alice"),
+    )
+    assert client.resolve_mention_name("stranger") is None
+
+
+def test_resolve_mention_name_roster_fallback():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U012", "alice", "Alice Example", "alice"),
+    )
+    client.set_roster_fallback({"fallback": "U999"})
+    # name absent from users.list resolves via injected roster
+    assert client.resolve_mention_name("fallback") == "U999"
+    # users.list names still resolve
+    assert client.resolve_mention_name("alice") == "U012"
+
+
+def test_resolve_mention_name_users_list_error_returns_none():
+    client = _make_client()
+    client._client.users_list.side_effect = Exception("rate limited")
+    assert client.resolve_mention_name("alice") is None
+
+
+def test_resolve_mention_name_caches_users_list():
+    client = _make_client()
+    client._client.users_list.return_value = _members(
+        ("U012", "alice", "Alice Example", "alice"),
+        ("U096", "bob", "Bob", "bob"),
+    )
+    assert client.resolve_mention_name("alice") == "U012"
+    assert client.resolve_mention_name("bob") == "U096"
+    # map built once, reused within TTL
+    assert client._client.users_list.call_count == 1

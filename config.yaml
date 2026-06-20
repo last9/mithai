@@ -16,6 +16,14 @@ adapter:
     bot_token: ${SLACK_BOT_TOKEN}
     app_token: ${SLACK_APP_TOKEN}
     respond: mentions  # observe all messages, reply only to @mentions
+    # Advanced safety: default true preserves existing behavior.
+    # Set false to prevent mithai from posting adapter-originated text into
+    # Slack Connect / externally shared channels, including final assistant
+    # responses, approval prompts, onboarding messages, adapter.send(), and
+    # Slack send-message tool output. The adapter detects those channels with
+    # Slack conversations.info metadata.
+    #
+    # allow_posting_in_external_channels: false
   telegram:
     bot_token: ${TELEGRAM_BOT_TOKEN}
     allowed_chat_ids:

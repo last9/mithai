@@ -514,11 +514,21 @@ class Engine:
                             resolved = skill.resolve_human(tool_def.name, tool_input, skill_ctx)
                             effective_def = replace(tool_def, human=resolved)
 
-                    # Human MCP check — routes through the originating adapter
-                    approved = self._human.request_approval(
-                        prefixed_name, tool_input, effective_def, message.channel_id,
-                        adapter=adapter,
+                    before_tool_call = getattr(type(adapter), "before_tool_call", None)
+                    preflight_result = (
+                        before_tool_call(adapter, prefixed_name, tool_input)
+                        if before_tool_call
+                        else None
                     )
+
+                    # Human MCP check — routes through the originating adapter. Adapter
+                    # preflight runs first so suppressed tools cannot leak approval prompts.
+                    approved = True
+                    if preflight_result is None:
+                        approved = self._human.request_approval(
+                            prefixed_name, tool_input, effective_def, message.channel_id,
+                            adapter=adapter,
+                        )
 
                     if tracer is not None:
                         from opentelemetry.trace import SpanKind
@@ -542,12 +552,16 @@ class Engine:
                                 logger.debug("Failed to serialize tool_input for span", exc_info=True)
 
                         if approved:
-                            logger.info("Executing tool: %s", prefixed_name)
-                            adapter.on_tool_start(prefixed_name, tool_input)
                             t1 = time.monotonic()
-                            result = self._router.route(prefixed_name, tool_input, skill_ctx)
+                            if preflight_result is not None:
+                                logger.info("Tool suppressed by adapter preflight: %s", prefixed_name)
+                                result = preflight_result
+                            else:
+                                logger.info("Executing tool: %s", prefixed_name)
+                                adapter.on_tool_start(prefixed_name, tool_input)
+                                result = self._router.route(prefixed_name, tool_input, skill_ctx)
+                                adapter.on_tool_end(prefixed_name, time.monotonic() - t1, True)
                             tool_elapsed = time.monotonic() - t1
-                            adapter.on_tool_end(prefixed_name, tool_elapsed, True)
                         else:
                             tool_elapsed = 0.0
                             logger.info("Tool denied by human: %s", prefixed_name)
@@ -559,6 +573,9 @@ class Engine:
 
                         from mithai.telemetry.metrics import record_tool_call
                         record_tool_call(prefixed_name, approved, tool_elapsed)
+                        on_tool_result = getattr(adapter, "on_tool_result", None)
+                        if on_tool_result:
+                            on_tool_result(prefixed_name, tool_input, result)
 
                     turn_tool_calls.append({
                         "tool": prefixed_name,

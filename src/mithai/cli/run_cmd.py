@@ -601,12 +601,18 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
 
     elif adapter_type == "slack":
         from mithai.adapters.slack import SlackAdapter
+        kwargs = {}
+        if "allow_posting_in_external_channels" in adapter_config:
+            kwargs["allow_posting_in_external_channels"] = adapter_config.get(
+                "allow_posting_in_external_channels"
+            )
         return SlackAdapter(
             bot_token=adapter_config["bot_token"],
             app_token=adapter_config["app_token"],
             allowed_channels=_parse_id_list(adapter_config.get("allowed_channels")),
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
+            **kwargs,
         )
 
     elif adapter_type == "telegram":
@@ -618,6 +624,11 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
 
     elif adapter_type == "slack_http":
         from mithai.adapters.slack_http import SlackHTTPAdapter
+        kwargs = {}
+        if "allow_posting_in_external_channels" in adapter_config:
+            kwargs["allow_posting_in_external_channels"] = adapter_config.get(
+                "allow_posting_in_external_channels"
+            )
         return SlackHTTPAdapter(
             bot_token=adapter_config["bot_token"],
             signing_secret=adapter_config["signing_secret"],
@@ -627,6 +638,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
             approval_timeout=adapter_config.get("approval_timeout", 300),
             respond=respond,
             managed=bool(adapter_config.get("managed", False)),
+            **kwargs,
         )
 
     else:

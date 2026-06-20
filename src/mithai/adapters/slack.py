@@ -57,7 +57,7 @@ class SlackAdapterBase(Adapter):
 
     def __init__(self, bot_token: str, allowed_channels: list[str] | None = None,
                  approval_timeout: int = 300, signing_secret: str | None = None,
-                 respond: str = "all"):
+                 respond: str = "all", allow_posting_in_external_channels: bool = True):
         try:
             from slack_bolt import App
         except ImportError:
@@ -104,12 +104,17 @@ class SlackAdapterBase(Adapter):
         self._leaving_lock = threading.Lock()
 
         self._respond = respond
+        self._allow_posting_in_external_channels = self._coerce_bool(
+            allow_posting_in_external_channels,
+            default=True,
+        )
         self._slack_client = SlackClient(bot_token)
         # Formatter encodes outbound @name -> <@id> via the client's reverse resolver.
         self._formatter = SlackBlockFormatter(mention_resolver=self._slack_client.resolve_mention_name)
         # Per-thread storage for the current message ts — prevents concurrent
         # messages from overwriting each other's thread context.
         self._local = threading.local()
+        self._channel_info_cache: dict[str, dict] = {}
 
         # Bot's own user ID — resolved on start via auth.test
         self._bot_user_id: str | None = None
@@ -230,7 +235,7 @@ class SlackAdapterBase(Adapter):
                 def _run():
                     try:
                         intro = on_channel_join(channel_id, channel_name)
-                        if intro:
+                        if intro and self._can_post_to_slack_channel(channel_id):
                             self._send_formatted(say, intro, thread_ts=None)
                     except Exception:
                         logger.exception("Onboarding failed for #%s", channel_name)
@@ -286,14 +291,17 @@ class SlackAdapterBase(Adapter):
 
             ts = message.get("ts", "")
             self._local.thread_ts = ts
+            self._reset_external_posting_guard(channel)
             self._react(channel, ts, "thinking_face")
             try:
                 response = on_message(incoming, self)
-                self._send_formatted(say, response, thread_ts=ts)
-                if on_bot_reply and self._bot_user_id and response:
+                if not self._should_suppress_final_response():
+                    self._send_formatted(say, response, thread_ts=ts)
+                if on_bot_reply and self._bot_user_id and response and not self._should_suppress_final_response():
                     on_bot_reply(channel, self._bot_user_id, response, ts)
             finally:
                 self._unreact(channel, ts, "thinking_face")
+                self._clear_external_posting_guard()
 
         @self._app.event("app_mention")
         def handle_app_mention(event, say):
@@ -314,6 +322,8 @@ class SlackAdapterBase(Adapter):
             ).strip()
             images, skipped_files = self._extract_images(event)
             if not text and not images:
+                if not self._can_post_to_slack_channel(channel):
+                    return
                 if skipped_files:
                     say(f"I can only read images right now — I can't process files like {', '.join(skipped_files)}. "
                         "Try sharing a screenshot or image instead!")
@@ -339,14 +349,17 @@ class SlackAdapterBase(Adapter):
 
             ts = event.get("ts", "")
             self._local.thread_ts = ts
+            self._reset_external_posting_guard(channel)
             self._react(channel, ts, "thinking_face")
             try:
                 response = on_message(incoming, self)
-                self._send_formatted(say, response, thread_ts=ts)
-                if on_bot_reply and self._bot_user_id and response:
+                if not self._should_suppress_final_response():
+                    self._send_formatted(say, response, thread_ts=ts)
+                if on_bot_reply and self._bot_user_id and response and not self._should_suppress_final_response():
                     on_bot_reply(channel, self._bot_user_id, response, ts)
             finally:
                 self._unreact(channel, ts, "thinking_face")
+                self._clear_external_posting_guard()
 
             if on_observe:
                 on_observe(incoming)
@@ -406,6 +419,79 @@ class SlackAdapterBase(Adapter):
                 pass
             say(text=chunk, thread_ts=thread_ts)
 
+    def _should_suppress_final_response(self) -> bool:
+        return bool(getattr(self._local, "current_channel_is_external", False))
+
+    def _reset_external_posting_guard(self, channel: str) -> None:
+        self._local.current_channel_id = channel
+        self._local.current_channel_is_external = self._is_external_slack_channel(channel)
+
+    def _clear_external_posting_guard(self) -> None:
+        self._local.current_channel_id = None
+        self._local.current_channel_is_external = False
+
+    @staticmethod
+    def _coerce_bool(value, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
+    def _slack_channel_info(self, channel_id: str | None) -> dict | None:
+        if not channel_id:
+            return None
+        if channel_id in self._channel_info_cache:
+            return self._channel_info_cache[channel_id]
+
+        try:
+            info = self._app.client.conversations_info(channel=channel_id)
+            channel_info = info.get("channel") or {}
+        except Exception:
+            logger.warning(
+                "Could not resolve Slack channel info for external posting guard: %s",
+                channel_id,
+                exc_info=True,
+            )
+            return None
+
+        if isinstance(channel_info, dict):
+            self._channel_info_cache[channel_id] = channel_info
+            return channel_info
+        return None
+
+    def _is_external_slack_channel(self, channel_id: str | None) -> bool:
+        if self._allow_posting_in_external_channels:
+            return False
+        channel_info = self._slack_channel_info(channel_id)
+        if channel_info is None:
+            return True
+
+        if channel_info.get("is_ext_shared") or channel_info.get("is_pending_ext_shared"):
+            return True
+        return bool(channel_info.get("is_shared") and not channel_info.get("is_org_shared"))
+
+    def _can_post_to_slack_channel(self, channel_id: str | None) -> bool:
+        return not self._is_external_slack_channel(channel_id)
+
+    @staticmethod
+    def _is_slack_send_message_tool(tool_name: str) -> bool:
+        return tool_name.split("__")[-1] == "slack_send_message"
+
+    def _suppressed_send_result(self, channel_id: str) -> str:
+        return json.dumps({
+            "ok": True,
+            "suppressed": True,
+            "reason": "posting_to_external_slack_channel_disabled",
+            "channel_id": channel_id,
+        })
+
     def startup_onboard(self, is_onboarded, on_join) -> None:
         """Onboard allowed channels that haven't been onboarded yet.
 
@@ -446,7 +532,7 @@ class SlackAdapterBase(Adapter):
             else:
                 try:
                     intro = on_join(channel_id, channel_name)
-                    if intro:
+                    if intro and self._can_post_to_slack_channel(channel_id):
                         # post_message bypasses the formatter, so encode mentions here.
                         intro = encode_mentions(intro, self._slack_client.resolve_mention_name)
                         self._slack_client.post_message(channel_id, intro)
@@ -467,13 +553,14 @@ class SlackAdapterBase(Adapter):
             self._leaving_channels.add(channel_id)
 
         try:
-            self._app.client.chat_postMessage(
-                channel=channel_id,
-                text=(
-                    "I'm not onboarded in this channel. "
-                    "Please contact your workspace admin to onboard me here."
-                ),
-            )
+            if self._can_post_to_slack_channel(channel_id):
+                self._app.client.chat_postMessage(
+                    channel=channel_id,
+                    text=(
+                        "I'm not onboarded in this channel. "
+                        "Please contact your workspace admin to onboard me here."
+                    ),
+                )
         except Exception:
             logger.warning("Could not send decline message to %s", channel_id, exc_info=True)
         try:
@@ -500,6 +587,10 @@ class SlackAdapterBase(Adapter):
             pass
 
     def send(self, message: OutgoingMessage) -> None:
+        if not self._can_post_to_slack_channel(message.channel_id):
+            logger.info("Suppressing Slack send to external channel %s", message.channel_id)
+            return
+
         for chunk in self._formatter.format(message.text):
             try:
                 blocks = json.loads(chunk)
@@ -514,6 +605,18 @@ class SlackAdapterBase(Adapter):
                 pass
             self._app.client.chat_postMessage(channel=message.channel_id, text=chunk)
 
+    def before_tool_call(self, tool_name: str, tool_input: dict) -> str | None:
+        if not self._is_slack_send_message_tool(tool_name):
+            return None
+        channel_id = tool_input.get("channel_id") or tool_input.get("channel")
+        if self._can_post_to_slack_channel(channel_id):
+            return None
+        logger.info("Suppressing Slack MCP send tool to external channel %s", channel_id)
+        return self._suppressed_send_result(channel_id)
+
+    def on_tool_start(self, tool_name: str, tool_input: dict) -> None:
+        return
+
     def request_human_approval(self, request: HumanRequest, channel_id: str) -> bool:
         """
         Post approval buttons in Slack and block until clicked or timeout.
@@ -521,6 +624,10 @@ class SlackAdapterBase(Adapter):
         Uses a threading.Event to synchronize between the action handler
         (called by Bolt on button click) and this blocking call.
         """
+        if not self._can_post_to_slack_channel(channel_id):
+            logger.info("Suppressing Slack human approval prompt in external channel %s", channel_id)
+            return False
+
         event = threading.Event()
         self._pending_approvals[request.request_id] = {
             "event": event,
@@ -650,7 +757,8 @@ class SlackAdapter(SlackAdapterBase):
     """
 
     def __init__(self, bot_token: str, app_token: str, allowed_channels: list[str] | None = None,
-                 approval_timeout: int = 300, respond: str = "all"):
+                 approval_timeout: int = 300, respond: str = "all",
+                 allow_posting_in_external_channels: bool = True):
         try:
             from slack_bolt.adapter.socket_mode import SocketModeHandler
         except ImportError:
@@ -666,7 +774,13 @@ class SlackAdapter(SlackAdapterBase):
                 "  3. Add SLACK_APP_TOKEN=xapp-... to your .env file"
             )
 
-        super().__init__(bot_token, allowed_channels, approval_timeout, respond=respond)
+        super().__init__(
+            bot_token,
+            allowed_channels,
+            approval_timeout,
+            respond=respond,
+            allow_posting_in_external_channels=allow_posting_in_external_channels,
+        )
         self._handler = SocketModeHandler(self._app, app_token)
 
     def start(self, on_message: MessageHandler, on_channel_join: ChannelJoinHandler | None = None,

@@ -3,6 +3,9 @@
 import sys
 from unittest.mock import MagicMock, patch
 
+from mithai.adapters.base import OutgoingMessage
+from mithai.human.mcp import HumanRequest
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,22 +24,28 @@ def _make_mock_app():
 
 
 def _build_http_adapter(bot_token="xoxb-test", signing_secret="sig-secret",
-                         host="0.0.0.0", port=3000, allowed_channels=None):
+                         host="0.0.0.0", port=3000, allowed_channels=None,
+                         allow_posting_in_external_channels=None):
     mock_app = _make_mock_app()
     mock_app_cls = MagicMock(return_value=mock_app)
     with patch("slack_bolt.App", mock_app_cls, create=True):
         from mithai.adapters.slack_http import SlackHTTPAdapter
+        kwargs = {}
+        if allow_posting_in_external_channels is not None:
+            kwargs["allow_posting_in_external_channels"] = allow_posting_in_external_channels
         adapter = SlackHTTPAdapter(
             bot_token=bot_token,
             signing_secret=signing_secret,
             host=host,
             port=port,
             allowed_channels=allowed_channels,
+            **kwargs,
         )
     return adapter, mock_app, mock_app_cls
 
 
-def _build_socket_adapter(bot_token="xoxb-test", app_token="xapp-test", allowed_channels=None):
+def _build_socket_adapter(bot_token="xoxb-test", app_token="xapp-test", allowed_channels=None,
+                          allow_posting_in_external_channels=None):
     mock_app = _make_mock_app()
     mock_app_cls = MagicMock(return_value=mock_app)
     mock_handler = MagicMock()
@@ -44,10 +53,14 @@ def _build_socket_adapter(bot_token="xoxb-test", app_token="xapp-test", allowed_
     with patch("slack_bolt.App", mock_app_cls, create=True), \
          patch("slack_bolt.adapter.socket_mode.SocketModeHandler", mock_handler_cls, create=True):
         from mithai.adapters.slack import SlackAdapter
+        kwargs = {}
+        if allow_posting_in_external_channels is not None:
+            kwargs["allow_posting_in_external_channels"] = allow_posting_in_external_channels
         adapter = SlackAdapter(
             bot_token=bot_token,
             app_token=app_token,
             allowed_channels=allowed_channels,
+            **kwargs,
         )
     return adapter, mock_app, mock_app_cls, mock_handler
 
@@ -389,6 +402,25 @@ def test_run_cmd_creates_slack_adapter_with_approval_timeout():
     assert adapter._approval_timeout == 60
 
 
+def test_run_cmd_passes_slack_external_posting_guard_when_configured():
+    mock_app = _make_mock_app()
+    mock_app_cls = MagicMock(return_value=mock_app)
+    mock_handler_cls = MagicMock()
+
+    adapter_config = {
+        "bot_token": "xoxb-test",
+        "app_token": "xapp-test",
+        "allow_posting_in_external_channels": False,
+    }
+
+    with patch("slack_bolt.App", mock_app_cls, create=True), \
+         patch("slack_bolt.adapter.socket_mode.SocketModeHandler", mock_handler_cls, create=True):
+        from mithai.cli.run_cmd import _create_adapter
+        adapter = _create_adapter({}, "slack", adapter_config=adapter_config)
+
+    assert adapter._allow_posting_in_external_channels is False
+
+
 def test_run_cmd_slack_adapter_default_approval_timeout():
     """Omitting approval_timeout from config uses the 300s default."""
     mock_app = _make_mock_app()
@@ -539,6 +571,330 @@ def test_app_mention_strips_only_bot_mention_when_no_other_mentions():
     handler(event, say)
 
     assert received_texts == ["what is the status?"]
+
+
+def _app_mention_event(channel="C1"):
+    return {
+        "channel": channel,
+        "user": "U1",
+        "ts": "111.222",
+        "thread_ts": "100.000",
+        "text": "<@UBOT> triage this as a feature request",
+    }
+
+
+def _register_simple_app_mention(adapter, mock_app, response="Done"):
+    def on_message(_incoming, _adapter_arg):
+        return response
+
+    mock_app.client.auth_test.return_value = {"user_id": "UBOT"}
+    adapter._slack_client = MagicMock()
+    adapter._slack_client.resolve_user_ids.return_value = {}
+    return _capture_app_mention_handler(adapter, on_message)
+
+
+def test_external_channel_posting_allowed_by_default():
+    adapter, mock_app, _ = _build_socket_adapter(allowed_channels=["C1"])[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_ext_shared": True}
+    }
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event() | {"text": "<@UBOT>"}, say)
+
+    say.assert_called_once()
+
+
+def test_external_channel_guard_suppresses_final_app_mention_response():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_ext_shared": True}
+    }
+    on_bot_reply = MagicMock()
+    handler = _capture_app_mention_handler(
+        adapter,
+        lambda _incoming, _adapter_arg: "Done",
+        on_bot_reply=on_bot_reply,
+    )
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_not_called()
+    on_bot_reply.assert_not_called()
+
+
+def test_external_channel_guard_suppresses_empty_app_mention_canned_reply():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_ext_shared": True}
+    }
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_not_called()
+
+
+def test_external_channel_guard_suppresses_channel_join_onboarding():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.auth_test.return_value = {"user_id": "UBOT"}
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "name": "shared", "is_ext_shared": True}
+    }
+
+    registered = {}
+
+    def capture_event(name):
+        def decorator(fn):
+            registered[name] = fn
+            return fn
+        return decorator
+
+    class ImmediateThread:
+        def __init__(self, target, daemon=False):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    mock_app.event.side_effect = capture_event
+    with patch("mithai.adapters.slack.threading.Thread", ImmediateThread):
+        adapter._register_message_handlers(
+            MagicMock(),
+            on_channel_join=MagicMock(return_value="Welcome"),
+        )
+        say = MagicMock()
+        registered["member_joined_channel"]({"user": "UBOT", "channel": "C1"}, say)
+
+    say.assert_not_called()
+
+
+def test_external_channel_guard_suppresses_startup_onboarding():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {
+            "id": "C1",
+            "name": "shared",
+            "is_member": True,
+            "is_ext_shared": True,
+        }
+    }
+    adapter._slack_client = MagicMock()
+
+    with patch("mithai.adapters.slack.time.sleep", MagicMock()):
+        adapter.startup_onboard(
+            is_onboarded=MagicMock(return_value=False),
+            on_join=MagicMock(return_value="Welcome"),
+        )
+
+    adapter._slack_client.post_message.assert_not_called()
+
+
+def test_external_channel_guard_allows_internal_app_mention_response():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {
+            "id": "C1",
+            "is_ext_shared": False,
+            "is_pending_ext_shared": False,
+            "is_shared": False,
+        }
+    }
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_called_once()
+
+
+def test_external_channel_guard_treats_pending_external_share_as_external():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_pending_ext_shared": True}
+    }
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_not_called()
+
+
+def test_external_channel_guard_treats_non_org_shared_channel_as_external():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_shared": True, "is_org_shared": False}
+    }
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_not_called()
+
+
+def test_external_channel_guard_allows_org_shared_channel():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {
+            "id": "C1",
+            "is_ext_shared": False,
+            "is_pending_ext_shared": False,
+            "is_shared": True,
+            "is_org_shared": True,
+        }
+    }
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_called_once()
+
+
+def test_external_channel_guard_blocks_direct_send_to_external_channel():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C_EXTERNAL", "is_ext_shared": True}
+    }
+
+    adapter.send(OutgoingMessage(text="customer leak", channel_id="C_EXTERNAL"))
+
+    mock_app.client.chat_postMessage.assert_not_called()
+
+
+def test_external_channel_guard_allows_direct_send_to_internal_channel():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C_INTERNAL", "is_shared": False}
+    }
+
+    adapter.send(OutgoingMessage(text="internal triage", channel_id="C_INTERNAL"))
+
+    mock_app.client.chat_postMessage.assert_called_once()
+    assert mock_app.client.chat_postMessage.call_args.kwargs["channel"] == "C_INTERNAL"
+    assert mock_app.client.chat_postMessage.call_args.kwargs["text"] == "internal triage"
+
+
+def test_external_channel_guard_blocks_slack_mcp_send_tool_to_external_channel():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C_EXTERNAL", "is_ext_shared": True}
+    }
+
+    result = adapter.before_tool_call(
+        "slack__slack_send_message",
+        {"channel_id": "C_EXTERNAL", "message": "customer leak"},
+    )
+
+    assert result is not None
+    parsed = __import__("json").loads(result)
+    assert parsed["ok"] is True
+    assert parsed["suppressed"] is True
+    assert parsed["reason"] == "posting_to_external_slack_channel_disabled"
+
+
+def test_external_channel_guard_suppresses_human_approval_prompt():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C1", "is_ext_shared": True}
+    }
+
+    approved = adapter.request_human_approval(
+        HumanRequest(
+            request_id="req-1",
+            tool_name="slack__slack_send_message",
+            description="Send customer-visible text",
+            level="approve",
+            tool_input={"channel_id": "C1", "message": "customer leak"},
+        ),
+        "C1",
+    )
+
+    assert approved is False
+    mock_app.client.chat_postMessage.assert_not_called()
+
+
+def test_external_channel_guard_mcp_send_tool_allows_by_default():
+    adapter, mock_app, _ = _build_socket_adapter(allowed_channels=["C1"])[:3]
+    mock_app.client.conversations_info.return_value = {
+        "channel": {"id": "C_EXTERNAL", "is_ext_shared": True}
+    }
+
+    result = adapter.before_tool_call(
+        "slack__slack_send_message",
+        {"channel_id": "C_EXTERNAL", "message": "allowed"},
+    )
+
+    assert result is None
+
+
+def test_external_channel_guard_fails_closed_when_channel_lookup_fails():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.side_effect = Exception("slack timeout")
+    handler = _register_simple_app_mention(adapter, mock_app)
+
+    say = MagicMock()
+    handler(_app_mention_event(), say)
+
+    say.assert_not_called()
+
+
+def test_external_channel_guard_does_not_cache_lookup_failures():
+    adapter, mock_app, _ = _build_socket_adapter(
+        allowed_channels=["C1"],
+        allow_posting_in_external_channels=False,
+    )[:3]
+    mock_app.client.conversations_info.side_effect = [
+        Exception("slack timeout"),
+        {"channel": {"id": "C1", "is_shared": False}},
+    ]
+
+    assert adapter._is_external_slack_channel("C1") is True
+    assert adapter._is_external_slack_channel("C1") is False
 
 
 def test_run_cmd_unknown_adapter_raises():

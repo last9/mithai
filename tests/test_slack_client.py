@@ -1,6 +1,6 @@
 """Unit tests for SlackClient (mithai.integrations.slack)."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 def _make_client():
@@ -9,6 +9,20 @@ def _make_client():
     client = SlackClient.__new__(SlackClient)
     client._client = MagicMock()
     return client
+
+
+def test_constructor_sets_request_timeout():
+    """WebClient must get a bounded per-request timeout — the default (30s) lets a
+    paginated get_history_window hang for minutes across pages."""
+    from mithai.integrations.slack import SlackClient
+
+    with patch("slack_sdk.WebClient") as web_client:
+        SlackClient("xoxb-test")
+
+    _, kwargs = web_client.call_args
+    assert kwargs["token"] == "xoxb-test"
+    assert kwargs["timeout"] == SlackClient._REQUEST_TIMEOUT
+    assert SlackClient._REQUEST_TIMEOUT <= 15
 
 
 # ---------------------------------------------------------------------------

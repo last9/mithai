@@ -52,6 +52,23 @@ class TestEncodeMentions:
         assert encode_mentions("plain text only", _resolver) == "plain text only"
 
 
+class TestSlackBlockFormatterMentions:
+    def test_format_encodes_with_resolver(self):
+        from mithai.adapters.formatters import SlackBlockFormatter
+        fmt = SlackBlockFormatter(mention_resolver=_resolver)
+        out = "".join(fmt.format("cc: @alice @bob"))
+        assert "<@U012>" in out
+        assert "<@U096>" in out
+
+    def test_format_default_no_resolver_leaves_plain(self):
+        # Default (unconfigured) formatter must not touch @name — regression guard.
+        from mithai.adapters.formatters import SlackBlockFormatter
+        fmt = SlackBlockFormatter()
+        out = "".join(fmt.format("cc: @alice"))
+        assert "@alice" in out
+        assert "<@U012>" not in out
+
+
 class TestSlackFormatter:
     def setup_method(self):
         self.fmt = SlackFormatter()

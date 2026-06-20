@@ -374,7 +374,14 @@ class SlackBlockFormatter(Formatter):
     MAX_HEADER_LENGTH = 150    # Slack header block plain_text limit
     MAX_BLOCKS_PER_MESSAGE = 50
 
+    def __init__(self, mention_resolver=None):
+        # Optional name->id resolver. When set, outbound `@name` tokens are encoded
+        # to `<@id>` mentions before markdown conversion. Default None = no-op, so
+        # the unconfigured formatter behaves exactly as before.
+        self._mention_resolver = mention_resolver
+
     def format(self, text: str) -> list[str]:
+        text = encode_mentions(text, self._mention_resolver)
         all_blocks = self._markdown_to_blocks(text)
         if not all_blocks:
             return [json.dumps([])]

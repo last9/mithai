@@ -1341,3 +1341,43 @@ def test_app_mention_handler_attaches_staleness_note_for_old_event():
     on_message.assert_called_once()
     incoming = on_message.call_args[0][0]
     assert "minutes ago" in incoming.extra_system_prompt
+
+
+# ---------------------------------------------------------------------------
+# Outbound mention encoding (U3)
+# ---------------------------------------------------------------------------
+
+def test_adapter_wires_mention_resolver_into_formatter():
+    """The formatter must be constructed with the client's reverse resolver."""
+    adapter = _build_socket_adapter(allowed_channels=["C1"])[0]
+    assert adapter._formatter._mention_resolver == adapter._slack_client.resolve_mention_name
+
+
+def test_send_formatted_encodes_mentions_in_outbound():
+    """Outbound @name is rewritten to <@id> in the say() payload (the real-failure path)."""
+    adapter = _build_socket_adapter(allowed_channels=["C1"])[0]
+    from mithai.adapters.formatters import SlackBlockFormatter
+    adapter._formatter = SlackBlockFormatter(
+        mention_resolver=lambda t: "U012" if t.lower() == "alice" else None
+    )
+    say = MagicMock()
+    adapter._send_formatted(say, "cc: @alice please look", thread_ts=None)
+    assert "<@U012>" in str(say.call_args)
+
+
+def test_onboarding_intro_encodes_mentions_before_post():
+    """The intro path bypasses the formatter, so it must encode mentions itself."""
+    adapter = _build_socket_adapter(allowed_channels=["C1"])[0]
+    adapter._slack_client = MagicMock()
+    adapter._slack_client.resolve_mention_name.side_effect = (
+        lambda t: "U012" if t.lower() == "alice" else None
+    )
+    adapter._app.client.conversations_info.return_value = {
+        "channel": {"name": "general", "is_member": True}
+    }
+    adapter.startup_onboard(
+        is_onboarded=lambda c: False,
+        on_join=lambda cid, name: "welcome @alice",
+    )
+    posted = str(adapter._slack_client.post_message.call_args)
+    assert "<@U012>" in posted

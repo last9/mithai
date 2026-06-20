@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build — venv built at /app/.venv so shebang paths match runtime
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim AS builder
+FROM python:3.13-slim AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN python -m venv /app/.venv && \
 # ---------------------------------------------------------------------------
 # Stage 2: runtime
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim AS runtime
+FROM python:3.13-slim AS runtime
 
 ARG KUBECTL_VERSION=v1.29.3
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates jq procps cron && \
@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 
 WORKDIR /app
 
-# Venv built at /app/.venv in builder — shebang #!/app/.venv/bin/python3.11
+# Venv built at /app/.venv in builder — shebang #!/app/.venv/bin/python3.13
 # matches this path in the runtime stage too
 COPY --from=builder /app/.venv /app/.venv
 COPY skills/ /app/skills/

@@ -6,7 +6,7 @@ import threading
 import time
 
 from mithai.adapters.base import Adapter, BotReplyHandler, ChannelJoinHandler, ChannelObserveHandler, ImageAttachment, IncomingMessage, MessageHandler, OutgoingMessage
-from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback
+from mithai.adapters.formatters import SlackBlockFormatter, _blocks_fallback, encode_mentions
 from mithai.human.mcp import HumanRequest
 from mithai.integrations.slack import SlackClient
 
@@ -108,8 +108,9 @@ class SlackAdapterBase(Adapter):
             allow_posting_in_external_channels,
             default=True,
         )
-        self._formatter = SlackBlockFormatter()
         self._slack_client = SlackClient(bot_token)
+        # Formatter encodes outbound @name -> <@id> via the client's reverse resolver.
+        self._formatter = SlackBlockFormatter(mention_resolver=self._slack_client.resolve_mention_name)
         # Per-thread storage for the current message ts — prevents concurrent
         # messages from overwriting each other's thread context.
         self._local = threading.local()
@@ -532,6 +533,8 @@ class SlackAdapterBase(Adapter):
                 try:
                     intro = on_join(channel_id, channel_name)
                     if intro and self._can_post_to_slack_channel(channel_id):
+                        # post_message bypasses the formatter, so encode mentions here.
+                        intro = encode_mentions(intro, self._slack_client.resolve_mention_name)
                         self._slack_client.post_message(channel_id, intro)
                 except Exception:
                     logger.exception("Startup onboarding failed for #%s", channel_name)

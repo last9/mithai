@@ -171,6 +171,44 @@ def _restore_stash(text: str, stash: dict[str, str]) -> str:
     return text
 
 
+# Broadcast mentions are left verbatim — Slack renders @here/@channel/@everyone natively.
+_BROADCAST_MENTIONS = {"here", "channel", "everyone"}
+
+# Match a bare @name token. Negative lookbehind skips:
+#   <@U012>  -> @ preceded by '<' (already-encoded mention)
+#   foo@bar  -> @ preceded by a word char (email / handle)
+#   @@x      -> @ preceded by '@'
+# Token must start with a letter (skips @123) and may contain word chars, '.', '-'.
+_MENTION_SCAN_RE = re.compile(r"(?<![<\w@])@([A-Za-z][\w.\-]*)")
+
+
+def encode_mentions(text: str, resolver) -> str:
+    """Rewrite `@name` tokens to Slack `<@id>` mentions using a name->id resolver.
+
+    Conservative and prose-preserving: code spans/fences are stashed before scanning,
+    emails and already-encoded `<@id>` are skipped by the regex, and broadcast tokens
+    (`@here`/`@channel`/`@everyone`) are left alone. A token is rewritten only when the
+    resolver returns an id for it; unknown/ambiguous names (resolver -> None) stay
+    verbatim. `resolver=None` is a no-op so the default (unconfigured) path is unchanged.
+    """
+    if resolver is None or not text or "@" not in text:
+        return text
+
+    stashed, stash = _stash_code_blocks(text)
+
+    def _replace(match: "re.Match") -> str:
+        token = match.group(1)
+        if token.lower() in _BROADCAST_MENTIONS:
+            return match.group(0)
+        try:
+            uid = resolver(token)
+        except Exception:
+            uid = None
+        return f"<@{uid}>" if uid else match.group(0)
+
+    return _restore_stash(_MENTION_SCAN_RE.sub(_replace, stashed), stash)
+
+
 class SlackFormatter(Formatter):
     """Translate markdown to Slack mrkdwn."""
 
@@ -336,7 +374,14 @@ class SlackBlockFormatter(Formatter):
     MAX_HEADER_LENGTH = 150    # Slack header block plain_text limit
     MAX_BLOCKS_PER_MESSAGE = 50
 
+    def __init__(self, mention_resolver=None):
+        # Optional name->id resolver. When set, outbound `@name` tokens are encoded
+        # to `<@id>` mentions before markdown conversion. Default None = no-op, so
+        # the unconfigured formatter behaves exactly as before.
+        self._mention_resolver = mention_resolver
+
     def format(self, text: str) -> list[str]:
+        text = encode_mentions(text, self._mention_resolver)
         all_blocks = self._markdown_to_blocks(text)
         if not all_blocks:
             return [json.dumps([])]

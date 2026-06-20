@@ -1,6 +1,55 @@
 """Tests for per-adapter response formatters."""
 
-from mithai.adapters.formatters import CLIFormatter, SlackFormatter, TelegramFormatter
+from mithai.adapters.formatters import (
+    CLIFormatter,
+    SlackFormatter,
+    TelegramFormatter,
+    encode_mentions,
+)
+
+
+_RESOLVER_MAP = {"alice": "U012", "bob": "U096", "carol": "UQ0"}
+
+
+def _resolver(token):
+    return _RESOLVER_MAP.get(token.lower())
+
+
+class TestEncodeMentions:
+    def test_cc_line_encodes_all(self):
+        assert encode_mentions("cc: @alice @bob @carol", _resolver) == (
+            "cc: <@U012> <@U096> <@UQ0>"
+        )
+
+    def test_unknown_name_left_plain(self):
+        assert encode_mentions("ping @stranger", _resolver) == "ping @stranger"
+
+    def test_inside_inline_code_untouched(self):
+        assert encode_mentions("use `@alice` here", _resolver) == "use `@alice` here"
+
+    def test_inside_fence_untouched(self):
+        text = "```\ncc @alice\n```"
+        assert encode_mentions(text, _resolver) == text
+
+    def test_email_untouched(self):
+        assert encode_mentions("mail foo@alice.com", _resolver) == "mail foo@alice.com"
+
+    def test_already_encoded_untouched(self):
+        assert encode_mentions("hi <@U012> there", _resolver) == "hi <@U012> there"
+
+    def test_broadcast_tokens_untouched(self):
+        text = "@here @channel @everyone please look"
+        assert encode_mentions(text, _resolver) == text
+
+    def test_collision_resolver_none_left_plain(self):
+        # resolver returns None (e.g. name collision) -> token left verbatim
+        assert encode_mentions("@alex review", lambda t: None) == "@alex review"
+
+    def test_none_resolver_passthrough(self):
+        assert encode_mentions("cc: @alice", None) == "cc: @alice"
+
+    def test_no_at_sign_passthrough(self):
+        assert encode_mentions("plain text only", _resolver) == "plain text only"
 
 
 class TestSlackFormatter:

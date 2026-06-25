@@ -18,7 +18,7 @@ def _make_engine(config: dict, memory_backend=None, llm=None):
         llm = MagicMock()
         # Default: return a plain text response with no tool calls
         resp = MagicMock()
-        resp.content = [{"type": "text", "text": "Hello, I am REDACTED_INTERNAL_CHANNEL!"}]
+        resp.content = [{"type": "text", "text": "Hello, I am Alice!"}]
         resp.stop_reason = "end_turn"
         llm.create_message.return_value = resp
 

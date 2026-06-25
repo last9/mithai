@@ -22,7 +22,7 @@ def test_parse_roster_pairs_parens():
     text = "## Alice Example (U012ALICE)\n**Bob** (U012BOB)"
     pairs = Engine._parse_roster_pairs(text)
     assert pairs["Alice Example"] == "U012ALICE"
-    assert pairs["Nishant"] == "U012BOB"
+    assert pairs["Bob"] == "U012BOB"
 
 
 def test_parse_roster_pairs_table():
@@ -49,7 +49,7 @@ def test_parse_roster_pairs_empty():
 
 def test_late_bind_injects_roster_into_slack_adapter():
     memory = MagicMock()
-    memory.read.return_value = "**Alice** (REDACTED_SLACK_USER_ID)"
+    memory.read.return_value = "**Alice** (U12345678)"
     eng = _bare_engine(memory)
     client = MagicMock()
     slack_adapter = SimpleNamespace(slack_client=client)
@@ -58,12 +58,12 @@ def test_late_bind_injects_roster_into_slack_adapter():
 
     client.set_roster_fallback.assert_called_once()
     pairs = client.set_roster_fallback.call_args[0][0]
-    assert pairs["Alice"] == "REDACTED_SLACK_USER_ID"
+    assert pairs["Alice"] == "U12345678"
 
 
 def test_late_bind_skips_non_slack_adapter():
     memory = MagicMock()
-    memory.read.return_value = "**X** (REDACTED_SLACK_USER_ID)"
+    memory.read.return_value = "**X** (U12345678)"
     eng = _bare_engine(memory)
     cli_adapter = SimpleNamespace()  # no slack_client attribute
 
@@ -85,7 +85,7 @@ def test_late_bind_empty_roster_is_noop_call():
 
 def test_late_bind_only_slack_adapters_get_call():
     memory = MagicMock()
-    memory.read.return_value = "**Alice** (REDACTED_SLACK_USER_ID)"
+    memory.read.return_value = "**Alice** (U12345678)"
     eng = _bare_engine(memory)
     slack_client = MagicMock()
     slack_adapter = SimpleNamespace(slack_client=slack_client)

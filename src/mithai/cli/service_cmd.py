@@ -341,11 +341,11 @@ def service():
 @click.option("--config", "config_path", default=None,
               help="Path to config.yaml (default: ~/.mithai/config.yaml)")
 @click.option("--env", "env_path", default=None,
-              help="Path to env file (default: ~/.mithai/env)")
+              help="Path to env file (default: ~/.mithai/.env)")
 def install(config_path, env_path):
     """Install mithai as a system service (launchd on macOS, systemd on Linux)."""
     config = Path(config_path) if config_path else MITHAI_HOME / "config.yaml"
-    env = Path(env_path) if env_path else MITHAI_HOME / "env"
+    env = Path(env_path) if env_path else MITHAI_HOME / ".env"
 
     if not config.exists():
         raise click.ClickException(

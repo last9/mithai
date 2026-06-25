@@ -198,7 +198,7 @@ def _cleanup_socket(path: str, expected_ino: int) -> None:
     Only unlink when the file still carries the inode this process bound. The
     socket path is deterministic, so a successor process may have already
     rebound the same path while we are exiting; deleting its live socket would
-    darken it. Mirrors the platform-side reclaim guard in external-orchestrator's Stop."""
+    darken it. Mirrors the reclaim guard a supervising platform should use."""
     try:
         if os.stat(path).st_ino == expected_ino:
             os.unlink(path)
@@ -232,7 +232,7 @@ def _harden_bound_socket(ui_socket: str) -> None:
 def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
     """Start an embedded API server in a daemon thread when the platform asks for one.
 
-    external-orchestrator's procmgr proxies API requests (including /api/trigger and
+    A supervising platform can proxy API requests (including /api/trigger and
     /slack/events) to this server. It tells the agent where to listen via env:
 
       - MITHAI_UI_SOCKET=<path>  -> listen on that Unix domain socket (preferred);
@@ -240,7 +240,6 @@ def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
 
     Dual-mode: the socket takes precedence so a single binary works under both an
     old (port-assigning) and new (socket-assigning) platform with no flag-day.
-    See external-orchestrator docs/agent-uds-contract.md.
     """
     transport = _resolve_ui_transport(os.environ)
     if transport is None:
@@ -632,7 +631,7 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
         return SlackHTTPAdapter(
             bot_token=adapter_config["bot_token"],
             signing_secret=adapter_config["signing_secret"],
-            host=adapter_config.get("host", "0.0.0.0"),
+            host=adapter_config.get("host", "127.0.0.1"),
             port=adapter_config.get("port", 3000),
             allowed_channels=_parse_id_list(adapter_config.get("allowed_channels")),
             approval_timeout=adapter_config.get("approval_timeout", 300),

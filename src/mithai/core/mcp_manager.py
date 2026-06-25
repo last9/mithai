@@ -83,7 +83,7 @@ class MCPManager:
                 if isinstance(v, str) and "${" in v:
                     logger.warning(
                         "MCP server '%s': header '%s' contains unresolved env var: %s "
-                        "— set the environment variable or add it to ~/.mithai/env",
+                        "— set the environment variable or add it to ~/.mithai/.env",
                         name, k, v,
                     )
 

@@ -42,7 +42,7 @@ SLACK_BOT_TOKEN=xoxb-...
 # AWS_SESSION_TOKEN=...   # optional — only for temporary (STS) credentials
 ```
 
-When using the `bedrock` provider, give the IAM principal only `bedrock:InvokeModel` on the specific models the agent needs. Avoid wildcard Bedrock permissions in production. (When the agent is managed by external-orchestrator, the orchestrator also calls `sts:GetCallerIdentity` for connection validation — implicit on every principal; standalone mithai never calls STS.)
+When using the `bedrock` provider, give the IAM principal only `bedrock:InvokeModel` on the specific models the agent needs. Avoid wildcard Bedrock permissions in production. If mithai is managed by an external orchestrator, that orchestrator may need its own AWS permissions for connection validation; standalone mithai never calls STS.
 
 `mithai init` adds `.env` to `.gitignore` automatically. Verify it's there:
 

@@ -146,7 +146,7 @@ human:
   timeout_seconds: 300
   overrides:
     shell__run_command: confirm      # escalate: require typing
-    kubernetes__get_pods: null       # de-escalate: run automatically
+    kubernetes__get_pods: null       # keep read-only pod listing auto-executed
 ```
 
 The key format is `skillname__toolname`.

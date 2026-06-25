@@ -29,9 +29,21 @@ def get_bundled_path() -> Path:
     """Return the base path for bundled data files.
 
     When running from a PyInstaller binary, data files are extracted
-    to sys._MEIPASS. When running from source, use the repo root.
+    to sys._MEIPASS. When running from source, use the repo root. When
+    installed from a wheel, bundled skills live under the mithai package.
     """
     if getattr(sys, "_MEIPASS", None):
         return Path(sys._MEIPASS)
-    # Running from source — assume repo root is two levels up from src/mithai/
-    return Path(__file__).resolve().parent.parent.parent
+
+    package_dir = Path(__file__).resolve().parent
+
+    # Wheel install: pyproject force-includes top-level skills as mithai/skills.
+    if (package_dir / "skills").exists():
+        return package_dir
+
+    # Source checkout: repo root is two levels up from src/mithai/.
+    source_root = package_dir.parent.parent
+    if (source_root / "skills").exists():
+        return source_root
+
+    return package_dir

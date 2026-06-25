@@ -42,7 +42,7 @@ def test_env_var_default_syntax_with_var_set(tmp_path, monkeypatch):
     config = {
         "adapter": {"type": "cli"},
         "llm": {"provider": "anthropic"},
-        "state": {"filesystem": {"path": "${STATE_PATH:-./.REDACTED_INTERNAL_CHANNEL/state}"}},
+        "state": {"filesystem": {"path": "${STATE_PATH:-./.mithai/state}"}},
     }
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump(config))
@@ -57,13 +57,13 @@ def test_env_var_default_syntax_with_var_missing(tmp_path, monkeypatch):
     config = {
         "adapter": {"type": "cli"},
         "llm": {"provider": "anthropic"},
-        "state": {"filesystem": {"path": "${STATE_PATH:-./.REDACTED_INTERNAL_CHANNEL/state}"}},
+        "state": {"filesystem": {"path": "${STATE_PATH:-./.mithai/state}"}},
     }
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump(config))
 
     loaded = load_config(config_path)
-    assert loaded["state"]["filesystem"]["path"] == "./.REDACTED_INTERNAL_CHANNEL/state"
+    assert loaded["state"]["filesystem"]["path"] == "./.mithai/state"
 
 
 def test_missing_config():

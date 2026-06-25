@@ -15,14 +15,6 @@ def ui(config_path, host, port, verbose):
     """Start the Control Room web UI."""
     setup_logging(verbose)
 
-    try:
-        import uvicorn
-    except ImportError:
-        raise click.ClickException(
-            "Control Room requires 'starlette' and 'uvicorn'. "
-            "Install with: pip install mithai[ui]"
-        )
-
     config = load_config(config_path)
     ui_config = config.get("ui", {})
 
@@ -34,15 +26,25 @@ def ui(config_path, host, port, verbose):
     bind_host = host or ui_config.get("host", default_host)
     bind_port = port or ui_config.get("port", 8420)
 
-    # Import here to avoid ImportError if starlette not installed
-    from mithai.ui.app import create_app
-    from mithai.cli.style import warn
+    if not has_auth and bind_host not in {"127.0.0.1", "localhost", "::1"}:
+        raise click.ClickException(
+            "Refusing to bind the Control Room UI publicly without ui.auth_token. "
+            "Set a real auth token or bind to 127.0.0.1."
+        )
 
+    try:
+        import uvicorn
+    except ImportError:
+        raise click.ClickException(
+            "Control Room requires 'starlette' and 'uvicorn'. "
+            "Install with: pip install mithai[ui]"
+        )
+
+    # Import here to avoid ImportError if starlette is not installed.
+    from mithai.ui.app import create_app
     app = create_app(config)
 
     banner_small("Control Room")
-    if not has_auth and bind_host != "127.0.0.1":
-        warn("No auth_token configured — UI is accessible without authentication")
     kv("URL", f"http://{bind_host}:{bind_port}", indent=4)
     console.print()
 

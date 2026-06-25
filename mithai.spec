@@ -4,8 +4,7 @@
 Build: pyinstaller mithai.spec --noconfirm
 Output: dist/mithai (single binary)
 
-Core skills (shell, memory, sessions, http_checker) are bundled as data files.
-Optional skills (kubernetes, aws, last9, github, etc.) are installed separately
+Core skills are bundled as data files. Optional skills are installed separately
 via `mithai skill install <name>`.
 """
 
@@ -48,12 +47,10 @@ otel_datas, otel_binaries, otel_hiddenimports = _safe_collect('opentelemetry')
 # just skips the processor (the `from last9_genai import ...` is guarded).
 last9_datas, last9_binaries, last9_hiddenimports = _safe_collect('last9_genai')
 
-# Release builds must not silently drop the GenAI processor: collect_all on a
-# missing package returns empty lists without raising, so a build pipeline that
-# forgets the `telemetry` extra would otherwise ship a binary minus last9_genai
-# with zero signal (build green, runtime only logs at debug). Setting
-# MITHAI_REQUIRE_TELEMETRY=1 (done in CI/release workflows) turns that into a
-# loud build failure; dev builds without the extra keep graceful degradation.
+# Build pipelines that require the optional GenAI processor can set
+# MITHAI_REQUIRE_TELEMETRY=1 to fail loudly if the `telemetry` extra was not
+# installed. Public release builds leave it optional and keep graceful
+# degradation.
 if os.environ.get('MITHAI_REQUIRE_TELEMETRY', '').strip() == '1' and not last9_hiddenimports:
     raise SystemExit(
         "MITHAI_REQUIRE_TELEMETRY=1 but collect_all('last9_genai') returned nothing — "
@@ -69,6 +66,7 @@ CORE_SKILLS = [
     'sessions',
     'http_checker',
     'scheduling',
+    'kubernetes',
 ]
 
 # Build datas list from core skills

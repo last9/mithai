@@ -52,6 +52,10 @@ To use AWS Bedrock instead of the Anthropic API, install the `bedrock` extra and
 pip install 'mithai[bedrock]'
 ```
 
+Telemetry is optional. Install `mithai[telemetry]` only when you want
+OpenTelemetry export and Last9 GenAI span enrichment; the core package runs
+without those dependencies.
+
 ## Creating a skill
 
 ```bash
@@ -103,6 +107,7 @@ That's it. Drop the folder in `skills/`, restart mithai, and the AI can use it.
 | `memory` | Persistent memory across conversations (MEMORY.md) | auto |
 | `sessions` | Inspect past conversation sessions per channel | auto |
 | `scheduling` | Create recurring cron-based tasks via Slack | confirm |
+| `kubernetes` | Inspect pods, deployments, events, logs, and resource descriptions | auto |
 
 ## Human MCP
 
@@ -122,7 +127,7 @@ human:
   timeout_seconds: 300
   overrides:
     shell__run_command: confirm    # escalate
-    kubernetes__get_pods: null     # de-escalate
+    kubernetes__get_pods: null     # keep read-only pod listing auto-executed
 ```
 
 ## Scheduling

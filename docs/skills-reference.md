@@ -227,7 +227,7 @@ Set to `True` to enable post-turn fact-checking for this skill. After each turn 
 VERIFY = True
 ```
 
-Use this for skills that query external systems with precise values (counts, sizes, versions, costs) where hallucinated summaries would be harmful — for example infrastructure skills like `aws` or `kubernetes`. No skill enables it by default.
+Use this for skills that query external systems with precise values (counts, sizes, versions, costs) where hallucinated summaries would be harmful. The bundled `kubernetes` skill enables this because cluster status answers should be checked against actual tool output.
 
 To use a cheaper model for the fact-check, configure it in `config.yaml`:
 
@@ -368,6 +368,32 @@ Check whether HTTP endpoints are reachable.
 
 ---
 
+### `kubernetes`
+
+Inspect Kubernetes clusters through read-only `kubectl` commands.
+
+**Tools:** `get_pods(namespace, all_namespaces)`, `get_deployments(namespace, all_namespaces)`, `get_events(namespace, all_namespaces)`, `get_logs(pod, namespace, container, previous, tail_lines)`, `describe_resource(resource_type, name, namespace)`
+
+**Approval:** Auto for all operations. The bundled skill does not create, update, restart, scale, or delete resources.
+
+**Requires:** `kubectl` on `PATH` and access to the target cluster.
+
+**Config:**
+
+```yaml
+skills:
+  config:
+    kubernetes:
+      default_namespace: default
+      context: ""
+      kubeconfig: ""
+      timeout: 30
+```
+
+`context` and `kubeconfig` are passed as structured `kubectl` arguments, not through a shell.
+
+---
+
 ## Configuration overrides
 
 Any tool's approval level can be overridden in `config.yaml` without modifying the skill:
@@ -377,7 +403,7 @@ human:
   timeout_seconds: 300    # how long to wait for approval before timing out
   overrides:
     shell__run_command: confirm       # escalate: require typing
-    kubernetes__get_pods: null        # de-escalate: auto-execute
+    kubernetes__get_pods: null        # keep read-only pod listing auto-executed
     services__restart_service: null   # trust this operation completely
 ```
 

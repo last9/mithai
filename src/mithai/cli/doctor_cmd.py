@@ -251,7 +251,7 @@ def doctor(config_path):
         raise SystemExit(1)
 
     # Load env file
-    env_file = config_file.parent / "env"
+    env_file = config_file.parent / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             line = line.strip()

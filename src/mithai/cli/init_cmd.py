@@ -13,6 +13,7 @@ from mithai.cli.style import (
 
 
 MITHAI_HOME = Path.home() / ".mithai"
+ENV_FILENAME = ".env"
 
 
 def _mask(secret: str) -> str:
@@ -67,6 +68,23 @@ def _validate_telegram_token(bot_token: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _ensure_gitignore_entry(target: Path, entry: str = ENV_FILENAME) -> None:
+    """Ensure a target-local .gitignore excludes the generated secrets file."""
+    gitignore_path = target / ".gitignore"
+    if gitignore_path.exists():
+        content = gitignore_path.read_text()
+        entries = {
+            line.strip()
+            for line in content.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        if entry in entries:
+            return
+        prefix = "" if content.endswith("\n") or not content else "\n"
+        gitignore_path.write_text(f"{content}{prefix}{entry}\n")
+    else:
+        gitignore_path.write_text(f"{entry}\n")
+
 
 @click.command()
 @click.option("--dir", "target_dir", default=None, help="Directory for config files (default: ~/.mithai/)")
@@ -74,7 +92,7 @@ def init(target_dir):
     """Interactive setup wizard — configure adapters, LLM, skills, and more."""
     target = Path(target_dir) if target_dir else MITHAI_HOME
     config_path = target / "config.yaml"
-    env_path = target / "env"
+    env_path = target / ENV_FILENAME
 
     from mithai import get_version_string
     banner(get_version_string())
@@ -390,6 +408,9 @@ def init(target_dir):
     env_path.chmod(0o600)
     ok(f"Env file written to [white]{env_path}[/] [muted](permissions: 0600)[/]")
 
+    _ensure_gitignore_entry(target)
+    ok(f"Updated [white]{target / '.gitignore'}[/] to ignore {ENV_FILENAME}")
+
     # Create memory and state dirs
     memory_dir = Path(config.get("learning", {}).get("memory_dir", target / "memory"))
     memory_dir.mkdir(parents=True, exist_ok=True)
@@ -415,5 +436,3 @@ def init(target_dir):
     console.print()
     summary_panel("Setup Complete", summary_content)
     console.print()
-
-

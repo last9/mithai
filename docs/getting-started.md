@@ -106,7 +106,7 @@ AWS_REGION=us-east-1
 mithai chat
 ```
 
-This starts an interactive session in your terminal. The agent comes with three built-in skills: `shell` (run commands), `http_checker` (check URLs), and `memory` (persistent notes).
+This starts an interactive session in your terminal. The agent comes with built-in skills for shell commands, HTTP checks, memory, sessions, scheduling, and read-only Kubernetes inspection.
 
 Try a few things:
 
@@ -188,9 +188,12 @@ mithai skill list
 shell         1 tool    run_command       approval: dynamic
 http_checker  1 tool    check_url         approval: auto
 memory        3 tools   read/write/search approval: auto
+kubernetes    5 tools   cluster inspect   approval: auto
 ```
 
-The listing shows each skill's tools and approval level.
+The listing shows each skill's tools and approval level. The Kubernetes skill is
+read-only and requires `kubectl` plus cluster access before its tools can return
+live data.
 
 ---
 

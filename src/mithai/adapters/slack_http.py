@@ -28,7 +28,7 @@ class SlackHTTPAdapter(SlackAdapterBase):
       does NOT open a Socket Mode WebSocket. Instead the embedded API server
       (``mithai run`` with ``MITHAI_UI_PORT``) exposes ``POST /slack/events`` and
       delegates to this adapter's Bolt request handler. This is the model used by
-      the external-orchestrator control plane for a single distributed app: one public URL
+      an external control plane for a single distributed app: one public URL
       verifies + routes events by team_id, then forwards them to the right agent.
       It avoids per-agent port collisions (every agent would otherwise bind :3000)
       and the shared app-level-token Socket Mode lottery.
@@ -37,7 +37,7 @@ class SlackHTTPAdapter(SlackAdapterBase):
     """
 
     def __init__(self, bot_token: str, signing_secret: str,
-                 host: str = "0.0.0.0", port: int = 3000,
+                 host: str = "127.0.0.1", port: int = 3000,
                  allowed_channels: list[str] | None = None,
                  approval_timeout: int = 300, respond: str = "all",
                  managed: bool = False,

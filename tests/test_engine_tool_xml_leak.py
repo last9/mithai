@@ -30,7 +30,7 @@ from mithai.memory.filesystem import FilesystemMemoryBackend
 from mithai.state.memory import MemoryStateBackend
 
 # The human-meant message buried in the narrated call.
-INTENDED = "Hey #release — I'm REDACTED_INTERNAL_CHANNEL, a senior staff engineer here to help."
+INTENDED = "Hey #release — I'm Alice, a senior staff engineer here to help."
 
 # A faithful sample of what the model emitted as a *text* block in the incident.
 LEAKED_XML = (
@@ -53,7 +53,7 @@ def _make_engine(**config_extra):
     state = MemoryStateBackend()
     memory = FilesystemMemoryBackend(Path(tempfile.mkdtemp()))
     config = {
-        "bot": {"system_prompt": "You are a helpful assistant.", "name": "REDACTED_INTERNAL_CHANNEL"},
+        "bot": {"system_prompt": "You are a helpful assistant.", "name": "Alice"},
         "learning": {"enabled": False},
         "llm": {"provider": "anthropic", "api_key": "test"},
         **config_extra,

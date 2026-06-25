@@ -49,11 +49,11 @@ llm:
 # MCP servers — shared infrastructure for tool backends
 # Skills declare which MCP tools they need in their tools.py (MCP_TOOLS)
 # mcp_servers:
-#   last9:
-#     transport: streamablehttp
-#     url: https://mcp.example.com
+#   linear:
+#     transport: sse
+#     url: https://mcp.linear.app/sse
 #     headers:
-#       X-API-TOKEN: Bearer ${EXAMPLE_API_TOKEN}
+#       Authorization: Bearer ${LINEAR_API_KEY}
 
 skills:
   paths:
@@ -108,16 +108,16 @@ heartbeat:
 #   default_agent: devops
 
 ui:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8420
   auth_token: ${MITHAI_UI_TOKEN}
 
 telemetry:
-  enabled: true
+  enabled: false
   service_name: mithai
   exporter: otlp
   otlp:
-    endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-https://otlp.example.com:443}
+    endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}
     headers:
       Authorization: ${OTEL_EXPORTER_OTLP_HEADERS}
   sampling:

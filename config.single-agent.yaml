@@ -36,7 +36,7 @@ skills:
       # kubectl context override (empty = use current context)
       context: ""
       # Path to kubeconfig (empty = use default ~/.kube/config)
-      kubeconfig: "/tmp/kubeconfig/REDACTED_KUBECONFIG_CONTEXT/platform"
+      kubeconfig: ""
       # Slack channel to post self-healing alerts (leave empty to disable polling loop)
       alert_channel: ""
       # How often to scan the cluster for issues (minutes)
@@ -106,7 +106,7 @@ learning:
 #   default_agent: devops
 
 ui:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8420
   # Optional token for simple auth (empty = no auth)
   auth_token: ${MITHAI_UI_TOKEN}

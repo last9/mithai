@@ -304,7 +304,7 @@ def create_app(config: dict, engine=None, adapter=None) -> Starlette:
         )
 
     async def slack_events(request: Request) -> Response:
-        """Receive a Slack request forwarded by the external-orchestrator control plane.
+        """Receive a Slack request forwarded by an external control plane.
 
         The control plane verifies the app signature and routes by team_id, then
         forwards the raw Slack request here. We delegate to the managed Slack
@@ -317,7 +317,7 @@ def create_app(config: dict, engine=None, adapter=None) -> Starlette:
         process_before_response=True would deadlock approvals). Consequently, if
         this agent process dies between the 2xx and handle() completing, THIS
         event is lost here. That is accepted by design: the control plane
-        (external-orchestrator internal/slackqueue) is the SOLE delivery-durability owner —
+        external control plane is the SOLE delivery-durability owner —
         it persists every request before acking Slack and retries on any non-2xx
         from this endpoint. Therefore a tenant MUST NOT be switched to managed
         mode until that durable queue is deployed. An agent-side durable inbox

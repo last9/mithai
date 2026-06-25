@@ -32,7 +32,7 @@ class TestEncodeMentions:
         assert encode_mentions(text, _resolver) == text
 
     def test_email_untouched(self):
-        assert encode_mentions("mail foo@alice.com", _resolver) == "mail foo@alice.com"
+        assert encode_mentions("mail foo@alice.example", _resolver) == "mail foo@alice.example"
 
     def test_already_encoded_untouched(self):
         assert encode_mentions("hi <@U012> there", _resolver) == "hi <@U012> there"

@@ -420,7 +420,7 @@ For production monitoring, instrument these:
 - **Log errors:** `journalctl -u mithai` for `ERROR` and `Exception` lines.
 - **Disk space:** the memory and state directories grow over time. Session files accumulate at `.mithai/state/sessions/`. Prune old ones if disk becomes a concern.
 
-If you have telemetry configured (`telemetry.enabled: true` in `config.yaml`), mithai emits OpenTelemetry traces for each request and tool call. The `mithai.request` span and per-tool spans give you latency and approval-rate data.
+If you have telemetry configured (`telemetry.enabled: true` in `config.yaml`), mithai emits OpenTelemetry traces for each request and tool call. The `mithai.request` span and per-tool spans give you latency and approval-rate data. Install `mithai[telemetry]` only when you need telemetry; Last9 GenAI enrichment is optional and skipped automatically when the extra is not installed.
 
 ---
 
@@ -460,11 +460,10 @@ docker compose restart mithai
 If you installed optional skills with `mithai skill install`, upgrade them individually:
 
 ```bash
-mithai skill upgrade kubernetes
-mithai skill upgrade github
+mithai skill upgrade my_custom_skill
 ```
 
-Core skills (shell, memory, sessions, http_checker) are bundled with the mithai binary and upgrade with it.
+Core skills (shell, memory, sessions, scheduling, http_checker, kubernetes) are bundled with the mithai binary and upgrade with it.
 
 > **Note:** Skill upgrades do not affect data in `memory/` or `.mithai/state/`. Your agent's accumulated knowledge is safe across upgrades.
 

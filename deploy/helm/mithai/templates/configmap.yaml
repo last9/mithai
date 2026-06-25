@@ -79,7 +79,7 @@ data:
 
     {{- if .Values.ui.enabled }}
     ui:
-      host: 0.0.0.0
+      host: {{ .Values.ui.host | quote }}
       port: {{ .Values.ui.port }}
       {{- if .Values.ui.authToken }}
       auth_token: ${MITHAI_UI_TOKEN}

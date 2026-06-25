@@ -24,7 +24,7 @@ def _make_mock_app():
 
 
 def _build_http_adapter(bot_token="xoxb-test", signing_secret="sig-secret",
-                         host="0.0.0.0", port=3000, allowed_channels=None,
+                         host="127.0.0.1", port=3000, allowed_channels=None,
                          allow_posting_in_external_channels=None):
     mock_app = _make_mock_app()
     mock_app_cls = MagicMock(return_value=mock_app)
@@ -1112,7 +1112,7 @@ def test_socket_adapter_start_logs_warning_when_no_allowed_channels(caplog):
 
 # ---------------------------------------------------------------------------
 # Managed mode: events arrive via the embedded API server's /slack/events
-# endpoint (fed by the external-orchestrator control plane), NOT the adapter's own
+# endpoint (fed by an external control plane), NOT the adapter's own
 # uvicorn server. A distributed Slack app routes ALL workspaces' events to one
 # control-plane URL; the control plane verifies + routes by team_id and forwards
 # to this engine. The adapter must therefore NOT bind its own HTTP port (every

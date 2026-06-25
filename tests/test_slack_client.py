@@ -1020,8 +1020,8 @@ def test_resolve_mention_name_collision_returns_none():
 def test_resolve_mention_name_first_name_collision_returns_none():
     client = _make_client()
     client._client.users_list.return_value = _members(
-        ("U1", "Alex Carter", "Alex Carter", "ksharma"),
-        ("U2", "Alex Rivera", "Alex Rivera", "kranjan"),
+        ("U1", "Alex Carter", "Alex Carter", "acarter"),
+        ("U2", "Alex Rivera", "Alex Rivera", "arivera"),
     )
     assert client.resolve_mention_name("alex") is None
 

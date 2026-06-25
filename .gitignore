@@ -1,6 +1,7 @@
 .env
 .claude/
 .mithai/
+.wrangler/
 .venv/
 /memory/
 __pycache__/

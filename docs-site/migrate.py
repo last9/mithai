@@ -110,7 +110,7 @@ def main():
     manifest_dst = Path(__file__).parent / 'public/slack-manifest.yaml'
     if manifest_src.exists():
         shutil.copy(manifest_src, manifest_dst)
-        print(f'  ✓ slack-manifest.yaml → public/')
+        print('  ✓ slack-manifest.yaml → public/')
 
     print('\nDone. Review docs-site/src/content/docs/ then run:')
     print('  cd docs-site && npm install && npm run dev')

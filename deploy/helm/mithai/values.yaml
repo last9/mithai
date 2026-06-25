@@ -3,15 +3,14 @@ replicaCount: 1
 
 image:
   # -- Container image repository
-  repository: ghcr.io/example/mithai
+  repository: ghcr.io/last9/mithai
   # -- Image pull policy
-  pullPolicy: Always
+  pullPolicy: IfNotPresent
   # -- Overrides the image tag (default: appVersion from Chart.yaml)
   tag: ""
 
 # -- Image pull secrets for private registries
-imagePullSecrets:
-  - name: private-registry
+imagePullSecrets: []
 
 # -- Override the release name
 nameOverride: ""
@@ -77,11 +76,6 @@ adapter:
 #     url: https://mcp.linear.app/sse
 #     headers:
 #       Authorization: "Bearer ${LINEAR_API_KEY}"
-#   last9:
-#     transport: streamablehttp
-#     url: https://mcp.example.com
-#     headers:
-#       X-API-TOKEN: "Bearer ${EXAMPLE_API_TOKEN}"
 mcpServers: {}
 
 # -----------------------------------------------------------------------------
@@ -148,6 +142,8 @@ agents: {}
 ui:
   # -- Enable the Control Room web UI
   enabled: false
+  # -- UI listen host. Keep localhost unless exposing through a trusted proxy.
+  host: 127.0.0.1
   # -- UI listen port
   port: 8420
   # -- Simple auth token (empty = no auth). Stored in Secret.
@@ -241,5 +237,4 @@ affinity: {}
 # -----------------------------------------------------------------------------
 # extraSecrets:
 #   LINEAR_API_KEY: ""
-#   EXAMPLE_API_TOKEN: ""
 extraSecrets: {}

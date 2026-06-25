@@ -246,7 +246,7 @@ The model name is the Bedrock model ID, not the Anthropic alias. Some examples:
 
 The Bedrock Converse API is uniform across model families, so switching models is just a config change. Install: `pip install 'mithai[bedrock]'`.
 
-**IAM permissions:** the credentials need `bedrock:InvokeModel` for every model the agent will use. If the agent is managed by external-orchestrator, the credentials additionally need `sts:GetCallerIdentity` — the orchestrator uses it for connection validation; standalone mithai never calls STS.
+**IAM permissions:** the credentials need `bedrock:InvokeModel` for every model the agent will use. If mithai is managed by an external orchestrator, that orchestrator may need its own AWS permissions for connection validation; standalone mithai never calls STS.
 
 ### Common settings
 
@@ -290,7 +290,7 @@ human:
   timeout_seconds: 300     # how long to wait for approval before timing out (default: 300)
   overrides:
     shell__run_command: confirm        # escalate a tool's approval level
-    kubernetes__get_pods: null         # de-escalate to auto-execute
+    kubernetes__get_pods: null         # keep read-only pod listing auto-executed
     services__restart_service: approve # override regardless of resolve_human
 ```
 

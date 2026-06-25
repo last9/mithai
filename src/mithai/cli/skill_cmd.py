@@ -15,9 +15,24 @@ from mithai.core.skill_loader import load_skills, validate_skill
 
 
 # Skills that ship inside the binary and are always loaded
-CORE_SKILLS = {"shell", "memory", "sessions", "http_checker"}
+CORE_SKILLS = {
+    "shell",
+    "memory",
+    "sessions",
+    "http_checker",
+    "scheduling",
+    "kubernetes",
+}
 
-SKILL_DEPS: dict[str, list[dict]] = {}
+SKILL_DEPS: dict[str, list[dict]] = {
+    "kubernetes": [
+        {
+            "label": "kubectl",
+            "command": "kubectl version --client",
+            "install_hint": "Install kubectl: https://kubernetes.io/docs/tasks/tools/",
+        },
+    ],
+}
 
 
 SKILL_PROMPT_TEMPLATE = """Describe what this skill does.

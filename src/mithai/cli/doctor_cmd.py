@@ -12,9 +12,6 @@ from mithai.core.config import load_config, get_skill_paths
 from mithai.core.skill_loader import load_skills
 
 
-MITHAI_HOME = Path.home() / ".mithai"
-
-
 def _check_llm(config: dict) -> bool:
     """Check LLM connectivity."""
     llm = config.get("llm", {})
@@ -198,13 +195,42 @@ def _check_skills(config: dict) -> int:
         return 1
 
 
-def _check_directories() -> int:
+def _configured_memory_dir(config: dict) -> Path | None:
+    learning = config.get("learning", {})
+    memory = learning.get("memory", {})
+    if not memory and "memory_dir" in learning:
+        return Path(learning["memory_dir"])
+
+    backend = memory.get("backend", "filesystem")
+    if backend != "filesystem":
+        ok(f"Memory backend: [white]{backend}[/] (no local directory)")
+        return None
+
+    return Path(memory.get("filesystem", {}).get("path", "./memory"))
+
+
+def _configured_state_dir(config: dict) -> Path | None:
+    state = config.get("state", {})
+    backend = state.get("backend", "filesystem")
+    if backend != "filesystem":
+        ok(f"State backend: [white]{backend}[/] (no local directory)")
+        return None
+
+    return Path(state.get("filesystem", {}).get("path", "./.mithai/state"))
+
+
+def _check_directories(config: dict) -> int:
     """Check writable directories. Returns number of failures."""
     failures = 0
-    for name, path in [
-        ("Memory dir", MITHAI_HOME / "memory"),
-        ("State dir", MITHAI_HOME / "state"),
-    ]:
+    paths = []
+    memory_dir = _configured_memory_dir(config)
+    state_dir = _configured_state_dir(config)
+    if memory_dir is not None:
+        paths.append(("Memory dir", memory_dir))
+    if state_dir is not None:
+        paths.append(("State dir", state_dir))
+
+    for name, path in paths:
         if path.exists() and os.access(path, os.W_OK):
             ok(f"{name}: [muted]{path}[/]")
         elif path.exists():
@@ -234,11 +260,11 @@ def _check_mcp(config: dict) -> int:
 
 
 @click.command()
-@click.option("--config", "config_path", default=None,
-              help="Path to config.yaml (default: ~/.mithai/config.yaml)")
+@click.option("--config", "config_path", default="config.yaml",
+              help="Path to config.yaml")
 def doctor(config_path):
     """Run diagnostics — check config, connections, and dependencies."""
-    config_file = Path(config_path) if config_path else MITHAI_HOME / "config.yaml"
+    config_file = Path(config_path)
 
     banner_small("doctor")
     kv("Version", get_version_string(), indent=4)
@@ -298,7 +324,7 @@ def doctor(config_path):
 
     # Directories
     section("Filesystem")
-    issues += _check_directories()
+    issues += _check_directories(config)
 
     console.print()
     if issues == 0:

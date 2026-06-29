@@ -12,7 +12,6 @@ from mithai.cli.style import (
 )
 
 
-MITHAI_HOME = Path.home() / ".mithai"
 ENV_FILENAME = ".env"
 
 
@@ -86,11 +85,20 @@ def _ensure_gitignore_entry(target: Path, entry: str = ENV_FILENAME) -> None:
         gitignore_path.write_text(f"{entry}\n")
 
 
+def _configured_memory_dir(config: dict, default: Path) -> Path:
+    learning = config.get("learning", {})
+    memory = learning.get("memory", {})
+    if memory:
+        filesystem = memory.get("filesystem", {})
+        return Path(filesystem.get("path", default))
+    return Path(learning.get("memory_dir", default))
+
+
 @click.command()
-@click.option("--dir", "target_dir", default=None, help="Directory for config files (default: ~/.mithai/)")
+@click.option("--dir", "target_dir", default=None, help="Directory for config files (default: current directory)")
 def init(target_dir):
     """Interactive setup wizard — configure adapters, LLM, skills, and more."""
-    target = Path(target_dir) if target_dir else MITHAI_HOME
+    target = Path(target_dir) if target_dir else Path.cwd()
     config_path = target / "config.yaml"
     env_path = target / ENV_FILENAME
 
@@ -372,11 +380,14 @@ def init(target_dir):
     })
     config.setdefault("state", {
         "backend": "filesystem",
-        "filesystem": {"path": str(target / "state")},
+        "filesystem": {"path": str(target / ".mithai" / "state")},
     })
     config.setdefault("learning", {
         "enabled": True,
-        "memory_dir": str(target / "memory"),
+        "memory": {
+            "backend": "filesystem",
+            "filesystem": {"path": str(target / "memory")},
+        },
         "reflection": True,
         "approval_auto_promote": 3,
     })
@@ -412,13 +423,16 @@ def init(target_dir):
     ok(f"Updated [white]{target / '.gitignore'}[/] to ignore {ENV_FILENAME}")
 
     # Create memory and state dirs
-    memory_dir = Path(config.get("learning", {}).get("memory_dir", target / "memory"))
+    memory_dir = _configured_memory_dir(config, target / "memory")
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     state_dir = Path(config.get("state", {}).get("filesystem", {}).get("path", target / "state"))
     state_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir = target / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
     ok(f"Memory dir: [muted]{memory_dir}[/]")
     ok(f"State dir: [muted]{state_dir}[/]")
+    ok(f"Skills dir: [muted]{skills_dir}[/]")
 
     # Summary
     all_skills = sorted(CORE_SKILLS | set(installed_skills))

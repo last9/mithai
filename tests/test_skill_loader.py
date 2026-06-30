@@ -191,7 +191,9 @@ def test_validate_missing_both_prompt_files(tmp_path):
 
 
 def test_load_prompt_only_skill(tmp_path):
-    """A skill with SKILL.md but no tools.py loads as a prompt-only skill."""
+    """A skill with skill.md but no tools.py loads as a prompt-only skill."""
+    import pytest
+
     skill_dir = tmp_path / "skills" / "last9_logs"
     skill_dir.mkdir(parents=True)
     (skill_dir / "skill.md").write_text("query logs prompt")
@@ -200,7 +202,9 @@ def test_load_prompt_only_skill(tmp_path):
     skill = skills["last9_logs"]
     assert skill.prompt == "query logs prompt"
     assert skill.tools == []
-    assert callable(skill.handle)
+    # The placeholder handle must raise if ever invoked (no native tools).
+    with pytest.raises(RuntimeError):
+        skill.handle("anything", {}, {})
 
 
 def test_frontmatter_stripped_from_prompt(tmp_path):
@@ -233,3 +237,36 @@ def test_no_frontmatter_left_intact(tmp_path):
 
     skills = load_skills([tmp_path / "skills"])
     assert skills["dash_skill"].prompt == "Heading\n---\nbody"
+
+
+def test_crlf_frontmatter_stripped(tmp_path):
+    """Frontmatter with CRLF line endings is stripped."""
+    skill_dir = tmp_path / "skills" / "crlf_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("---\r\nname: x\r\n---\r\nBody.\r\n")
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["crlf_skill"].prompt == "Body."
+
+
+def test_empty_frontmatter_block_stripped(tmp_path):
+    """An empty frontmatter block (--- immediately followed by ---) is stripped."""
+    skill_dir = tmp_path / "skills" / "empty_fm"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("---\n---\nBody.")
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["empty_fm"].prompt == "Body."
+
+
+def test_frontmatter_without_trailing_newline(tmp_path):
+    """A file that is only frontmatter with no trailing newline strips to empty."""
+    skill_dir = tmp_path / "skills" / "fm_eof"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("---\nname: x\n---")
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["fm_eof"].prompt == ""

@@ -13,7 +13,8 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 # Leading YAML frontmatter block (--- ... ---) at the very top of a prompt file.
-_FRONTMATTER_RE = re.compile(r"\A---\r?\n.*?\r?\n---[ \t]*\r?\n", re.DOTALL)
+# Inner content is optional (empty block) and the closing fence may end at EOF.
+_FRONTMATTER_RE = re.compile(r"\A---\r?\n(?:.*?\r?\n)?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 
 
 @dataclass
@@ -56,7 +57,7 @@ def _read_prompt(prompt_file: Path) -> str:
     return _FRONTMATTER_RE.sub("", prompt_file.read_text()).strip()
 
 
-def _noop_handle(name, input, ctx):
+def _noop_handle(name, inp, ctx):
     """Placeholder handler for prompt-only skills (no native tools)."""
     raise RuntimeError(f"Skill has no native tools; handle() called for {name!r}")
 
@@ -71,6 +72,8 @@ def _load_skill(skill_dir: Path) -> Skill | None:
         return None
 
     prompt = _read_prompt(prompt_file)
+    if not prompt:
+        logger.warning("Skill %s: %s is empty after frontmatter", skill_dir.name, prompt_file.name)
 
     # tools.py is optional: a prompt-only skill (e.g. one that rides on MCP tools)
     # contributes just its prompt fragment.

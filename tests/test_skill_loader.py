@@ -45,13 +45,13 @@ def test_validate_missing_prompt(tmp_path):
     assert any("prompt.md" in e for e in errors)
 
 
-def test_validate_missing_tools(tmp_path):
-    skill_dir = tmp_path / "bad_skill"
+def test_validate_prompt_only_skill_is_valid(tmp_path):
+    """tools.py is optional: a prompt-only skill validates clean."""
+    skill_dir = tmp_path / "prompt_only"
     skill_dir.mkdir()
     (skill_dir / "prompt.md").write_text("test")
 
-    errors = validate_skill(skill_dir)
-    assert any("tools.py" in e for e in errors)
+    assert validate_skill(skill_dir) == []
 
 
 def test_validate_invalid_human_level(tmp_path):
@@ -188,3 +188,48 @@ def test_validate_missing_both_prompt_files(tmp_path):
 
     errors = validate_skill(skill_dir)
     assert any("prompt.md" in e and "skill.md" in e for e in errors)
+
+
+def test_load_prompt_only_skill(tmp_path):
+    """A skill with SKILL.md but no tools.py loads as a prompt-only skill."""
+    skill_dir = tmp_path / "skills" / "last9_logs"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("query logs prompt")
+
+    skills = load_skills([tmp_path / "skills"])
+    skill = skills["last9_logs"]
+    assert skill.prompt == "query logs prompt"
+    assert skill.tools == []
+    assert callable(skill.handle)
+
+
+def test_frontmatter_stripped_from_prompt(tmp_path):
+    """YAML frontmatter is stripped before the prompt is injected."""
+    skill_dir = tmp_path / "skills" / "fm_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text(
+        "---\n"
+        "name: fm_skill\n"
+        "description: does things\n"
+        "metadata:\n"
+        "  k: v\n"
+        "---\n"
+        "Actual prompt body.\n"
+    )
+
+    skills = load_skills([tmp_path / "skills"])
+    prompt = skills["fm_skill"].prompt
+    assert prompt == "Actual prompt body."
+    assert "name:" not in prompt
+    assert "description:" not in prompt
+
+
+def test_no_frontmatter_left_intact(tmp_path):
+    """A prompt with a leading '---' that is not frontmatter is untouched."""
+    skill_dir = tmp_path / "skills" / "dash_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("Heading\n---\nbody")
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["dash_skill"].prompt == "Heading\n---\nbody"

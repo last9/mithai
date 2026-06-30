@@ -139,3 +139,52 @@ def test_skill_verify_false_when_explicitly_false(tmp_path):
     )
     skills = load_skills([tmp_path / "skills"])
     assert skills["safe_skill"].verify is False
+
+
+_TOOLS_PY = (
+    'TOOLS = [{"name": "t", "description": "d", "input_schema": {}}]\n'
+    'def handle(n, i, c): pass\n'
+)
+
+
+def test_load_skill_via_skill_md(tmp_path):
+    """A skill exposing skill.md (instead of prompt.md) loads."""
+    skill_dir = tmp_path / "skills" / "md_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text("skill md prompt")
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["md_skill"].prompt == "skill md prompt"
+
+
+def test_prompt_md_wins_over_skill_md(tmp_path):
+    """When both files exist, prompt.md takes precedence."""
+    skill_dir = tmp_path / "skills" / "both_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "prompt.md").write_text("from prompt")
+    (skill_dir / "skill.md").write_text("from skill")
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    skills = load_skills([tmp_path / "skills"])
+    assert skills["both_skill"].prompt == "from prompt"
+
+
+def test_validate_skill_via_skill_md(tmp_path):
+    """validate_skill accepts skill.md as the prompt file."""
+    skill_dir = tmp_path / "md_skill"
+    skill_dir.mkdir()
+    (skill_dir / "skill.md").write_text("skill md prompt")
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    assert validate_skill(skill_dir) == []
+
+
+def test_validate_missing_both_prompt_files(tmp_path):
+    """Missing both prompt.md and skill.md is an error mentioning both."""
+    skill_dir = tmp_path / "bad_skill"
+    skill_dir.mkdir()
+    (skill_dir / "tools.py").write_text(_TOOLS_PY)
+
+    errors = validate_skill(skill_dir)
+    assert any("prompt.md" in e and "skill.md" in e for e in errors)

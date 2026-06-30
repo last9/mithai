@@ -38,13 +38,22 @@ class Skill:
     verify: bool = False  # True → post-turn fact-check runs for this skill's turns
 
 
+def _find_prompt(skill_dir: Path) -> Path | None:
+    """Return the skill's prompt file, preferring prompt.md over skill.md."""
+    for name in ("prompt.md", "skill.md"):
+        candidate = skill_dir / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _load_skill(skill_dir: Path) -> Skill | None:
     """Load a single skill from a directory."""
-    prompt_file = skill_dir / "prompt.md"
+    prompt_file = _find_prompt(skill_dir)
     tools_file = skill_dir / "tools.py"
 
-    if not prompt_file.exists() or not tools_file.exists():
-        logger.debug("Skipping %s: missing prompt.md or tools.py", skill_dir.name)
+    if prompt_file is None or not tools_file.exists():
+        logger.debug("Skipping %s: missing prompt.md/skill.md or tools.py", skill_dir.name)
         return None
 
     prompt = prompt_file.read_text().strip()
@@ -156,17 +165,17 @@ def validate_skill(skill_dir: Path) -> list[str]:
     Validate a skill directory. Returns list of errors (empty = valid).
     """
     errors = []
-    prompt_file = skill_dir / "prompt.md"
     tools_file = skill_dir / "tools.py"
 
     if not skill_dir.is_dir():
         errors.append(f"Not a directory: {skill_dir}")
         return errors
 
-    if not prompt_file.exists():
-        errors.append("Missing prompt.md")
+    prompt_file = _find_prompt(skill_dir)
+    if prompt_file is None:
+        errors.append("Missing prompt.md (or skill.md)")
     elif not prompt_file.read_text().strip():
-        errors.append("prompt.md is empty")
+        errors.append(f"{prompt_file.name} is empty")
 
     if not tools_file.exists():
         errors.append("Missing tools.py")

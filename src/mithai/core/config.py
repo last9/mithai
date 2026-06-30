@@ -369,6 +369,35 @@ def get_skill_paths(config: dict) -> list[Path]:
     return result
 
 
+def get_memory_dir(config: dict, default: str = "./memory") -> Path | None:
+    """Resolve the filesystem memory directory from config.
+
+    Returns None when the memory backend is not filesystem (no local directory).
+    Honors the legacy flat ``learning.memory_dir`` key, preferring the canonical
+    ``learning.memory.filesystem.path`` shape when present. This is the single
+    source of truth for memory-path resolution shared by init/doctor and mirrors
+    the runtime reader in run_cmd._create_memory_backend.
+    """
+    learning = config.get("learning", {})
+    memory = learning.get("memory", {})
+    if not memory and "memory_dir" in learning:
+        return Path(learning["memory_dir"])
+    if memory.get("backend", "filesystem") != "filesystem":
+        return None
+    return Path(memory.get("filesystem", {}).get("path", default))
+
+
+def get_state_dir(config: dict, default: str = "./.mithai/state") -> Path | None:
+    """Resolve the filesystem state directory from config.
+
+    Returns None when the state backend is not filesystem (no local directory).
+    """
+    state = config.get("state", {})
+    if state.get("backend", "filesystem") != "filesystem":
+        return None
+    return Path(state.get("filesystem", {}).get("path", default))
+
+
 def get_mcp_config(config: dict) -> dict:
     """Get MCP server configurations. Returns empty dict if none configured."""
     return config.get("mcp_servers", {})

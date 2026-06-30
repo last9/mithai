@@ -10,6 +10,7 @@ from rich.prompt import Prompt, Confirm, IntPrompt
 from mithai.cli.style import (
     banner, console, fail, info, ok, step_header, summary_panel, warn,
 )
+from mithai.core.config import get_memory_dir, get_state_dir
 
 
 ENV_FILENAME = ".env"
@@ -85,17 +86,11 @@ def _ensure_gitignore_entry(target: Path, entry: str = ENV_FILENAME) -> None:
         gitignore_path.write_text(f"{entry}\n")
 
 
-def _configured_memory_dir(config: dict, default: Path) -> Path:
-    learning = config.get("learning", {})
-    memory = learning.get("memory", {})
-    if memory:
-        filesystem = memory.get("filesystem", {})
-        return Path(filesystem.get("path", default))
-    return Path(learning.get("memory_dir", default))
-
-
 @click.command()
-@click.option("--dir", "target_dir", default=None, help="Directory for config files (default: current directory)")
+@click.option(
+    "--dir", "target_dir", default=None,
+    help="Directory for config files (default: current directory)",
+)
 def init(target_dir):
     """Interactive setup wizard — configure adapters, LLM, skills, and more."""
     target = Path(target_dir) if target_dir else Path.cwd()
@@ -422,16 +417,19 @@ def init(target_dir):
     _ensure_gitignore_entry(target)
     ok(f"Updated [white]{target / '.gitignore'}[/] to ignore {ENV_FILENAME}")
 
-    # Create memory and state dirs
-    memory_dir = _configured_memory_dir(config, target / "memory")
-    memory_dir.mkdir(parents=True, exist_ok=True)
+    # Create memory and state dirs (skip non-filesystem backends, which have no local dir)
+    memory_dir = get_memory_dir(config, str(target / "memory"))
+    if memory_dir is not None:
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        ok(f"Memory dir: [muted]{memory_dir}[/]")
 
-    state_dir = Path(config.get("state", {}).get("filesystem", {}).get("path", target / "state"))
-    state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = get_state_dir(config, str(target / ".mithai" / "state"))
+    if state_dir is not None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        ok(f"State dir: [muted]{state_dir}[/]")
+
     skills_dir = target / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
-    ok(f"Memory dir: [muted]{memory_dir}[/]")
-    ok(f"State dir: [muted]{state_dir}[/]")
     ok(f"Skills dir: [muted]{skills_dir}[/]")
 
     # Summary

@@ -3,6 +3,7 @@
 import stat
 from pathlib import Path
 
+import yaml
 from click.testing import CliRunner
 
 from mithai.cli.init_cmd import init
@@ -46,6 +47,13 @@ def test_init_defaults_to_current_directory(tmp_path, monkeypatch):
         assert (cwd / "skills").is_dir()
         assert (cwd / "memory").is_dir()
         assert (cwd / ".mithai" / "state").is_dir()
+
+        # The written config must use the canonical filesystem shape the
+        # runtime reads (run_cmd._create_memory_backend / _create_state),
+        # so a regression back to the legacy flat shape is caught here.
+        cfg = yaml.safe_load((cwd / "config.yaml").read_text())
+        assert cfg["learning"]["memory"]["filesystem"]["path"] == str(cwd / "memory")
+        assert cfg["state"]["filesystem"]["path"] == str(cwd / ".mithai" / "state")
 
 
 def test_init_writes_dotenv_and_gitignore(tmp_path, monkeypatch):

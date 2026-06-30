@@ -8,7 +8,7 @@ import click
 
 from mithai import get_version_string
 from mithai.cli.style import banner_small, console, fail, kv, ok, section
-from mithai.core.config import load_config, get_skill_paths
+from mithai.core.config import load_config, get_skill_paths, get_memory_dir, get_state_dir
 from mithai.core.skill_loader import load_skills
 
 
@@ -196,27 +196,19 @@ def _check_skills(config: dict) -> int:
 
 
 def _configured_memory_dir(config: dict) -> Path | None:
-    learning = config.get("learning", {})
-    memory = learning.get("memory", {})
-    if not memory and "memory_dir" in learning:
-        return Path(learning["memory_dir"])
-
-    backend = memory.get("backend", "filesystem")
-    if backend != "filesystem":
+    memory_dir = get_memory_dir(config)
+    if memory_dir is None:
+        backend = config.get("learning", {}).get("memory", {}).get("backend", "filesystem")
         ok(f"Memory backend: [white]{backend}[/] (no local directory)")
-        return None
-
-    return Path(memory.get("filesystem", {}).get("path", "./memory"))
+    return memory_dir
 
 
 def _configured_state_dir(config: dict) -> Path | None:
-    state = config.get("state", {})
-    backend = state.get("backend", "filesystem")
-    if backend != "filesystem":
+    state_dir = get_state_dir(config)
+    if state_dir is None:
+        backend = config.get("state", {}).get("backend", "filesystem")
         ok(f"State backend: [white]{backend}[/] (no local directory)")
-        return None
-
-    return Path(state.get("filesystem", {}).get("path", "./.mithai/state"))
+    return state_dir
 
 
 def _check_directories(config: dict) -> int:

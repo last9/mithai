@@ -1,13 +1,15 @@
 """Tests for `mithai init` filesystem defaults."""
 
 import stat
+from pathlib import Path
 
+import yaml
 from click.testing import CliRunner
 
 from mithai.cli.init_cmd import init
 
 
-def test_init_writes_dotenv_and_gitignore(tmp_path, monkeypatch):
+def _patch_init_prompts(monkeypatch):
     import mithai.cli.init_cmd as init_mod
     import mithai.cli.skill_cmd as skill_mod
 
@@ -29,6 +31,34 @@ def test_init_writes_dotenv_and_gitignore(tmp_path, monkeypatch):
         staticmethod(lambda *_, default=False, **__: default),
     )
 
+
+def test_init_defaults_to_current_directory(tmp_path, monkeypatch):
+    _patch_init_prompts(monkeypatch)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(init)
+        cwd = Path.cwd()
+
+        assert result.exit_code == 0, result.output
+        assert (cwd / "config.yaml").exists()
+        assert (cwd / ".env").exists()
+        assert (cwd / ".gitignore").exists()
+        assert (cwd / "skills").is_dir()
+        assert (cwd / "memory").is_dir()
+        assert (cwd / ".mithai" / "state").is_dir()
+
+        # The written config must use the canonical filesystem shape the
+        # runtime reads (run_cmd._create_memory_backend / _create_state),
+        # so a regression back to the legacy flat shape is caught here.
+        cfg = yaml.safe_load((cwd / "config.yaml").read_text())
+        assert cfg["learning"]["memory"]["filesystem"]["path"] == str(cwd / "memory")
+        assert cfg["state"]["filesystem"]["path"] == str(cwd / ".mithai" / "state")
+
+
+def test_init_writes_dotenv_and_gitignore(tmp_path, monkeypatch):
+    _patch_init_prompts(monkeypatch)
+
     result = CliRunner().invoke(
         init,
         ["--dir", str(tmp_path)],
@@ -45,3 +75,4 @@ def test_init_writes_dotenv_and_gitignore(tmp_path, monkeypatch):
     gitignore_path = tmp_path / ".gitignore"
     assert gitignore_path.exists()
     assert ".env" in gitignore_path.read_text().splitlines()
+    assert (tmp_path / "skills").is_dir()

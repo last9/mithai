@@ -10,9 +10,9 @@ from rich.prompt import Prompt, Confirm, IntPrompt
 from mithai.cli.style import (
     banner, console, fail, info, ok, step_header, summary_panel, warn,
 )
+from mithai.core.config import get_memory_dir, get_state_dir
 
 
-MITHAI_HOME = Path.home() / ".mithai"
 ENV_FILENAME = ".env"
 
 
@@ -87,10 +87,13 @@ def _ensure_gitignore_entry(target: Path, entry: str = ENV_FILENAME) -> None:
 
 
 @click.command()
-@click.option("--dir", "target_dir", default=None, help="Directory for config files (default: ~/.mithai/)")
+@click.option(
+    "--dir", "target_dir", default=None,
+    help="Directory for config files (default: current directory)",
+)
 def init(target_dir):
     """Interactive setup wizard — configure adapters, LLM, skills, and more."""
-    target = Path(target_dir) if target_dir else MITHAI_HOME
+    target = Path(target_dir) if target_dir else Path.cwd()
     config_path = target / "config.yaml"
     env_path = target / ENV_FILENAME
 
@@ -372,11 +375,14 @@ def init(target_dir):
     })
     config.setdefault("state", {
         "backend": "filesystem",
-        "filesystem": {"path": str(target / "state")},
+        "filesystem": {"path": str(target / ".mithai" / "state")},
     })
     config.setdefault("learning", {
         "enabled": True,
-        "memory_dir": str(target / "memory"),
+        "memory": {
+            "backend": "filesystem",
+            "filesystem": {"path": str(target / "memory")},
+        },
         "reflection": True,
         "approval_auto_promote": 3,
     })
@@ -411,14 +417,20 @@ def init(target_dir):
     _ensure_gitignore_entry(target)
     ok(f"Updated [white]{target / '.gitignore'}[/] to ignore {ENV_FILENAME}")
 
-    # Create memory and state dirs
-    memory_dir = Path(config.get("learning", {}).get("memory_dir", target / "memory"))
-    memory_dir.mkdir(parents=True, exist_ok=True)
+    # Create memory and state dirs (skip non-filesystem backends, which have no local dir)
+    memory_dir = get_memory_dir(config, str(target / "memory"))
+    if memory_dir is not None:
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        ok(f"Memory dir: [muted]{memory_dir}[/]")
 
-    state_dir = Path(config.get("state", {}).get("filesystem", {}).get("path", target / "state"))
-    state_dir.mkdir(parents=True, exist_ok=True)
-    ok(f"Memory dir: [muted]{memory_dir}[/]")
-    ok(f"State dir: [muted]{state_dir}[/]")
+    state_dir = get_state_dir(config, str(target / ".mithai" / "state"))
+    if state_dir is not None:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        ok(f"State dir: [muted]{state_dir}[/]")
+
+    skills_dir = target / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    ok(f"Skills dir: [muted]{skills_dir}[/]")
 
     # Summary
     all_skills = sorted(CORE_SKILLS | set(installed_skills))

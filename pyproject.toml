@@ -67,7 +67,7 @@ dev = [
 mithai = "mithai.cli.main:cli"
 
 [project.urls]
-Homepage = "https://github.com/last9/mithai"
+Homepage = "https://last9.io"
 Repository = "https://github.com/last9/mithai"
 Issues = "https://github.com/last9/mithai/issues"
 

@@ -12,7 +12,7 @@ In this tutorial you'll build a **service health checker** — a skill that repo
 
 - [What we're building](#what-were-building)
 - [Step 1: Create the skill folder](#step-1-create-the-skill-folder)
-- [Step 2: Write prompt.md](#step-2-write-promptmd)
+- [Step 2: Write SKILL.md](#step-2-write-skillmd)
 - [Step 3: Implement tools.py](#step-3-implement-toolspy)
 - [Step 4: Configure and test](#step-4-configure-and-test)
 - [Step 5: Make approval smarter with resolve_human](#step-5-make-approval-smarter-with-resolve_human)
@@ -24,7 +24,7 @@ In this tutorial you'll build a **service health checker** — a skill that repo
 
 Along the way you'll learn:
 
-- The skill file structure (`prompt.md` + `tools.py`)
+- The skill file structure (`SKILL.md` + `tools.py`)
 - How to define tools with input schemas
 - How to implement the `handle` function
 - How to require human approval for sensitive actions
@@ -66,7 +66,7 @@ This creates:
 ```
 skills/
 └── services/
-    ├── prompt.md
+    ├── SKILL.md
     └── tools.py
 ```
 
@@ -74,11 +74,11 @@ You can also create these files manually — there's no magic here.
 
 ---
 
-## Step 2: Write `prompt.md`
+## Step 2: Write `SKILL.md`
 
-`prompt.md` is read by the agent at startup and injected into its system prompt. It tells the AI what this skill can do and when to use it.
+`SKILL.md` is read by the agent at startup and injected into its system prompt. It tells the AI what this skill can do and when to use it.
 
-**`skills/services/prompt.md`**
+**`skills/services/SKILL.md`**
 
 ```markdown
 You can check the health of services and restart them.
@@ -91,7 +91,7 @@ Always check health before suggesting a restart.
 Report response times and status codes clearly.
 ```
 
-Keep `prompt.md` focused on behavior: what tools exist, when to use them, and any rules or constraints the AI should follow for this skill.
+Keep `SKILL.md` focused on behavior: what tools exist, when to use them, and any rules or constraints the AI should follow for this skill.
 
 ---
 

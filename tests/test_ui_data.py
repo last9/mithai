@@ -36,7 +36,7 @@ def memory(memory_dir):
 def config(tmp_path):
     skills_dir = tmp_path / "skills" / "parrot"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "prompt.md").write_text("You are a parrot.")
+    (skills_dir / "SKILL.md").write_text("You are a parrot.")
     (skills_dir / "tools.py").write_text(
         'TOOLS = [{"name": "echo", "description": "Echo input", '
         '"input_schema": {"type": "object", "properties": {"text": {"type": "string"}}}}]\n'

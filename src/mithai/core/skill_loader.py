@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 logger = logging.getLogger(__name__)
+
+# Leading YAML frontmatter block (--- ... ---) at the very top of a prompt file.
+# Inner content is optional (empty block) and the closing fence may end at EOF.
+_FRONTMATTER_RE = re.compile(r"\A---\r?\n(?:.*?\r?\n)?---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 
 
 @dataclass
@@ -38,16 +43,48 @@ class Skill:
     verify: bool = False  # True → post-turn fact-check runs for this skill's turns
 
 
+def _find_prompt(skill_dir: Path) -> Path | None:
+    """Return SKILL.md if present (also accepts skill.md on case-sensitive FS)."""
+    for name in ("SKILL.md", "skill.md"):
+        candidate = skill_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _read_prompt(prompt_file: Path) -> str:
+    """Read a prompt file, stripping any leading YAML frontmatter block."""
+    return _FRONTMATTER_RE.sub("", prompt_file.read_text()).strip()
+
+
+def _noop_handle(name, inp, ctx):
+    """Placeholder handler for prompt-only skills (no native tools)."""
+    raise RuntimeError(f"Skill has no native tools; handle() called for {name!r}")
+
+
 def _load_skill(skill_dir: Path) -> Skill | None:
     """Load a single skill from a directory."""
-    prompt_file = skill_dir / "prompt.md"
+    prompt_file = _find_prompt(skill_dir)
     tools_file = skill_dir / "tools.py"
 
-    if not prompt_file.exists() or not tools_file.exists():
-        logger.debug("Skipping %s: missing prompt.md or tools.py", skill_dir.name)
+    if prompt_file is None:
+        logger.debug("Skipping %s: missing SKILL.md", skill_dir.name)
         return None
 
-    prompt = prompt_file.read_text().strip()
+    prompt = _read_prompt(prompt_file)
+    if not prompt:
+        logger.warning("Skill %s: %s is empty after frontmatter", skill_dir.name, prompt_file.name)
+
+    # tools.py is optional: a prompt-only skill (e.g. one that rides on MCP tools)
+    # contributes just its prompt fragment.
+    if not tools_file.exists():
+        return Skill(
+            name=skill_dir.name,
+            prompt=prompt,
+            tools=[],
+            handle=_noop_handle,
+            source_dir=skill_dir,
+        )
 
     # Dynamic import of tools.py
     module_name = f"mithai_skill_{skill_dir.name}"
@@ -104,7 +141,7 @@ def load_skills(skill_paths: list[Path]) -> dict[str, Skill]:
     """
     Discover and load all skills from the given directories.
 
-    Skills are directories containing prompt.md + tools.py.
+    Skills are directories containing SKILL.md (tools.py optional).
     Later paths override earlier ones if skill names collide.
     """
     skills: dict[str, Skill] = {}
@@ -156,20 +193,20 @@ def validate_skill(skill_dir: Path) -> list[str]:
     Validate a skill directory. Returns list of errors (empty = valid).
     """
     errors = []
-    prompt_file = skill_dir / "prompt.md"
     tools_file = skill_dir / "tools.py"
 
     if not skill_dir.is_dir():
         errors.append(f"Not a directory: {skill_dir}")
         return errors
 
-    if not prompt_file.exists():
-        errors.append("Missing prompt.md")
-    elif not prompt_file.read_text().strip():
-        errors.append("prompt.md is empty")
+    prompt_file = _find_prompt(skill_dir)
+    if prompt_file is None:
+        errors.append("Missing SKILL.md")
+    elif not _read_prompt(prompt_file):
+        errors.append(f"{prompt_file.name} is empty")
 
+    # tools.py is optional: prompt-only skills (riding on MCP tools) are valid.
     if not tools_file.exists():
-        errors.append("Missing tools.py")
         return errors
 
     try:

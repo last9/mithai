@@ -56,7 +56,7 @@ Adapter (Slack/Telegram/CLI) → Engine → LLM (Claude API)
 ### Skills
 
 Each skill is a folder under `skills/` with:
-- `prompt.md` — system prompt fragment telling the LLM what the skill does
+- `SKILL.md` — system prompt fragment telling the LLM what the skill does
 - `tools.py` — exports `TOOLS` list (tool definitions) and `handle(name, input, ctx)` function
 
 Optional exports: `resolve_human()` for dynamic approval, `startup()` for initialization, `bind()` for adapter binding, `mcp_tools` list for MCP server delegation.
@@ -78,7 +78,7 @@ Skills are loaded dynamically by `skill_loader.py` via `importlib`.
 
 ## Testing
 
-Tests use `pytest` with `pytest-asyncio` (async mode = `"auto"`). Test fixtures for skills and config are in `tests/conftest.py`. Tests create temporary skill directories with `prompt.md` + `tools.py` to test the full skill loading pipeline.
+Tests use `pytest` with `pytest-asyncio` (async mode = `"auto"`). Test fixtures for skills and config are in `tests/conftest.py`. Tests create temporary skill directories with `SKILL.md` + `tools.py` to test the full skill loading pipeline.
 
 ## Documented Solutions
 

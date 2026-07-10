@@ -79,7 +79,7 @@ mithai:  Done. checkout-api is back up. 3/3 instances healthy.
 
 **Skills** are how you extend the agent. A skill is a folder with two files:
 
-- `prompt.md` — tells the AI what the skill does and when to use it
+- `SKILL.md` — tells the AI what the skill does and when to use it
 - `tools.py` — defines the tools the AI can call and implements them
 
 Drop a folder in `skills/`. Restart. Done.

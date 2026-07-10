@@ -32,7 +32,7 @@ npm run build
 
 Skills live under `skills/<name>/` and normally contain:
 
-- `prompt.md` for the system prompt fragment.
+- `SKILL.md` for the system prompt fragment.
 - `tools.py` exporting tool definitions and handlers.
 
 Risky tools should use Human MCP approval levels and document operational impact.

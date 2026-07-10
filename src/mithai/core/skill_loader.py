@@ -44,10 +44,10 @@ class Skill:
 
 
 def _find_prompt(skill_dir: Path) -> Path | None:
-    """Return the skill's prompt file, preferring prompt.md over skill.md."""
-    for name in ("prompt.md", "skill.md"):
+    """Return SKILL.md if present (also accepts skill.md on case-sensitive FS)."""
+    for name in ("SKILL.md", "skill.md"):
         candidate = skill_dir / name
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
     return None
 
@@ -68,7 +68,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
     tools_file = skill_dir / "tools.py"
 
     if prompt_file is None:
-        logger.debug("Skipping %s: missing prompt.md/skill.md", skill_dir.name)
+        logger.debug("Skipping %s: missing SKILL.md", skill_dir.name)
         return None
 
     prompt = _read_prompt(prompt_file)
@@ -141,7 +141,7 @@ def load_skills(skill_paths: list[Path]) -> dict[str, Skill]:
     """
     Discover and load all skills from the given directories.
 
-    Skills are directories containing prompt.md + tools.py.
+    Skills are directories containing SKILL.md (tools.py optional).
     Later paths override earlier ones if skill names collide.
     """
     skills: dict[str, Skill] = {}
@@ -201,7 +201,7 @@ def validate_skill(skill_dir: Path) -> list[str]:
 
     prompt_file = _find_prompt(skill_dir)
     if prompt_file is None:
-        errors.append("Missing prompt.md (or skill.md)")
+        errors.append("Missing SKILL.md")
     elif not _read_prompt(prompt_file):
         errors.append(f"{prompt_file.name} is empty")
 

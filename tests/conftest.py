@@ -10,7 +10,7 @@ def tmp_skill_dir(tmp_path):
     skill_dir = tmp_path / "skills" / "test_skill"
     skill_dir.mkdir(parents=True)
 
-    (skill_dir / "prompt.md").write_text("You are a test skill. You can echo messages.")
+    (skill_dir / "SKILL.md").write_text("You are a test skill. You can echo messages.")
 
     (skill_dir / "tools.py").write_text('''
 import json
@@ -58,7 +58,7 @@ def tmp_dynamic_skill_dir(tmp_path):
     skill_dir = tmp_path / "skills" / "dynamic_shell"
     skill_dir.mkdir(parents=True)
 
-    (skill_dir / "prompt.md").write_text("Run commands dynamically.")
+    (skill_dir / "SKILL.md").write_text("Run commands dynamically.")
 
     (skill_dir / "tools.py").write_text('''
 import json

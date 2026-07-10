@@ -9,7 +9,7 @@ def _make_skill_with_mcp(tmp_path, mcp_tools_code="MCP_TOOLS = []"):
     skill_dir = tmp_path / "skills" / "mcp_skill"
     skill_dir.mkdir(parents=True)
 
-    (skill_dir / "prompt.md").write_text("A skill with MCP tools.")
+    (skill_dir / "SKILL.md").write_text("A skill with MCP tools.")
     (skill_dir / "tools.py").write_text(f'''
 import json
 

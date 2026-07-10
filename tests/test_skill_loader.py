@@ -42,14 +42,14 @@ def test_validate_missing_prompt(tmp_path):
     (skill_dir / "tools.py").write_text("TOOLS = []\ndef handle(n, i, c): pass")
 
     errors = validate_skill(skill_dir)
-    assert any("prompt.md" in e for e in errors)
+    assert any("SKILL.md" in e for e in errors)
 
 
 def test_validate_prompt_only_skill_is_valid(tmp_path):
     """tools.py is optional: a prompt-only skill validates clean."""
     skill_dir = tmp_path / "prompt_only"
     skill_dir.mkdir()
-    (skill_dir / "prompt.md").write_text("test")
+    (skill_dir / "SKILL.md").write_text("test")
 
     assert validate_skill(skill_dir) == []
 
@@ -57,7 +57,7 @@ def test_validate_prompt_only_skill_is_valid(tmp_path):
 def test_validate_invalid_human_level(tmp_path):
     skill_dir = tmp_path / "bad_skill"
     skill_dir.mkdir()
-    (skill_dir / "prompt.md").write_text("test")
+    (skill_dir / "SKILL.md").write_text("test")
     (skill_dir / "tools.py").write_text('''
 TOOLS = [{"name": "x", "description": "x", "input_schema": {}, "human": "invalid"}]
 def handle(n, i, c): pass
@@ -96,7 +96,7 @@ def test_validate_dynamic_human_level(tmp_path):
     """dynamic is a valid human level."""
     skill_dir = tmp_path / "dynamic_skill"
     skill_dir.mkdir()
-    (skill_dir / "prompt.md").write_text("test")
+    (skill_dir / "SKILL.md").write_text("test")
     (skill_dir / "tools.py").write_text('''
 TOOLS = [{"name": "x", "description": "x", "input_schema": {}, "human": "dynamic"}]
 def resolve_human(n, i, c): return None
@@ -117,7 +117,7 @@ def test_skill_verify_true_when_declared(tmp_path):
     """Skills with VERIFY = True in tools.py have verify=True."""
     skill_dir = tmp_path / "skills" / "ops_skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "prompt.md").write_text("ops skill")
+    (skill_dir / "SKILL.md").write_text("ops skill")
     (skill_dir / "tools.py").write_text(
         'TOOLS = [{"name": "t", "description": "d", "input_schema": {}}]\n'
         'VERIFY = True\n'
@@ -131,7 +131,7 @@ def test_skill_verify_false_when_explicitly_false(tmp_path):
     """Skills with VERIFY = False have verify=False."""
     skill_dir = tmp_path / "skills" / "safe_skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "prompt.md").write_text("safe skill")
+    (skill_dir / "SKILL.md").write_text("safe skill")
     (skill_dir / "tools.py").write_text(
         'TOOLS = [{"name": "t", "description": "d", "input_schema": {}}]\n'
         'VERIFY = False\n'
@@ -148,55 +148,55 @@ _TOOLS_PY = (
 
 
 def test_load_skill_via_skill_md(tmp_path):
-    """A skill exposing skill.md (instead of prompt.md) loads."""
+    """A skill exposing SKILL.md loads."""
     skill_dir = tmp_path / "skills" / "md_skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text("skill md prompt")
+    (skill_dir / "SKILL.md").write_text("skill md prompt")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     skills = load_skills([tmp_path / "skills"])
     assert skills["md_skill"].prompt == "skill md prompt"
 
 
-def test_prompt_md_wins_over_skill_md(tmp_path):
-    """When both files exist, prompt.md takes precedence."""
-    skill_dir = tmp_path / "skills" / "both_skill"
+def test_prompt_md_is_ignored(tmp_path):
+    """prompt.md alone is not a valid skill prompt file."""
+    skill_dir = tmp_path / "skills" / "legacy_skill"
     skill_dir.mkdir(parents=True)
     (skill_dir / "prompt.md").write_text("from prompt")
-    (skill_dir / "skill.md").write_text("from skill")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     skills = load_skills([tmp_path / "skills"])
-    assert skills["both_skill"].prompt == "from prompt"
+    assert "legacy_skill" not in skills
 
 
 def test_validate_skill_via_skill_md(tmp_path):
-    """validate_skill accepts skill.md as the prompt file."""
+    """validate_skill accepts SKILL.md as the prompt file."""
     skill_dir = tmp_path / "md_skill"
     skill_dir.mkdir()
-    (skill_dir / "skill.md").write_text("skill md prompt")
+    (skill_dir / "SKILL.md").write_text("skill md prompt")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     assert validate_skill(skill_dir) == []
 
 
-def test_validate_missing_both_prompt_files(tmp_path):
-    """Missing both prompt.md and skill.md is an error mentioning both."""
+def test_validate_missing_skill_md(tmp_path):
+    """Missing SKILL.md is an error even if prompt.md exists."""
     skill_dir = tmp_path / "bad_skill"
     skill_dir.mkdir()
+    (skill_dir / "prompt.md").write_text("legacy")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     errors = validate_skill(skill_dir)
-    assert any("prompt.md" in e and "skill.md" in e for e in errors)
+    assert any("SKILL.md" in e for e in errors)
 
 
 def test_load_prompt_only_skill(tmp_path):
-    """A skill with skill.md but no tools.py loads as a prompt-only skill."""
+    """A skill with SKILL.md but no tools.py loads as a prompt-only skill."""
     import pytest
 
     skill_dir = tmp_path / "skills" / "last9_logs"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text("query logs prompt")
+    (skill_dir / "SKILL.md").write_text("query logs prompt")
 
     skills = load_skills([tmp_path / "skills"])
     skill = skills["last9_logs"]
@@ -211,7 +211,7 @@ def test_frontmatter_stripped_from_prompt(tmp_path):
     """YAML frontmatter is stripped before the prompt is injected."""
     skill_dir = tmp_path / "skills" / "fm_skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text(
+    (skill_dir / "SKILL.md").write_text(
         "---\n"
         "name: fm_skill\n"
         "description: does things\n"
@@ -232,7 +232,7 @@ def test_no_frontmatter_left_intact(tmp_path):
     """A prompt with a leading '---' that is not frontmatter is untouched."""
     skill_dir = tmp_path / "skills" / "dash_skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text("Heading\n---\nbody")
+    (skill_dir / "SKILL.md").write_text("Heading\n---\nbody")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     skills = load_skills([tmp_path / "skills"])
@@ -243,7 +243,7 @@ def test_crlf_frontmatter_stripped(tmp_path):
     """Frontmatter with CRLF line endings is stripped."""
     skill_dir = tmp_path / "skills" / "crlf_skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text("---\r\nname: x\r\n---\r\nBody.\r\n")
+    (skill_dir / "SKILL.md").write_text("---\r\nname: x\r\n---\r\nBody.\r\n")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     skills = load_skills([tmp_path / "skills"])
@@ -254,7 +254,7 @@ def test_empty_frontmatter_block_stripped(tmp_path):
     """An empty frontmatter block (--- immediately followed by ---) is stripped."""
     skill_dir = tmp_path / "skills" / "empty_fm"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text("---\n---\nBody.")
+    (skill_dir / "SKILL.md").write_text("---\n---\nBody.")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     skills = load_skills([tmp_path / "skills"])
@@ -265,7 +265,7 @@ def test_frontmatter_without_trailing_newline(tmp_path):
     """A file that is only frontmatter with no trailing newline strips to empty."""
     skill_dir = tmp_path / "skills" / "fm_eof"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text("---\nname: x\n---")
+    (skill_dir / "SKILL.md").write_text("---\nname: x\n---")
     (skill_dir / "tools.py").write_text(_TOOLS_PY)
 
     skills = load_skills([tmp_path / "skills"])

@@ -1,180 +1,221 @@
-# mithai
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs-site/src/assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs-site/src/assets/logo-light.svg">
+    <img alt="mithai" src="docs-site/src/assets/logo-light.svg" width="220">
+  </picture>
 
-AI agent framework for infrastructure operations.
+  <p><strong>An AI operations agent that works where your team works.</strong></p>
 
-**[Documentation →](https://docs.mithai.dev)**
+  <p>
+    <a href="https://github.com/last9/mithai/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/last9/mithai/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://pypi.org/project/mithai/"><img alt="PyPI" src="https://img.shields.io/pypi/v/mithai.svg"></a>
+    <img alt="Python" src="https://img.shields.io/pypi/pyversions/mithai.svg">
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue.svg"></a>
+  </p>
 
-mithai gives your team an AI-powered ops agent that lives in Slack, Telegram, and a terminal — simultaneously. It can query your infrastructure, take actions, and ask a human before doing anything dangerous.
+  <p>
+    <a href="https://docs.mithai.dev">Documentation</a> ·
+    <a href="#quick-start">Quick start</a> ·
+    <a href="#create-a-skill">Create a skill</a> ·
+    <a href="CONTRIBUTING.md">Contributing</a>
+  </p>
+</div>
 
-## How it works
+mithai gives infrastructure teams one AI agent across Slack, Telegram, and the terminal. It can investigate systems, use tools, remember operational context, schedule follow-ups, and pause for a human before risky actions.
 
-```
-You (in Slack/Telegram/CLI)
-     |
-     v
-  Adapter  -->  Engine  -->  LLM (Anthropic API or AWS Bedrock)
-                  |              |
-              Skills         Tool calls
-           (shell, memory,    (namespaced as
-            scheduling, etc.)  skill__tool)
-                  |
-             Human MCP
-          (approve/confirm
-           before risky ops)
-```
+## Why mithai
 
-**Skills** are plugins — a folder with `SKILL.md` (tells the AI what the skill does) and optional `tools.py` (defines tools the AI can call). The AI decides which tools to use based on your message.
-
-**Human MCP** is human-in-the-loop as a protocol. Skills declare which tools need human approval (`"human": "approve"`) or confirmation (`"human": "confirm"`). Read-only tools run automatically.
+| Capability | What it gives you |
+| --- | --- |
+| **One agent, multiple surfaces** | Run Slack, Telegram, and CLI adapters together against the same engine and skills. |
+| **Human-in-the-loop by design** | Read-only tools can run automatically; risky tools can require approval or typed confirmation. |
+| **Skills, not a closed toolset** | Add a folder with instructions and optional Python tools. Restart, and the agent can use it. |
+| **Shared operational context** | Persist memory and conversation sessions across channels and restarts. |
+| **Model choice** | Use Anthropic directly or models available through AWS Bedrock. |
+| **A built-in Control Room** | Inspect sessions, approvals, memory, skills, and redacted configuration in a local web UI. |
 
 ## Quick start
 
+Install mithai, let the setup wizard create your config, and start with the local chat interface:
+
 ```bash
-pip install mithai
+python -m pip install mithai
 mithai init
-# Edit .env with your ANTHROPIC_API_KEY
+
+# Add ANTHROPIC_API_KEY to the generated .env file
 mithai chat
 ```
 
-Or from source:
+When the agent is ready for Slack or Telegram, start the configured adapters with:
 
 ```bash
-git clone https://github.com/last9/mithai.git
-cd mithai
-pip install -e ".[dev]"
-mithai init
-mithai chat
+mithai run
 ```
 
-To use AWS Bedrock instead of the Anthropic API, install the `bedrock` extra and configure your AWS credentials — see [LLM providers](#llm-providers) below:
+Install only the integrations you need:
+
+| Use case | Install |
+| --- | --- |
+| Slack | `pip install 'mithai[slack]'` |
+| Telegram | `pip install 'mithai[telegram]'` |
+| Control Room | `pip install 'mithai[ui]'` |
+| AWS Bedrock | `pip install 'mithai[bedrock]'` |
+| OpenTelemetry and Last9 enrichment | `pip install 'mithai[telemetry]'` |
+
+For a guided setup, see [Getting started](docs/getting-started.md).
+
+## Control Room
+
+The Control Room is a lightweight UI over the same state and memory backends used by the agent. It gives operators a searchable view of activity without introducing a second data store.
 
 ```bash
-pip install 'mithai[bedrock]'
+pip install 'mithai[ui]'
+mithai ui
+# Open http://127.0.0.1:8420
 ```
 
-Telemetry is optional. Install `mithai[telemetry]` only when you want
-OpenTelemetry export and Last9 GenAI span enrichment; the core package runs
-without those dependencies.
+<p align="center">
+  <img src="docs/assets/control-room.jpg" alt="mithai Control Room dashboard showing sessions, connected platforms, loaded skills, and approval activity" width="100%">
+</p>
 
-## Creating a skill
+<p align="center"><sub>Control Room shown with illustrative local session and approval data.</sub></p>
+
+By default, the UI binds to localhost. Public binding requires `ui.auth_token`; see the [configuration reference](docs/configuration.md).
+
+## How it works
+
+```mermaid
+flowchart LR
+    U[Slack · Telegram · CLI] --> A[Adapters]
+    A --> E[Agent engine]
+    E <--> L[Anthropic API or AWS Bedrock]
+    E --> S[Skills and tool calls]
+    E <--> M[Memory and sessions]
+    S --> H{Human MCP}
+    H -->|read-only| R[Run automatically]
+    H -->|risky| P[Approve or confirm]
+    P --> R
+    E --> C[Control Room]
+```
+
+1. An adapter turns a Slack mention, Telegram message, or CLI prompt into a common request.
+2. The engine gives the model the conversation context and available skills.
+3. Tool calls are routed through Human MCP policy before execution.
+4. The response, tool activity, and useful context are persisted for the next interaction.
+
+## Built-in skills
+
+| Skill | What it does | Default human policy |
+| --- | --- | --- |
+| `http_checker` | Check URL health, status codes, and response times | automatic |
+| `kubernetes` | Inspect pods, deployments, events, logs, and resources | automatic |
+| `memory` | Read, write, and search persistent operational memory | automatic |
+| `scheduling` | Create and remove recurring tasks | confirmation |
+| `sessions` | Inspect and search previous conversations | automatic |
+| `shell` | Run commands from the configured allowlist | dynamic |
+
+## Create a skill
+
+Scaffold a skill with the CLI:
 
 ```bash
-mithai skill create my_skill
+mithai skill create uptime
 ```
 
-This creates `skills/my_skill/` with two files:
+This creates `skills/uptime/SKILL.md` and `skills/uptime/tools.py`.
 
-**`SKILL.md`** — what the AI knows about your skill:
+`SKILL.md` tells the model when and how to use the skill:
+
 ```markdown
-You can check the health of HTTP endpoints.
-Report status codes and response times.
+---
+name: uptime
+description: Check the health of HTTP endpoints.
+---
+
+Check endpoint availability and report status codes and response times.
 ```
 
-**`tools.py`** — what the AI can do:
+`tools.py` exposes native tools when the skill needs them:
+
 ```python
 import json
+from urllib.request import urlopen
 
 TOOLS = [
     {
         "name": "check_url",
-        "description": "Check if a URL is reachable",
+        "description": "Check whether an HTTP endpoint is reachable",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "URL to check"},
-            },
+            "properties": {"url": {"type": "string"}},
             "required": ["url"],
         },
-        # Add "human": "approve" for risky operations
-    },
+    }
 ]
 
+
 def handle(name: str, input: dict, ctx: dict) -> str:
-    if name == "check_url":
-        # Your implementation here
-        return json.dumps({"status": 200, "healthy": True})
-    return json.dumps({"error": f"Unknown tool: {name}"})
+    if name != "check_url":
+        return json.dumps({"error": f"Unknown tool: {name}"})
+    with urlopen(input["url"], timeout=10) as response:
+        return json.dumps({"status": response.status, "healthy": response.status < 500})
 ```
 
-That's it. Drop the folder in `skills/`, restart mithai, and the AI can use it.
+`tools.py` is optional, so a skill can also be instructions-only and guide the model toward MCP tools supplied elsewhere. Validate a skill before loading it:
 
-## Built-in skills
+```bash
+mithai skill validate uptime
+```
 
-| Skill | What it does | Human MCP |
-|-------|-------------|-----------|
-| `http_checker` | Check URL health, status codes, response times | auto |
-| `shell` | Run allowlisted shell commands | dynamic |
-| `memory` | Persistent memory across conversations (MEMORY.md) | auto |
-| `sessions` | Inspect past conversation sessions per channel | auto |
-| `scheduling` | Create recurring cron-based tasks via Slack | confirm |
-| `kubernetes` | Inspect pods, deployments, events, logs, and resource descriptions | auto |
+See the [skills reference](docs/skills-reference.md) for the full contract, lifecycle hooks, configuration, and packaging behavior.
 
-## Human MCP
+## Human approval policies
 
-Tools declare their human-in-the-loop requirement:
+Every tool can declare the level of human involvement it needs:
+
+| Policy | Behavior |
+| --- | --- |
+| no policy | Execute automatically |
+| `approve` | Ask a human to approve or deny |
+| `confirm` | Require typed confirmation |
+| `dynamic` | Resolve the policy from the requested input |
 
 ```python
 TOOLS = [
-    {"name": "get_pods", ...},                          # auto-execute
-    {"name": "restart", ..., "human": "approve"},       # click approve/deny
-    {"name": "delete_ns", ..., "human": "confirm"},     # type confirmation
+    {"name": "get_pods", "description": "List pods", "input_schema": {}},
+    {
+        "name": "restart_deployment",
+        "description": "Restart a deployment",
+        "input_schema": {"type": "object"},
+        "human": "approve",
+    },
 ]
 ```
 
-Override in `config.yaml`:
+Administrators can make policy stricter in `config.yaml` without changing skill code:
+
 ```yaml
 human:
   timeout_seconds: 300
   overrides:
-    shell__run_command: confirm    # escalate
-    kubernetes__get_pods: null     # keep read-only pod listing auto-executed
+    shell__run_command: confirm
+    kubernetes__get_pods: null
 ```
 
-## Scheduling
+## Minimal configuration
 
-The scheduling skill lets the agent create recurring tasks. A cron job posts a Slack message mentioning the bot — the bot processes it like any other @mention.
-
-Two backends:
-
-| Backend | Config | Storage |
-|---------|--------|---------|
-| `crontab` (default) | No config needed | Local crontab |
-| `agent_cloud_platform` | URL + token | Central platform, survives restarts |
+`mithai init` generates a working project. The central pieces look like this:
 
 ```yaml
-skills:
-  config:
-    scheduling:
-      backend: agent_cloud_platform
-      scheduling_backend_url: https://your-platform/api
-      scheduling_backend_token: ${SCHEDULING_BACKEND_TOKEN}
-```
-
-## Configuration
-
-```yaml
-# config.yaml
 bot:
   name: mithai
-  system_prompt: |
-    You are an ops assistant. Be concise.
 
 adapter:
-  # Run one adapter:
   type: slack
-
-  # Or run multiple adapters simultaneously:
-  # types:
-  #   - slack
-  #   - telegram
-
   slack:
     bot_token: ${SLACK_BOT_TOKEN}
     app_token: ${SLACK_APP_TOKEN}
-  telegram:
-    bot_token: ${TELEGRAM_BOT_TOKEN}
-    allowed_chat_ids:
-      - ${TELEGRAM_CHAT_ID}
 
 llm:
   provider: anthropic
@@ -187,108 +228,94 @@ skills:
     - ./skills
   config:
     shell:
-      allowed_commands: ["df -h", "free -h", "uptime"]
-    scheduling:
-      backend: crontab  # or agent_cloud_platform
+      allowed_commands: ["df -h", "uptime"]
 ```
 
-When using `types`, each adapter runs in its own thread sharing the same engine and skills. Human MCP approvals route back through whichever platform the message came from.
+Use `adapter.types` instead of `adapter.type` to run multiple adapters simultaneously. They share the engine, skills, and context while approval requests return through the platform that initiated the action.
 
-### LLM providers
+## More capabilities
 
-mithai supports two LLM providers. Select via `llm.provider` in `config.yaml`.
+- **Scheduling:** recurring local cron tasks or a central scheduling backend that survives restarts.
+- **Onboarding:** learn a Slack channel's purpose and members, merge useful facts into shared memory, and introduce the agent.
+- **Multi-agent mode:** give separate agents their own identity, skills, Slack app, and memory while managing them from one project.
+- **Observability:** export OpenTelemetry data and optionally enrich GenAI spans for Last9.
 
-**Anthropic (default)** — direct Claude API access via the `anthropic` Python SDK:
-
-```yaml
-llm:
-  provider: anthropic
-  model: claude-sonnet-4-6
-  anthropic:
-    api_key: ${ANTHROPIC_API_KEY}
-```
-
-**AWS Bedrock** — unified Converse API across model families (Anthropic / Llama / Cohere / Mistral on Bedrock). Requires `pip install 'mithai[bedrock]'`:
-
-```yaml
-llm:
-  provider: bedrock
-  model: anthropic.claude-sonnet-4-20250514-v1:0   # Bedrock model ID
-  bedrock:
-    access_key_id: ${AWS_ACCESS_KEY_ID}
-    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
-    region: ${AWS_REGION}
-```
-
-The IAM principal needs `bedrock:InvokeModel` for each model the agent will use. For full provider details, model IDs, and troubleshooting see the [Configuration › LLM](docs/configuration.md#llm) and [Troubleshooting](docs/troubleshooting.md) docs.
-
-## Onboarding
-
-When the bot is added to a Slack channel — or on startup for channels in `allowed_channels` — it runs an onboarding flow: learning who's in the channel, what it's used for, and introducing itself.
-
-Enable it in `config.yaml`:
-
-```yaml
-onboarding:
-  enabled: true
-```
-
-**What it does:**
-
-1. Reads its existing memory (`MEMORY.md`) to recall what it already knows about the org from other channels
-2. Fetches the full channel member roster via `slack_get_members`
-3. Reads recent channel history via `slack_get_history`
-4. Merges any new facts into `MEMORY.md` — updating or correcting existing entries rather than duplicating them
-5. Posts a short intro message to the channel
-
-On startup, channels listed in `allowed_channels` that haven't been onboarded yet are onboarded automatically (one per thread, concurrently).
-
-**Customising the onboarding prompt:**
-
-Drop an `onboarding.md` file in your project root (alongside `config.yaml`). The engine loads it instead of the built-in prompt. Two placeholders are available:
-
-```markdown
-You just joined #{channel_name} (ID: {channel_id}).
-
-This team uses a monorepo. Start by reading memory, fetching the member
-roster, and scanning the last 50 messages. Then update MEMORY.md and
-write a one-paragraph intro. No bullet points, no emojis.
-```
-
-Literal `{` and `}` in the template (e.g. JSON examples) are safe — only `{channel_id}` and `{channel_name}` are substituted.
-
-**Memory model:**
-
-mithai serves one organisation across multiple Slack channels. Knowledge is shared — facts learned in `#infra` are available in `#backend`. `MEMORY.md` is the single source of truth. The onboarding flow reads before writing and merges rather than appends, so joining a new channel enriches the shared knowledge without duplicating it.
-
-## CLI
-
-```
-mithai init                    # scaffold project
-mithai run                     # start all configured adapters
-mithai run --adapter slack     # start only one adapter
-mithai chat                    # CLI REPL for development
-mithai skill create <name>     # create a new skill
-mithai skill list              # list loaded skills
-mithai skill validate          # validate all skills
-mithai agent create <id>       # scaffold a new agent (multi-agent mode)
-mithai agent list              # list configured agents
-mithai agent info <id>         # show agent details
-mithai agent validate          # validate all agent configs
-```
-
-### Multi-agent scaffolding
-
-`mithai agent create` generates the directory structure and config for a new agent:
+Create a specialized agent with:
 
 ```bash
 mithai agent create devops --name "DevOps Agent" --skills shell,memory,http_checker
 ```
 
-This creates `agents/devops/` with `memory/`, `.env.example`, and `system_prompt.md`, and appends the agent config block to `config.yaml`.
+## Advanced usage
 
-To customize the onboarding flow for all agents, drop an `onboarding.md` in the project root (see [Onboarding](#onboarding)).
+### AWS Bedrock
+
+Install the provider extra, then select `bedrock` and use a Bedrock model ID rather than an Anthropic model alias:
+
+```bash
+pip install 'mithai[bedrock]'
+```
+
+```yaml
+llm:
+  provider: bedrock
+  model: anthropic.claude-sonnet-4-20250514-v1:0
+  max_tokens: 4096
+  bedrock:
+    access_key_id: ${AWS_ACCESS_KEY_ID}
+    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+    region: ${AWS_REGION}
+    session_token: ${AWS_SESSION_TOKEN} # optional for temporary credentials
+```
+
+The configured IAM principal needs `bedrock:InvokeModel` permission for each model the agent uses. See [Configuration: LLM providers](docs/configuration.md#llm) for model examples and credential details.
+
+### CLI reference
+
+| Command | Purpose |
+| --- | --- |
+| `mithai init` | Create a project and interactive configuration |
+| `mithai chat` | Run an interactive terminal session |
+| `mithai run` | Start configured adapters and agents |
+| `mithai ui` | Start the local Control Room |
+| `mithai doctor` / `mithai status` | Diagnose configuration and inspect runtime status |
+| `mithai logs` | List, search, and inspect session logs |
+| `mithai skill` | Create, install, list, validate, upgrade, or remove skills |
+| `mithai agent` | Create, list, inspect, or validate agents |
+| `mithai service` | Manage mithai as an operating-system service |
+
+Run `mithai --help` or `mithai <command> --help` for all options and subcommands.
+
+## Documentation
+
+| Guide | Covers |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Installation, initialization, and first run |
+| [Configuration](docs/configuration.md) | Adapters, providers, state, memory, and policy |
+| [Core concepts](docs/concepts.md) | Engine, skills, sessions, memory, and Human MCP |
+| [Skills reference](docs/skills-reference.md) | Skill files, exports, lifecycle, and validation |
+| [Deployment](docs/deployment.md) | Services, containers, Kubernetes, and production setup |
+| [Security](docs/security.md) | Secrets, permissions, network exposure, and operational safety |
+| [Troubleshooting](docs/troubleshooting.md) | Common setup and runtime problems |
+
+The rendered documentation is available at [docs.mithai.dev](https://docs.mithai.dev).
+
+## Development
+
+```bash
+git clone https://github.com/last9/mithai.git
+cd mithai
+uv sync --all-extras
+
+uv run ruff check src/ tests/
+uv run pytest tests/
+
+python3 docs-site/migrate.py
+cd docs-site && npm ci --legacy-peer-deps && npm run build
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 
-Apache 2.0
+Apache 2.0. See [LICENSE](LICENSE).

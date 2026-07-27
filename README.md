@@ -5,7 +5,7 @@
     <img alt="mithai" src="docs-site/src/assets/logo-light.svg" width="220">
   </picture>
 
-  <p><strong>An AI operations agent that works where your team works.</strong></p>
+  <p><strong>A multiplayer agent harness for your organization.</strong></p>
 
   <p>
     <a href="https://github.com/last9/mithai/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/last9/mithai/actions/workflows/ci.yml/badge.svg"></a>
@@ -22,13 +22,13 @@
   </p>
 </div>
 
-mithai gives infrastructure teams one AI agent across Slack, Telegram, and the terminal. It can investigate systems, use tools, remember operational context, schedule follow-ups, and pause for a human before risky actions.
+mithai gives organizations a multiplayer agent harness for infrastructure operations: one shared agent that teammates can work with across Slack, Telegram, and the terminal. It investigates systems, uses tools, carries operational context across conversations, schedules follow-ups, and pauses for human approval before risky actions.
 
 ## Why mithai
 
 | Capability | What it gives you |
 | --- | --- |
-| **One agent, multiple surfaces** | Run Slack, Telegram, and CLI adapters together against the same engine and skills. |
+| **Multiplayer by default** | Teammates collaborate with one shared agent across Slack, Telegram, and the CLI, with common skills and context. |
 | **Human-in-the-loop by design** | Read-only tools can run automatically; risky tools can require approval or typed confirmation. |
 | **Skills, not a closed toolset** | Add a folder with instructions and optional Python tools. Restart, and the agent can use it. |
 | **Shared operational context** | Persist memory and conversation sessions across channels and restarts. |

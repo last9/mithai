@@ -22,22 +22,21 @@
   </p>
 </div>
 
-mithai gives organizations a multiplayer agent harness for infrastructure operations: one shared agent that teammates can work with across Slack, Telegram, and the terminal. It investigates systems, uses tools, carries operational context across conversations, schedules follow-ups, and pauses for human approval before risky actions.
+mithai runs one agent for a group of people. Put it in Slack or Telegram, or use it from a terminal. These aren't separate agents. They load the same project, skills and shared memory.
 
-## Why mithai
+mithai is aimed mostly at infrastructure work. It can inspect systems and call tools. Scheduling is there for work it needs to come back to. For commands you don't want running unattended, there are approvals and typed confirmations.
 
-| Capability | What it gives you |
-| --- | --- |
-| **Multiplayer by default** | Teammates collaborate with one shared agent across Slack, Telegram, and the CLI, with common skills and context. |
-| **Human-in-the-loop by design** | Read-only tools can run automatically; risky tools can require approval or typed confirmation. |
-| **Skills, not a closed toolset** | Add a folder with instructions and optional Python tools. Restart, and the agent can use it. |
-| **Shared operational context** | Persist memory and conversation sessions across channels and restarts. |
-| **Model choice** | Use Anthropic directly or models available through AWS Bedrock. |
-| **A built-in Control Room** | Inspect sessions, approvals, memory, skills, and redacted configuration in a local web UI. |
+## Multiplayer
+
+An incident might start in Slack and continue from a terminal. A teammate can look up what happened in Control Room or search an earlier session. Shared memory carries the things the agent should remember; the conversations themselves stay as separate session records.
+
+The Slack, Telegram and CLI adapters can all run at once. An approval request goes back to the place where the command was asked for. Skills belong to the project rather than one user; they are folders with instructions and, if needed, Python tools.
+
+Anthropic is the default model provider. Bedrock works too.
 
 ## Quick start
 
-Install mithai, let the setup wizard create your config, and start with the local chat interface:
+Start in the terminal. `mithai init` walks through the initial config:
 
 ```bash
 python -m pip install mithai
@@ -47,13 +46,13 @@ mithai init
 mithai chat
 ```
 
-When the agent is ready for Slack or Telegram, start the configured adapters with:
+Once that works, start the Slack or Telegram adapters from the same project:
 
 ```bash
 mithai run
 ```
 
-Install only the integrations you need:
+The base package is small. Install the extras you plan to use:
 
 | Use case | Install |
 | --- | --- |
@@ -63,11 +62,11 @@ Install only the integrations you need:
 | AWS Bedrock | `pip install 'mithai[bedrock]'` |
 | OpenTelemetry and Last9 enrichment | `pip install 'mithai[telemetry]'` |
 
-For a guided setup, see [Getting started](docs/getting-started.md).
+There is a longer walkthrough in [Getting started](docs/getting-started.md).
 
 ## Control Room
 
-The Control Room is a lightweight UI over the same state and memory backends used by the agent. It gives operators a searchable view of activity without introducing a second data store.
+Control Room is a small web UI included with mithai. It reads from the agent's existing state and memory, so there isn't another store to configure. Use it to look through sessions, pending approvals, memory, loaded skills and the current config.
 
 ```bash
 pip install 'mithai[ui]'
@@ -79,9 +78,9 @@ mithai ui
   <img src="docs/assets/control-room.jpg" alt="mithai Control Room dashboard showing sessions, connected platforms, loaded skills, and approval activity" width="100%">
 </p>
 
-<p align="center"><sub>Control Room shown with illustrative local session and approval data.</sub></p>
+<p align="center"><sub>The screenshot uses made-up local session and approval data.</sub></p>
 
-By default, the UI binds to localhost. Public binding requires `ui.auth_token`; see the [configuration reference](docs/configuration.md).
+It binds to localhost by default. Set `ui.auth_token` before exposing it anywhere else. The options are in the [configuration reference](docs/configuration.md).
 
 ## How it works
 
@@ -99,10 +98,7 @@ flowchart LR
     E --> C[Control Room]
 ```
 
-1. An adapter turns a Slack mention, Telegram message, or CLI prompt into a common request.
-2. The engine gives the model the conversation context and available skills.
-3. Tool calls are routed through Human MCP policy before execution.
-4. The response, tool activity, and useful context are persisted for the next interaction.
+All three adapters feed the same engine. The adapter normalizes the incoming message, then the engine sends the model the relevant conversation and available skills. Tool calls go through the Human MCP policy before they run. The reply and tool activity are saved for the next turn.
 
 ## Built-in skills
 
@@ -117,15 +113,15 @@ flowchart LR
 
 ## Create a skill
 
-Scaffold a skill with the CLI:
+Skills live in folders. Start one with:
 
 ```bash
 mithai skill create uptime
 ```
 
-This creates `skills/uptime/SKILL.md` and `skills/uptime/tools.py`.
+The command makes `skills/uptime/SKILL.md` and `skills/uptime/tools.py`.
 
-`SKILL.md` tells the model when and how to use the skill:
+Put the instructions in `SKILL.md`:
 
 ```markdown
 ---
@@ -136,7 +132,7 @@ description: Check the health of HTTP endpoints.
 Check endpoint availability and report status codes and response times.
 ```
 
-`tools.py` exposes native tools when the skill needs them:
+If the skill needs its own tool, add it in `tools.py`:
 
 ```python
 import json
@@ -162,17 +158,17 @@ def handle(name: str, input: dict, ctx: dict) -> str:
         return json.dumps({"status": response.status, "healthy": response.status < 500})
 ```
 
-`tools.py` is optional, so a skill can also be instructions-only and guide the model toward MCP tools supplied elsewhere. Validate a skill before loading it:
+`tools.py` is optional. A skill can just contain instructions, including instructions for MCP tools supplied somewhere else. Check it before loading:
 
 ```bash
 mithai skill validate uptime
 ```
 
-See the [skills reference](docs/skills-reference.md) for the full contract, lifecycle hooks, configuration, and packaging behavior.
+The [skills reference](docs/skills-reference.md) covers the rest of the format, lifecycle hooks, config and packaging.
 
 ## Human approval policies
 
-Every tool can declare the level of human involvement it needs:
+Tools don't all need the same amount of supervision. A read can run directly while a restart or delete waits for someone:
 
 | Policy | Behavior |
 | --- | --- |
@@ -193,7 +189,7 @@ TOOLS = [
 ]
 ```
 
-Administrators can make policy stricter in `config.yaml` without changing skill code:
+You can tighten those rules in `config.yaml` without editing the skill:
 
 ```yaml
 human:
@@ -205,7 +201,7 @@ human:
 
 ## Minimal configuration
 
-`mithai init` generates a working project. The central pieces look like this:
+`mithai init` writes this for you. Here is a trimmed example:
 
 ```yaml
 bot:
@@ -231,26 +227,25 @@ skills:
       allowed_commands: ["df -h", "uptime"]
 ```
 
-Use `adapter.types` instead of `adapter.type` to run multiple adapters simultaneously. They share the engine, skills, and context while approval requests return through the platform that initiated the action.
+Use `adapter.types` instead of `adapter.type` when you want several adapters running at once. They still share one engine and set of skills. Approval requests go back to the platform where the request started.
 
-## More capabilities
+## Other parts of mithai
 
-- **Scheduling:** recurring local cron tasks or a central scheduling backend that survives restarts.
-- **Onboarding:** learn a Slack channel's purpose and members, merge useful facts into shared memory, and introduce the agent.
-- **Multi-agent mode:** give separate agents their own identity, skills, Slack app, and memory while managing them from one project.
-- **Observability:** export OpenTelemetry data and optionally enrich GenAI spans for Last9.
+Scheduling can use local cron, or a central backend if jobs need to survive restarts and move between hosts. Slack onboarding reads a channel's members and recent history, then folds what it learns into shared memory.
 
-Create a specialized agent with:
+There is also a multi-agent mode. Each agent can have its own name, skills, Slack app and memory, while staying in the same project:
 
 ```bash
 mithai agent create devops --name "DevOps Agent" --skills shell,memory,http_checker
 ```
 
+OpenTelemetry export is optional. Last9 GenAI span enrichment is available with the telemetry extra.
+
 ## Advanced usage
 
 ### AWS Bedrock
 
-Install the provider extra, then select `bedrock` and use a Bedrock model ID rather than an Anthropic model alias:
+Bedrock is an optional install:
 
 ```bash
 pip install 'mithai[bedrock]'
@@ -268,7 +263,7 @@ llm:
     session_token: ${AWS_SESSION_TOKEN} # optional for temporary credentials
 ```
 
-The configured IAM principal needs `bedrock:InvokeModel` permission for each model the agent uses. See [Configuration: LLM providers](docs/configuration.md#llm) for model examples and credential details.
+The `model` value is a Bedrock model ID, not an Anthropic alias. The IAM principal needs `bedrock:InvokeModel` for every model the agent will use. More model and credential examples are in [Configuration: LLM providers](docs/configuration.md#llm).
 
 ### CLI reference
 
@@ -284,7 +279,7 @@ The configured IAM principal needs `bedrock:InvokeModel` permission for each mod
 | `mithai agent` | Create, list, inspect, or validate agents |
 | `mithai service` | Manage mithai as an operating-system service |
 
-Run `mithai --help` or `mithai <command> --help` for all options and subcommands.
+Use `mithai --help` or `mithai <command> --help` for the flags and subcommands.
 
 ## Documentation
 
@@ -298,7 +293,7 @@ Run `mithai --help` or `mithai <command> --help` for all options and subcommands
 | [Security](docs/security.md) | Secrets, permissions, network exposure, and operational safety |
 | [Troubleshooting](docs/troubleshooting.md) | Common setup and runtime problems |
 
-The rendered documentation is available at [docs.mithai.dev](https://docs.mithai.dev).
+The same documentation is rendered at [docs.mithai.dev](https://docs.mithai.dev).
 
 ## Development
 

@@ -35,7 +35,12 @@ SKILL_DEPS: dict[str, list[dict]] = {
 }
 
 
-SKILL_PROMPT_TEMPLATE = """Describe what this skill does.
+SKILL_PROMPT_TEMPLATE = """---
+name: {name}
+description: Describe what this skill does.
+---
+
+Describe what this skill does.
 The AI will see this as part of its system prompt.
 """
 
@@ -95,7 +100,7 @@ def _available_optional_skills() -> dict[str, Path]:
     if opt_dir.exists():
         for d in sorted(opt_dir.iterdir()):
             if d.is_dir() and not d.name.startswith((".", "_")):
-                if (d / "tools.py").exists() and (d / "prompt.md").exists():
+                if (d / "tools.py").exists() and (d / "SKILL.md").exists():
                     available[d.name] = d
 
     # Source mode fallback: ./skills/ directory (non-core skills)
@@ -104,7 +109,7 @@ def _available_optional_skills() -> dict[str, Path]:
         if source_dir.exists():
             for d in sorted(source_dir.iterdir()):
                 if d.is_dir() and d.name not in CORE_SKILLS and not d.name.startswith((".", "_")):
-                    if (d / "tools.py").exists() and (d / "prompt.md").exists():
+                    if (d / "tools.py").exists() and (d / "SKILL.md").exists():
                         available[d.name] = d
 
     return available
@@ -414,11 +419,11 @@ def create(name, skills_dir):
         raise click.ClickException(f"Skill directory already exists: {skill_dir}")
 
     skill_dir.mkdir(parents=True)
-    (skill_dir / "prompt.md").write_text(SKILL_PROMPT_TEMPLATE)
+    (skill_dir / "SKILL.md").write_text(SKILL_PROMPT_TEMPLATE.format(name=name))
     (skill_dir / "tools.py").write_text(SKILL_TOOLS_TEMPLATE.format(name=name))
 
     ok(f"Created skill [bright_cyan]{name}[/] at [muted]{skill_dir}/[/]")
-    console.print(f"    Edit [white]{skill_dir}/prompt.md[/] — describe the skill")
+    console.print(f"    Edit [white]{skill_dir}/SKILL.md[/] — describe the skill")
     console.print(f"    Edit [white]{skill_dir}/tools.py[/] — define tools and handlers")
 
 
@@ -426,7 +431,7 @@ def create(name, skills_dir):
 @click.argument("name", required=False)
 @click.option("--dir", "skills_dir", default="./skills", help="Skills directory")
 def validate(name, skills_dir):
-    """Validate skill(s) — check prompt.md, tools.py, and contract."""
+    """Validate skill(s) — check SKILL.md, tools.py, and contract."""
     base = Path(skills_dir)
 
     if name:

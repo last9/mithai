@@ -23,7 +23,7 @@ You (in Slack/Telegram/CLI)
            before risky ops)
 ```
 
-**Skills** are plugins — a folder with `prompt.md` (tells the AI what the skill does) and `tools.py` (defines tools the AI can call). The AI decides which tools to use based on your message.
+**Skills** are plugins — a folder with `SKILL.md` (tells the AI what the skill does) and optional `tools.py` (defines tools the AI can call). The AI decides which tools to use based on your message.
 
 **Human MCP** is human-in-the-loop as a protocol. Skills declare which tools need human approval (`"human": "approve"`) or confirmation (`"human": "confirm"`). Read-only tools run automatically.
 
@@ -64,7 +64,7 @@ mithai skill create my_skill
 
 This creates `skills/my_skill/` with two files:
 
-**`prompt.md`** — what the AI knows about your skill:
+**`SKILL.md`** — what the AI knows about your skill:
 ```markdown
 You can check the health of HTTP endpoints.
 Report status codes and response times.

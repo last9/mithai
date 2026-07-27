@@ -500,9 +500,9 @@ class TestBackwardsCompatibility:
 # ---------------------------------------------------------------------------
 
 def _write_fake_skill(skill_dir: Path, skill_name: str) -> None:
-    """Create a minimal skill directory with prompt.md and tools.py."""
+    """Create a minimal skill directory with SKILL.md and tools.py."""
     skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "prompt.md").write_text(f"{skill_name} skill prompt")
+    (skill_dir / "SKILL.md").write_text(f"{skill_name} skill prompt")
     (skill_dir / "tools.py").write_text(textwrap.dedent(f"""\
         import json
 

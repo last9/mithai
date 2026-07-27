@@ -22,7 +22,7 @@ Three complete skill examples, each highlighting a different framework pattern.
 
 This is the right pattern for most skills that touch real data.
 
-**`skills/tickets/prompt.md`**
+**`skills/tickets/SKILL.md`**
 ```markdown
 You can look up and update support tickets.
 
@@ -152,7 +152,7 @@ skills:
 
 Use `startup` for anything that needs to run before the first message arrives: prefetching data, establishing connections, or kicking off a polling loop.
 
-**`skills/alerts/prompt.md`**
+**`skills/alerts/SKILL.md`**
 ```markdown
 You can check for active infrastructure alerts and their current status.
 
@@ -288,7 +288,7 @@ skills:
 
 > **Note:** This pattern requires the Slack adapter. It won't send messages when running under the CLI adapter.
 
-**`skills/watchdog/prompt.md`**
+**`skills/watchdog/SKILL.md`**
 ```markdown
 You can check on the watchdog monitor status.
 

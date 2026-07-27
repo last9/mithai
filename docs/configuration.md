@@ -275,7 +275,7 @@ skills:
           url: https://billing.internal/health
 ```
 
-`skills.paths` lists directories. Each subdirectory with a `prompt.md` and `tools.py` is loaded as a skill.
+`skills.paths` lists directories. Each subdirectory with a `SKILL.md` is loaded as a skill (`tools.py` is optional).
 
 `skills.config` maps skill names to arbitrary config dicts. A skill receives its config as `ctx["config"]` in every handler call.
 

@@ -23,18 +23,18 @@ This page explains the core ideas behind mithai. Read it after the [getting star
 
 ## Skills
 
-A skill is the unit of extension in mithai. It's a folder with two files:
+A skill is the unit of extension in mithai. It's a folder with a required `SKILL.md` and an optional `tools.py`:
 
 ```
 skills/
 └── my_skill/
-    ├── prompt.md    # what the AI knows about this skill
-    └── tools.py     # what the AI can do with this skill
+    ├── SKILL.md    # what the AI knows about this skill
+    └── tools.py    # what the AI can do (optional for prompt-only skills)
 ```
 
-### `prompt.md`
+### `SKILL.md`
 
-Loaded into the system prompt at startup. Tells the AI what the skill does, when to use it, and any constraints.
+Loaded into the system prompt at startup. Tells the AI what the skill does, when to use it, and any constraints. Optional YAML frontmatter is stripped before injection.
 
 ```markdown
 You can check service health and restart services.
@@ -46,7 +46,7 @@ Keep this focused. The AI doesn't need implementation details — just behavior.
 
 ### `tools.py`
 
-Defines tools (exposed to the LLM) and implements them (runs on the server).
+Defines tools (exposed to the LLM) and implements them (runs on the server). Omit this file for prompt-only skills.
 
 **Required exports:**
 
@@ -67,7 +67,7 @@ Tools are automatically namespaced as `skillname__toolname`. A tool named `check
 ```
 skills/
 └── services/               ← skill name
-    ├── prompt.md           ← injected into system prompt
+    ├── SKILL.md            ← injected into system prompt
     └── tools.py            ← exports TOOLS + handle()
          │
          ├── check_health   ← tool name defined in TOOLS

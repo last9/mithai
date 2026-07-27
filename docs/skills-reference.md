@@ -4,14 +4,14 @@ description: "Complete reference for TOOLS, handle, resolve_human, startup, bind
 ---
 
 
-A skill is a folder with a `prompt.md` and a `tools.py`. This page is the complete reference for everything a skill can export and everything the framework gives it.
+A skill is a folder with a required `SKILL.md` and an optional `tools.py`. This page is the complete reference for everything a skill can export and everything the framework gives it.
 
 ---
 
 ## On this page
 
 - [File structure](#file-structure)
-- [prompt.md](#promptmd)
+- [SKILL.md](#skillmd)
 - [tools.py exports](#toolspy-exports)
   - [TOOLS](#tools-required)
   - [handle](#handlename-input-ctx-required)
@@ -32,17 +32,19 @@ A skill is a folder with a `prompt.md` and a `tools.py`. This page is the comple
 ```
 skills/
 └── my_skill/
-    ├── prompt.md     # required: injected into the system prompt
-    └── tools.py      # required: tool definitions and handlers
+    ├── SKILL.md     # required: injected into the system prompt
+    └── tools.py     # optional: tool definitions and handlers
 ```
 
-Both files are required. If either is missing, the skill fails to load.
+`SKILL.md` is required. `tools.py` is optional — omit it for prompt-only skills that guide the model toward MCP tools or other skills. If `tools.py` is present but malformed, the skill fails to load.
+
+Optional YAML frontmatter at the top of `SKILL.md` (between `---` fences) is stripped before the body is injected into the system prompt. Skill identity is still the directory name; frontmatter `name:` is not used as the skill key.
 
 ---
 
-## `prompt.md`
+## `SKILL.md`
 
-Plain markdown. Loaded at startup and injected into the LLM's system prompt alongside all other skill prompts.
+Plain markdown (optionally with YAML frontmatter). Loaded at startup and injected into the LLM's system prompt alongside all other skill prompts.
 
 Write it from the AI's perspective. Describe:
 
@@ -53,6 +55,11 @@ Write it from the AI's perspective. Describe:
 **Example:**
 
 ```markdown
+---
+name: services
+description: Check service health and trigger restarts.
+---
+
 You can check service health and trigger restarts.
 
 Use `list_services` to enumerate available services.

@@ -43,7 +43,7 @@ Key patterns to look for:
 | `Loaded skill: services (3 tools)` | Skill loaded successfully |
 | `Skill services: missing TOOLS export` | `tools.py` does not define `TOOLS` |
 | `Skill services: missing handle() function` | `tools.py` does not define `handle` |
-| `Skipping services: missing prompt.md or tools.py` | Directory is incomplete |
+| `Skipping services: missing SKILL.md` | Directory is incomplete |
 | `Human MCP: requesting approve for services__restart_service` | Approval gate triggered |
 | `Executing tool: services__restart_service` | Tool approved and running |
 | `Tool denied by human: services__restart_service` | User clicked Deny |
@@ -67,7 +67,7 @@ sudo journalctl -u mithai -f
 
 ### mithai skill validate
 
-Checks all skills in `./skills/` for structural correctness — presence of `prompt.md` and `tools.py`, valid `TOOLS` schema, required `handle` function, and valid `"human"` levels:
+Checks all skills in `./skills/` for structural correctness — presence of `SKILL.md`, and when `tools.py` exists: valid `TOOLS` schema, required `handle` function, and valid `"human"` levels:
 
 ```bash
 mithai skill validate
@@ -109,13 +109,13 @@ Exit code is `0` when all checks pass, `1` if any fail. Use this in a deployment
 
 ### Skill not loading
 
-**Symptom:** The agent does not use a skill you added. `mithai skill list` does not show it. With `--verbose`, you see `Skipping services: missing prompt.md or tools.py`.
+**Symptom:** The agent does not use a skill you added. `mithai skill list` does not show it. With `--verbose`, you see `Skipping services: missing SKILL.md`.
 
 **Diagnosis:** Check that your skill directory has both required files:
 
 ```bash
 ls skills/services/
-# Expected: prompt.md  tools.py
+# Expected: SKILL.md  (and tools.py if the skill defines native tools)
 ```
 
 Check that the directory name does not start with `.` or `_` — those are silently skipped by the loader.
@@ -130,7 +130,7 @@ skills:
 
 If the path is correct but the skill still does not appear, run `mithai skill validate services` to catch import errors that would otherwise be swallowed.
 
-**Fix:** Ensure `prompt.md` and `tools.py` both exist, are non-empty, and the path in `config.yaml` points at the parent directory containing the skill folder.
+**Fix:** Ensure `SKILL.md` exists and is non-empty, and the path in `config.yaml` points at the parent directory containing the skill folder.
 
 > **Note:** If you have two skill directories with the same name on different paths, the one from the path listed *later* in `skills.paths` wins. This is intentional — it lets you override bundled skills with local versions.
 
@@ -155,7 +155,7 @@ TOOLS = [
 
 3. The tool description is ambiguous and the LLM is not selecting it. Improve the `"description"` field to be specific about when to use the tool.
 
-**Fix:** Run `mithai skill validate` and correct any reported errors. If the tool definition is correct but the LLM is not calling it, rewrite the `"description"` to be more explicit, and update `prompt.md` to tell the agent under what conditions to use this tool.
+**Fix:** Run `mithai skill validate` and correct any reported errors. If the tool definition is correct but the LLM is not calling it, rewrite the `"description"` to be more explicit, and update `SKILL.md` to tell the agent under what conditions to use this tool.
 
 ---
 
@@ -367,7 +367,7 @@ sessions:
 
 1. A tool is returning an error and the agent retries it. Check what the tool returns — if it returns `{"error": "..."}`, the LLM may attempt the same call with slightly different inputs hoping to succeed.
 
-2. A tool is returning data the LLM does not understand and it keeps trying to reinterpret it. Check the JSON shape your tool returns and whether it matches what `prompt.md` describes.
+2. A tool is returning data the LLM does not understand and it keeps trying to reinterpret it. Check the JSON shape your tool returns and whether it matches what `SKILL.md` describes.
 
 3. The LLM is calling a tool to complete a previous tool call's intent (chaining too deep). Check `--verbose` logs to see the full sequence of tool calls.
 
@@ -375,7 +375,7 @@ sessions:
 
 - Fix the underlying tool error so it returns useful results.
 - Make `handle()` return clearer error messages that tell the LLM when to stop retrying.
-- Add guidance to `prompt.md` telling the agent to stop after N failed attempts.
+- Add guidance to `SKILL.md` telling the agent to stop after N failed attempts.
 - Use the `human.overrides` config to force a specific tool to require approval, giving you a chance to interrupt the loop manually:
 
 ```yaml

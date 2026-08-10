@@ -189,6 +189,20 @@ class TelemetryLogsConfig(BaseModel):
     level: str | None = None   # e.g. "WARNING", "ERROR" — min Python log level to bridge
 
 
+class ToolBudgetLogToolsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    max_per_turn: int | None = None
+    max_long_range_per_turn: int | None = None
+    long_range_threshold_minutes: int | None = None
+    tools: list[str] | None = None
+
+
+class ToolBudgetsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    enabled: bool | None = None
+    log_tools: ToolBudgetLogToolsConfig | None = None
+
+
 class TelemetryConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     enabled: bool | None = None
@@ -215,6 +229,7 @@ class MithaiConfig(BaseModel):
     sessions: SessionsConfig | None = None
     onboarding: OnboardingConfig | None = None
     human: HumanConfig | None = None
+    tool_budgets: ToolBudgetsConfig | None = None
     telemetry: TelemetryConfig | None = None
 
 

@@ -19,6 +19,14 @@ from mithai.adapters.base import Adapter, IncomingMessage
 from mithai.core.config import get_human_config, get_llm_config, get_mcp_config, get_skill_config, get_skill_paths
 from mithai.core.context import build_context
 from mithai.core.reflection import reflect
+from mithai.core.tool_budgets import (
+    budget_exhausted_result,
+    count_budgeted_log_tools,
+    count_long_range_log_tools,
+    get_tool_budget_config,
+    is_budgeted_log_tool,
+    is_long_range_log_query,
+)
 from mithai.core.verifier import verify, verified_skills_called
 from mithai.core.session import SessionManager
 from mithai.core.skill_loader import Skill, load_skills
@@ -189,6 +197,8 @@ class Engine:
             max_turns=session_config.get("max_stored", 50),
         )
         self._max_history = session_config.get("max_history", 10)
+
+        self._tool_budgets = get_tool_budget_config(config)
 
     def late_bind(self, adapters: list[tuple[str, "Adapter"]]) -> None:
         """Give skills access to engine + adapter after full initialization.
@@ -495,6 +505,21 @@ class Engine:
                         "error": f"Unknown tool: {prefixed_name}",
                     })
                 else:
+                    budget_result = self._check_log_tool_budget(prefixed_name, tool_input, turn_tool_calls)
+                    if budget_result is not None:
+                        result = budget_result
+                        turn_tool_calls.append({
+                            "tool": prefixed_name,
+                            "input": tool_input,
+                            "approved": True,
+                            "result_summary": result[:500],
+                            "budget_exhausted": True,
+                        })
+                        tool_results.append(
+                            LLMProvider.format_tool_result(block["id"], result)
+                        )
+                        continue
+
                     # Build context early — needed for dynamic human resolution and execution
                     skill_name = prefixed_name.split("__")[0]
                     skill_ctx = build_context(
@@ -1021,6 +1046,43 @@ class Engine:
         """Clean up resources (MCP server connections, etc.)."""
         if self._mcp_manager:
             self._mcp_manager.stop()
+
+    def _log_tool_budget_settings(self) -> tuple[bool, dict]:
+        budgets = self._tool_budgets
+        return budgets.get("enabled", True), budgets.get("log_tools", {})
+
+    def _check_log_tool_budget(
+        self,
+        prefixed_name: str,
+        tool_input: dict,
+        turn_tool_calls: list[dict],
+    ) -> str | None:
+        enabled, log_tools = self._log_tool_budget_settings()
+        if not enabled:
+            return None
+
+        tool_names = log_tools.get("tools", frozenset())
+        if not is_budgeted_log_tool(prefixed_name, tool_names):
+            return None
+
+        max_per_turn = log_tools.get("max_per_turn", 5)
+        if count_budgeted_log_tools(turn_tool_calls, tool_names) >= max_per_turn:
+            return budget_exhausted_result(
+                "log_tool_turn_limit",
+                tool=prefixed_name,
+                limit=max_per_turn,
+            )
+
+        threshold = log_tools.get("long_range_threshold_minutes", 60)
+        if is_long_range_log_query(tool_input, threshold):
+            max_long_range = log_tools.get("max_long_range_per_turn", 1)
+            if count_long_range_log_tools(turn_tool_calls, tool_names, threshold) >= max_long_range:
+                return budget_exhausted_result(
+                    "long_range_log_turn_limit",
+                    tool=prefixed_name,
+                    limit=max_long_range,
+                )
+        return None
 
     def _record_approval(self, prefixed_name: str, tool_input: dict, approved: bool) -> None:
         """Record an approval decision for learning."""

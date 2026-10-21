@@ -1,6 +1,7 @@
 // Proves the docs toolchain's Node rejects TLS chains through the compromised eMudhra
 // intermediates (nodejs/node#66871) while still trusting normal HTTPS endpoints.
-// Drop the revoked-host check once the incident's test host is retired.
+// Passes only after observing CERT_REVOKED; if the incident's test host is retired, this
+// fails until the revoked-host check is dropped.
 
 const REVOKED = "https://dv-g3b-emudhra.we-have-a-problem.com/";
 const TRUSTED = "https://nodejs.org/";
@@ -25,7 +26,9 @@ if (revoked.ok) {
   console.log("::error::Node accepted a chain through a revoked eMudhra intermediate");
   failed = true;
 } else if (revoked.code !== "CERT_REVOKED") {
-  console.log(`::warning::expected CERT_REVOKED, got ${revoked.detail}`);
+  // A DNS or connection failure never reached the certificate check, so it proves nothing.
+  console.log(`::error::expected CERT_REVOKED, got ${revoked.detail}`);
+  failed = true;
 }
 
 const trusted = await probe(TRUSTED);

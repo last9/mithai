@@ -305,7 +305,7 @@ uv sync --all-extras
 uv run ruff check src/ tests/
 uv run pytest tests/
 
-python3 docs-site/migrate.py
+python3 docs-site/migrate.py   # docs build needs the Node in docs-site/.nvmrc
 cd docs-site && npm ci --legacy-peer-deps && npm run build
 ```
 

@@ -29,9 +29,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: docs-site/.nvmrc
           cache: npm
           cache-dependency-path: docs-site/package-lock.json
+
+      - name: Check Node rejects revoked eMudhra chains
+        if: github.event_name == 'pull_request'
+        run: node docs-site/scripts/check-node-tls.mjs
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps

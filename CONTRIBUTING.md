@@ -11,7 +11,7 @@ uv run ruff check src/ tests/
 uv run ruff format src/ tests/
 ```
 
-For docs:
+For docs (Node 22.23.4 or later 22.x, pinned in `docs-site/.nvmrc`):
 
 ```bash
 python3 docs-site/migrate.py

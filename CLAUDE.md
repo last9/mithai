@@ -80,6 +80,8 @@ Skills are loaded dynamically by `skill_loader.py` via `importlib`.
 
 Tests use `pytest` with `pytest-asyncio` (async mode = `"auto"`). Test fixtures for skills and config are in `tests/conftest.py`. Tests create temporary skill directories with `SKILL.md` + `tools.py` to test the full skill loading pipeline.
 
+When bumping the CA bundle (`certifi`), prove the change with a TLS handshake through a CONNECT proxy: the new bundle rejects the distrusted host, the old bundle accepts it, and a normal host still passes.
+
 ## Documented Solutions
 
 `docs/solutions/` — documented solutions to past problems (bugs, integration issues, patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.

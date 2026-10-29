@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src/ src/
+COPY skills/ skills/
 
 RUN python -m venv /app/.venv && \
     /app/.venv/bin/pip install --upgrade pip --quiet && \

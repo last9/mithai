@@ -21,6 +21,7 @@ mithai is configured with a `config.yaml` file. All values support `${ENV_VAR}` 
 - [state](#state)
 - [mcp_servers](#mcp_servers)
 - [agents (multi-agent mode)](#agents-multi-agent-mode)
+- [telemetry](#telemetry)
 - [Environment variables](#environment-variables)
 - [CLI flags](#cli-flags)
 
@@ -410,6 +411,65 @@ agents:
 ```
 
 When `agents` is present, the top-level `adapter`, `skills`, and `llm` blocks act as defaults inherited by each agent. Agent-level config overrides defaults.
+
+---
+
+## `telemetry`
+
+Telemetry is opt-in for both `mithai run` and `mithai chat`. Install
+`pip install 'mithai[telemetry]'` for OpenTelemetry exporters and Last9 GenAI
+span enrichment, then add this top-level block to your existing config:
+
+```yaml
+telemetry:
+  enabled: true
+  service_name: mithai
+  exporter: otlp
+  sampling:
+    ratio: 1.0
+  logs:
+    enabled: true
+    level: WARNING
+```
+
+| Key | Default | Behavior |
+|---|---|---|
+| `enabled` | `false` | Enable telemetry; environment variables alone do not enable it. |
+| `service_name` | `mithai` | Set the `service.name` resource attribute. |
+| `exporter` | `otlp` | `otlp` exports over HTTP; `stdout` prints locally; `none` discards spans and exports no metrics or logs. |
+| `sampling.ratio` | `1.0` | Fraction of traces sampled, from `0.0` to `1.0`; does not control metrics or logs. |
+| `otlp.endpoint` | SDK environment/default | Base HTTP endpoint; mithai appends `/v1/traces`, `/v1/metrics`, or `/v1/logs`. |
+| `otlp.headers` | SDK environment/default | Map of HTTP headers, such as `Authorization`; a non-empty map overrides environment headers. |
+| `logs.enabled` | `false` | Forward Python log records through OpenTelemetry. |
+| `logs.level` | `WARNING` | Minimum forwarded log level; the application's logging level also applies. |
+
+### OTLP environment settings and precedence
+
+Omit `otlp.endpoint` and `otlp.headers` to configure exporters through the environment:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT='https://<your-last9-otlp-host>'
+export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic%20<your-authorization-token>'
+```
+
+Replace the placeholders with your Last9 ingestion settings. The general endpoint
+is a **base URL**, without `/v1/traces`, `/v1/metrics`, or `/v1/logs`. Environment
+headers use comma-separated `key=value` pairs with URL-encoded values: `%20` is a
+space, and `%2C` is a comma inside a value. YAML header values use ordinary strings,
+not URL encoding.
+
+Endpoint and headers resolve independently, in this order:
+
+1. Explicit `telemetry.otlp.endpoint` or non-empty `telemetry.otlp.headers` in YAML.
+2. The SDK's signal-specific environment setting, such as
+   `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_HEADERS`.
+   Replace `TRACES` with `METRICS` or `LOGS` for the other signals. Signal-specific
+   endpoints are full URLs, including the appropriate `/v1/...` path.
+3. `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_HEADERS`.
+4. The SDK defaults: `http://localhost:4318` with the signal path and no custom headers.
+
+See [deployment](deployment.md) for a chat export check and
+[troubleshooting](troubleshooting.md) for missing telemetry.
 
 ---
 

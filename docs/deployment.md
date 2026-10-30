@@ -420,7 +420,51 @@ For production monitoring, instrument these:
 - **Log errors:** `journalctl -u mithai` for `ERROR` and `Exception` lines.
 - **Disk space:** the memory and state directories grow over time. Session files accumulate at `.mithai/state/sessions/`. Prune old ones if disk becomes a concern.
 
-If you have telemetry configured (`telemetry.enabled: true` in `config.yaml`), mithai emits OpenTelemetry traces for each request and tool call. The `mithai.request` span and per-tool spans give you latency and approval-rate data. Install `mithai[telemetry]` only when you need telemetry; Last9 GenAI enrichment is optional and skipped automatically when the extra is not installed.
+### Export telemetry to Last9
+
+Both `mithai run` and `mithai chat` export traces and metrics when telemetry is
+enabled. Python log forwarding is a separate opt-in. Install
+`pip install 'mithai[telemetry]'` and add this to your existing `config.yaml`:
+
+```yaml
+telemetry:
+  enabled: true
+  service_name: mithai
+  exporter: otlp
+  logs:
+    enabled: true
+    level: WARNING
+```
+
+Set the OTLP/HTTP base endpoint and authorization from your Last9 ingestion
+settings in the environment of the mithai process:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT='https://<your-last9-otlp-host>'
+export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic%20<your-authorization-token>'
+printf 'Say hello\n' | mithai chat --config config.yaml
+```
+
+Use a working LLM configuration for this check. The SDK appends the signal paths
+to the base endpoint; `%20` encodes the space in the authorization value. Omit
+`telemetry.otlp.endpoint` and `telemetry.otlp.headers` in YAML to use these environment
+settings. See the [configuration reference](configuration.md) for all settings
+and signal-specific overrides.
+
+After the turn completes and piped input reaches EOF, chat flushes and shuts down
+its trace, metric, and log providers. The same cleanup runs on chat errors. In
+Last9, filter by `service.name=mithai` and the time of the request:
+
+- Find a `mithai.request` span with `gen_ai.chat` children and tool spans when tools
+  were called. LLM spans record finish reasons, including `max_tokens`, and provider
+  errors as exception events. Last9 GenAI enrichment comes with the telemetry extra.
+- Check `mithai.requests`, `gen_ai.client.token.usage`, and
+  `gen_ai.client.operation.duration` for request and LLM metrics.
+- Check logs only if the turn emitted a record at or above the configured level.
+  A successful turn may emit no `WARNING` logs.
+
+For a local check without a collector, temporarily use `exporter: stdout` and run
+the same chat command. See [troubleshooting](troubleshooting.md) if exports are missing.
 
 ---
 

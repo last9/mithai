@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 _tracer = None
 # Reference to the LoggingHandler so tests can remove it cleanly.
 _log_handler = None
+# Providers owned by this module, in setup order (traces, metrics, logs).
+_providers = []
 
 
 def setup_telemetry(config: dict) -> None:
@@ -55,6 +57,8 @@ def setup_telemetry(config: dict) -> None:
     else:
         trace_provider = TracerProvider(resource=resource)
 
+    _providers.append(trace_provider)
+
     if exporter_type == "stdout":
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter
         trace_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
@@ -69,11 +73,12 @@ def setup_telemetry(config: dict) -> None:
             )
             return
         otlp = tel.get("otlp") or {}
-        endpoint = otlp.get("endpoint") or "http://localhost:4318"
-        headers = otlp.get("headers") or {}
+        # Unset values let the SDK resolve OTEL_EXPORTER_OTLP_* and defaults.
+        endpoint = otlp.get("endpoint")
+        headers = otlp.get("headers") or None
         trace_provider.add_span_processor(BatchSpanProcessor(
             OTLPSpanExporter(
-                endpoint=f"{endpoint.rstrip('/')}/v1/traces",
+                endpoint=f"{endpoint.rstrip('/')}/v1/traces" if endpoint else None,
                 headers=headers,
             )
         ))
@@ -94,11 +99,15 @@ def setup_telemetry(config: dict) -> None:
         logger.debug("last9-genai not installed — skipping Last9 span processor")
 
     trace.set_tracer_provider(trace_provider)
-    _tracer = trace.get_tracer("mithai")
+    _tracer = trace_provider.get_tracer("mithai")
 
     # ----------------------------------------------------------------- metrics
     from mithai.telemetry.metrics import setup_metrics
-    setup_metrics(resource=resource, exporter_type=exporter_type, otlp_cfg=tel.get("otlp") or {})
+    meter_provider = setup_metrics(
+        resource=resource, exporter_type=exporter_type, otlp_cfg=tel.get("otlp") or {}
+    )
+    if meter_provider is not None:
+        _providers.append(meter_provider)
 
     # ------------------------------------------------------------------- logs
     logs_cfg = tel.get("logs") or {}
@@ -122,13 +131,13 @@ def _setup_logs_bridge(*, resource, exporter_type: str, otlp_cfg: dict, level_na
     try:
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.sdk._logs import LoggerProvider
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-        from opentelemetry.sdk._logs.export import ConsoleLogExporter
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogExporter
     except ImportError:
         logger.debug("OTEL logs bridge unavailable — opentelemetry-sdk not installed.")
         return None
 
     log_provider = LoggerProvider(resource=resource)
+    _providers.append(log_provider)
 
     if exporter_type == "stdout":
         log_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
@@ -138,11 +147,12 @@ def _setup_logs_bridge(*, resource, exporter_type: str, otlp_cfg: dict, level_na
         except ImportError:
             logger.debug("OTLP log exporter not installed — skipping logs bridge.")
             return None
-        endpoint = otlp_cfg.get("endpoint", "http://localhost:4318")
-        headers = otlp_cfg.get("headers") or {}
+        # Unset values let the SDK resolve OTEL_EXPORTER_OTLP_* and defaults.
+        endpoint = otlp_cfg.get("endpoint")
+        headers = otlp_cfg.get("headers") or None
         log_provider.add_log_record_processor(BatchLogRecordProcessor(
             OTLPLogExporter(
-                endpoint=f"{endpoint.rstrip('/')}/v1/logs",
+                endpoint=f"{endpoint.rstrip('/')}/v1/logs" if endpoint else None,
                 headers=headers,
             )
         ))
@@ -163,10 +173,34 @@ def get_tracer():
     return _tracer
 
 
-def reset_tracer() -> None:
-    """Reset module state — for use in tests only."""
+def shutdown_telemetry() -> None:
+    """Drain and close our providers without masking a chat/startup failure.
+
+    SDK globals may belong to an embedding application. Only shut down the
+    providers we created, and detach the logs bridge before closing its pipeline.
+    Safe to call again, or when telemetry was never enabled.
+    """
     global _tracer, _log_handler
+    providers = list(_providers)
+    _providers.clear()
     if _log_handler is not None:
         logging.getLogger().removeHandler(_log_handler)
+        _log_handler.close()
         _log_handler = None
     _tracer = None
+
+    from mithai.telemetry.metrics import reset_metrics
+    reset_metrics()
+    for provider in providers:
+        try:
+            try:
+                provider.force_flush()
+            finally:
+                provider.shutdown()
+        except Exception:
+            logger.exception("Failed to shut down telemetry provider %s", type(provider).__name__)
+
+
+def reset_tracer() -> None:
+    """Reset module state and close owned providers — for use in tests only."""
+    shutdown_telemetry()

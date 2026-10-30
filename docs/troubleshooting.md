@@ -18,6 +18,7 @@ This guide covers the most common problems with a running mithai agent: skill lo
 - [Agent behavior](#agent-behavior)
 - [Approval issues](#approval-issues)
 - [Configuration](#configuration)
+- [Telemetry](#telemetry)
 - [Memory](#memory)
 
 ---
@@ -644,6 +645,41 @@ ls skills/
 If the skill is named `service` (singular) but the config key is `services` (plural), `ctx["config"]` will be `{}`.
 
 **Fix:** Make the key under `skills.config` match the skill directory name exactly.
+
+---
+
+## Telemetry
+
+### No traces or metrics from chat
+
+**Symptom:** `mithai chat` responds, but no telemetry appears in Last9 or your collector.
+
+1. Install `pip install 'mithai[telemetry]'` in the environment running mithai.
+   Missing SDK or OTLP exporter packages produce a warning that telemetry is disabled.
+2. Check that the config passed to `mithai chat --config config.yaml` has
+   `telemetry.enabled: true` and `exporter: otlp`. Setting `OTEL_EXPORTER_OTLP_*`
+   variables alone does not enable telemetry. Set `sampling.ratio: 1.0` while checking traces.
+3. Check endpoint and header precedence in the [configuration reference](configuration.md).
+   YAML values override environment settings; signal-specific variables override
+   general OTLP variables. Use an HTTP endpoint, not a gRPC endpoint. General endpoints
+   are base URLs; signal-specific endpoints include `/v1/traces`, `/v1/metrics`, or `/v1/logs`.
+4. For authentication failures, use comma-separated `key=value` environment headers
+   with URL-encoded values, such as `Authorization=Basic%20<your-authorization-token>`.
+5. Temporarily set `exporter: stdout` and send a chat message. Local spans confirm
+   instrumentation is active; they do not verify collector connectivity or credentials.
+
+Chat flushes pending telemetry on normal exit, EOF, and errors. Allow the process
+to finish cleanup; forcibly killing it can lose buffered exports. Check stderr for
+export errors and filter your backend by the configured `service_name` and request time.
+See [deployment](deployment.md) for a complete verification example.
+
+### Traces arrive, but logs do not
+
+Log forwarding defaults to off. Set `telemetry.logs.enabled: true` and check
+`telemetry.logs.level` (default `WARNING`). A successful request may produce no
+warning records. For an INFO-level diagnostic, set `logs.level: INFO` and run
+`mithai chat --verbose`; the application's logging level must also allow the record.
+If traces work but logs still fail, check log-specific OTLP endpoint and header overrides.
 
 ---
 

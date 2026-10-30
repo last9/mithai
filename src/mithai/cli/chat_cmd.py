@@ -2,8 +2,8 @@
 
 import click
 
-from mithai.cli.style import banner, banner_small, console, kv, setup_logging
 from mithai import get_version_string
+from mithai.cli.style import banner, banner_small, console, kv, setup_logging
 from mithai.core.config import get_agents, get_default_agent_id, get_llm_config, load_config
 
 
@@ -16,11 +16,22 @@ def chat(config_path, agent_id, verbose):
     setup_logging(verbose)
 
     config = load_config(config_path)
+    from mithai.telemetry.tracer import setup_telemetry, shutdown_telemetry
+
+    try:
+        setup_telemetry(config)
+        _chat(config, agent_id)
+    finally:
+        shutdown_telemetry()
+
+
+def _chat(config, agent_id):
+    """Build and run the chat session while telemetry is active."""
     agents_config = get_agents(config)
 
     from mithai.adapters.cli import CLIAdapter
+    from mithai.cli.run_cmd import _create_llm, _create_memory_backend, _create_state
     from mithai.core.engine import Engine
-    from mithai.cli.run_cmd import _create_llm, _create_state, _create_memory_backend
 
     adapter = CLIAdapter()
     llm = _create_llm(config)

@@ -22,10 +22,10 @@ _tool_calls = None         # mithai.tool.calls     (counter, {call})
 _requests = None           # mithai.requests       (counter, {request})
 
 
-def setup_metrics(*, resource, exporter_type: str, otlp_cfg: dict) -> None:
+def setup_metrics(*, resource, exporter_type: str, otlp_cfg: dict):
     """Initialize MeterProvider and create all instruments.
 
-    Called from tracer.setup_telemetry() after tracing is set up.
+    Return the owned provider so tracer.setup_telemetry() can close it on exit.
     """
     global _meter, _token_usage, _op_duration, _tool_duration, _tool_calls, _requests
 
@@ -48,11 +48,12 @@ def setup_metrics(*, resource, exporter_type: str, otlp_cfg: dict) -> None:
         except ImportError:
             logger.debug("OTLP metric exporter not installed — skipping metrics.")
             return
-        endpoint = otlp_cfg.get("endpoint") or "http://localhost:4318"
-        headers = otlp_cfg.get("headers") or {}
+        # Unset values let the SDK resolve OTEL_EXPORTER_OTLP_* and defaults.
+        endpoint = otlp_cfg.get("endpoint")
+        headers = otlp_cfg.get("headers") or None
         reader = PeriodicExportingMetricReader(
             OTLPMetricExporter(
-                endpoint=f"{endpoint.rstrip('/')}/v1/metrics",
+                endpoint=f"{endpoint.rstrip('/')}/v1/metrics" if endpoint else None,
                 headers=headers,
             )
         )
@@ -87,6 +88,8 @@ def setup_metrics(*, resource, exporter_type: str, otlp_cfg: dict) -> None:
         unit="{request}",
         description="Number of incoming messages handled",
     )
+
+    return provider
 
 
 def get_meter():

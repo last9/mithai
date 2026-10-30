@@ -2,6 +2,13 @@
 
 All notable public changes will be documented here.
 
+## 0.13.1
+
+- Export telemetry from `mithai chat`, including the optional logs bridge, and
+  drain traces, metrics, and logs on exit, EOF, or errors.
+- Honor OTLP endpoint and header environment variables when YAML settings are
+  omitted, and document sending chat traces to Last9.
+
 ## 0.13.0
 
 - Load skills from `SKILL.md` (or `skill.md`) and strip leading YAML frontmatter

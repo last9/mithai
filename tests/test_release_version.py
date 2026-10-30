@@ -19,3 +19,9 @@ def test_lockfile_matches_release_version():
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     package = next(package for package in lock["package"] if package["name"] == "mithai")
     assert package["version"] == project["version"]
+
+
+def test_chat_telemetry_release_has_new_version():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    # 0.13.0 predates chat's telemetry initialization and exit flush.
+    assert Version(project["version"]) >= Version("0.13.1")

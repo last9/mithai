@@ -239,7 +239,42 @@ There is also a multi-agent mode. Each agent can have its own name, skills, Slac
 mithai agent create devops --name "DevOps Agent" --skills shell,memory,http_checker
 ```
 
-OpenTelemetry export is optional. Last9 GenAI span enrichment is available with the telemetry extra.
+### Send traces to Last9
+
+Install `pip install 'mithai[telemetry]'` and add this to your existing `config.yaml`:
+
+```yaml
+telemetry:
+  enabled: true
+  exporter: otlp
+  service_name: mithai
+  logs:
+    enabled: true
+    level: WARNING
+```
+
+Set your Last9 OTLP/HTTP base endpoint and authorization value in the environment
+(replace the placeholders with your Last9 ingestion settings):
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT='https://<your-last9-otlp-host>'
+export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic%20<your-authorization-token>'
+printf 'Check service health\n' | mithai chat --config config.yaml
+```
+
+The SDK appends `/v1/traces`, `/v1/metrics`, and `/v1/logs` to the base endpoint.
+Headers use comma-separated `key=value` pairs with URL-encoded values (`%20` is a
+space). Explicit `telemetry.otlp.endpoint` and non-empty `telemetry.otlp.headers`
+values in YAML take precedence over their environment settings; omit them to
+keep credentials in the environment. Environment variables alone do not enable
+telemetry.
+
+Both `mithai run` and `mithai chat` export telemetry. Chat drains pending traces,
+metrics, and enabled logs on exit, including EOF and errors. Each turn has a
+`mithai.request` span with LLM and tool children; `gen_ai.chat` records finish
+reasons (including `max_tokens`) and provider errors with exception events.
+Last9 GenAI span enrichment is included with the telemetry extra. Without
+telemetry configuration, chat behaves as before.
 
 ## Advanced usage
 

@@ -69,11 +69,12 @@ def setup_telemetry(config: dict) -> None:
             )
             return
         otlp = tel.get("otlp") or {}
-        endpoint = otlp.get("endpoint") or "http://localhost:4318"
-        headers = otlp.get("headers") or {}
+        # Unset values let the SDK resolve OTEL_EXPORTER_OTLP_* and defaults.
+        endpoint = otlp.get("endpoint")
+        headers = otlp.get("headers") or None
         trace_provider.add_span_processor(BatchSpanProcessor(
             OTLPSpanExporter(
-                endpoint=f"{endpoint.rstrip('/')}/v1/traces",
+                endpoint=f"{endpoint.rstrip('/')}/v1/traces" if endpoint else None,
                 headers=headers,
             )
         ))
@@ -122,8 +123,7 @@ def _setup_logs_bridge(*, resource, exporter_type: str, otlp_cfg: dict, level_na
     try:
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.sdk._logs import LoggerProvider
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-        from opentelemetry.sdk._logs.export import ConsoleLogExporter
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogExporter
     except ImportError:
         logger.debug("OTEL logs bridge unavailable — opentelemetry-sdk not installed.")
         return None
@@ -138,11 +138,12 @@ def _setup_logs_bridge(*, resource, exporter_type: str, otlp_cfg: dict, level_na
         except ImportError:
             logger.debug("OTLP log exporter not installed — skipping logs bridge.")
             return None
-        endpoint = otlp_cfg.get("endpoint", "http://localhost:4318")
-        headers = otlp_cfg.get("headers") or {}
+        # Unset values let the SDK resolve OTEL_EXPORTER_OTLP_* and defaults.
+        endpoint = otlp_cfg.get("endpoint")
+        headers = otlp_cfg.get("headers") or None
         log_provider.add_log_record_processor(BatchLogRecordProcessor(
             OTLPLogExporter(
-                endpoint=f"{endpoint.rstrip('/')}/v1/logs",
+                endpoint=f"{endpoint.rstrip('/')}/v1/logs" if endpoint else None,
                 headers=headers,
             )
         ))

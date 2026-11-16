@@ -25,6 +25,11 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      - name: Verify Telegram-only install
+        run: |
+          uv sync --locked --no-dev --extra telegram
+          uv run --locked --no-dev --extra telegram python -c "from mithai.adapters.telegram import TelegramAdapter"
+
       - name: Install dependencies
         run: uv sync --all-extras
 

@@ -4,6 +4,9 @@ All notable public changes will be documented here.
 
 ## 0.13.1
 
+- Restrict Telegram access to configured chats and protect approval decisions.
+- Require authentication for the embedded API and protect learned approval history.
+- Show Telegram approval outcomes and retry transient polling failures.
 - Export telemetry from `mithai chat`, including the optional logs bridge, and
   drain traces, metrics, and logs on exit, EOF, or errors.
 - Honor OTLP endpoint and header environment variables when YAML settings are

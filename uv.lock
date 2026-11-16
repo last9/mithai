@@ -764,6 +764,7 @@ slack = [
 ]
 telegram = [
     { name = "python-telegram-bot" },
+    { name = "requests" },
 ]
 telemetry = [
     { name = "last9-genai" },
@@ -802,6 +803,7 @@ requires-dist = [
     { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=21.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0.0" },
+    { name = "requests", marker = "extra == 'telegram'", specifier = ">=2.31.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.18.0" },

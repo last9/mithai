@@ -193,6 +193,64 @@ def test_tool_call_round_trip(api_server):
     assert second_body["messages"][2] == {"role": "tool", "tool_call_id": "call_1", "content": "ok"}
 
 
+def test_partial_arguments_preserve_truncation(api_server):
+    server, handler = api_server
+    body = _success(tool=True)
+    choice = body["choices"][0]
+    choice["finish_reason"] = "length"
+    choice["message"]["tool_calls"][0]["function"]["arguments"] = '{"command":"uptime'
+    handler.responses = [(200, body)]
+
+    response = _provider(server).create_message(system="s", messages=[])
+
+    assert response.stop_reason == "max_tokens"
+    assert response.content[0]["id"] == "call_1"
+    assert response.content[0]["input"] == {}
+
+
+def test_malformed_arguments_on_completed_tool_call_are_rejected(api_server):
+    server, handler = api_server
+    body = _success(tool=True)
+    body["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = "{"
+    handler.responses = [(200, body)]
+
+    with pytest.raises(ProviderError, match="invalid response"):
+        _provider(server).create_message(system="s", messages=[])
+
+
+def test_engine_recovers_partial_tool_call_without_execution(api_server, tmp_skill_dir):
+    from mithai.adapters.base import IncomingMessage
+    from mithai.core.engine import Engine
+    from mithai.core.skill_loader import load_skills
+    from mithai.state.memory import MemoryStateBackend
+
+    server, handler = api_server
+    truncated = _success(tool=True)
+    choice = truncated["choices"][0]
+    choice["finish_reason"] = "length"
+    function = choice["message"]["tool_calls"][0]["function"]
+    function.update({"name": "test_skill__echo", "arguments": '{"message":"hello'})
+    handler.responses = [(200, truncated), (200, _success())]
+    provider = _provider(server)
+    skills = load_skills([tmp_skill_dir])
+    skills["test_skill"].handle = Mock()
+    config = {
+        "adapter": {"type": "cli"},
+        "llm": {"provider": "openai", "model": "grok-test"},
+        "skills": {"paths": [str(tmp_skill_dir)]},
+    }
+    engine = Engine(config, provider, MemoryStateBackend(), skills=skills)
+
+    result = engine.handle(
+        IncomingMessage(text="hello", channel_id="C1", user_id="U1", platform="cli"),
+        Mock(),
+    )
+
+    assert result == "done"
+    assert len(handler.requests) == 2
+    skills["test_skill"].handle.assert_not_called()
+
+
 @pytest.mark.parametrize("api_key", [None, "", "   "])
 def test_blank_or_missing_credentials_fail_before_transport(api_server, api_key):
     server, handler = api_server

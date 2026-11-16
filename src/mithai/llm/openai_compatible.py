@@ -254,6 +254,8 @@ def _tool_result_content(content: Any) -> str:
 def _normalize_response(raw: dict) -> LLMResponse:
     choice = raw["choices"][0]
     message = choice["message"]
+    finish_reason = choice.get("finish_reason") or "stop"
+    truncated = finish_reason == "length"
     content = []
     if message.get("content"):
         content.append({"type": "text", "text": message["content"]})
@@ -263,9 +265,8 @@ def _normalize_response(raw: dict) -> LLMResponse:
             "type": "tool_use",
             "id": call["id"],
             "name": function["name"],
-            "input": json.loads(function.get("arguments") or "{}"),
+            "input": {} if truncated else json.loads(function.get("arguments") or "{}"),
         })
-    finish_reason = choice.get("finish_reason") or "stop"
     stop_reason = {"tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens"}.get(
         finish_reason, finish_reason
     )

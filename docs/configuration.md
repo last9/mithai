@@ -200,10 +200,11 @@ The response returns 202 immediately; the engine runs in the background. Human a
 
 ## `llm`
 
-mithai supports two LLM providers:
+mithai supports three LLM providers:
 
 - **`anthropic`** (default): direct Claude API access via the `anthropic` Python SDK.
 - **`bedrock`**: AWS Bedrock via the unified Converse API (works across Anthropic/Llama/Cohere/Mistral models on Bedrock). Requires `pip install 'mithai[bedrock]'`.
+- **`openai_compatible`**: OpenAI-compatible chat completions, including OpenAI and xAI.
 
 Switch by setting `llm.provider` and providing the matching config block.
 
@@ -254,6 +255,33 @@ The model name is the Bedrock model ID, not the Anthropic alias. Some examples:
 The Bedrock Converse API is uniform across model families, so switching models is just a config change. Install: `pip install 'mithai[bedrock]'`.
 
 **IAM permissions:** the credentials need `bedrock:InvokeModel` for every model the agent will use. If mithai is managed by an external orchestrator, that orchestrator may need its own AWS permissions for connection validation; standalone mithai never calls STS.
+
+### OpenAI-compatible
+
+Set the endpoint explicitly; Mithai does not infer it from the model name.
+
+```yaml
+llm:
+  provider: openai_compatible
+  model: gpt-5.1                 # use grok-4-fast for xAI
+  max_tokens: 4096
+  openai_compatible:
+    base_url: https://api.openai.com/v1  # xAI: https://api.x.ai/v1
+    api_key: ${OPENAI_API_KEY}            # xAI: ${XAI_API_KEY}
+    max_retries: 2
+    timeout: 60
+```
+
+The key is optional in the configuration schema so one config can be deployed
+before its secret; selecting this provider without a resolved, nonempty key
+reports it as not configured. Authentication uses `Authorization: Bearer`.
+
+Version 0.14.0 implements the non-streaming Chat Completions contract without a
+provider SDK dependency. It supports text, function tool calls/results, token
+usage, and OpenAI/xAI optional-field differences. It does not expose Responses
+API features, structured-output controls, audio, or provider-specific reasoning
+fields. Mithai's provider interface has no streaming method, so requests remain
+synchronous even when an endpoint supports streaming.
 
 ### Common settings
 

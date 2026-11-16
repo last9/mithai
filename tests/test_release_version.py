@@ -25,3 +25,8 @@ def test_chat_telemetry_release_has_new_version():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     # 0.13.0 predates chat's telemetry initialization and exit flush.
     assert Version(project["version"]) >= Version("0.13.1")
+
+
+def test_openai_compatible_provider_release_has_new_version():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    assert Version(project["version"]) >= Version("0.14.0")

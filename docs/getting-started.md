@@ -25,7 +25,8 @@ This guide walks you through installing mithai, configuring it, and having your 
 - Python 3.11 or later
 - One of:
   - An [Anthropic API key](https://console.anthropic.com/) (default), or
-  - AWS credentials with `bedrock:InvokeModel` permission (see [Configuration › LLM](configuration.md#llm))
+  - AWS credentials with `bedrock:InvokeModel` permission, or
+  - An OpenAI/xAI API key and explicit compatible endpoint (see [Configuration › LLM](configuration.md#llm))
 - `uv` (recommended) or `pip`
 
 ---

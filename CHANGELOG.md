@@ -2,6 +2,12 @@
 
 All notable public changes will be documented here.
 
+## 0.14.0
+
+- Add a configurable OpenAI-compatible chat-completions provider for OpenAI,
+  xAI, and compatible endpoints, with tool calls, usage telemetry, retries, and
+  redacted typed errors.
+
 ## 0.13.1
 
 - Restrict Telegram access to configured chats and protect approval decisions.

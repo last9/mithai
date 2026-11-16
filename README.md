@@ -32,7 +32,7 @@ An incident might start in Slack and continue from a terminal. A teammate can lo
 
 The Slack, Telegram and CLI adapters can all run at once. An approval request goes back to the place where the command was asked for. Skills belong to the project rather than one user; they are folders with instructions and, if needed, Python tools.
 
-Anthropic is the default model provider. Bedrock works too.
+Anthropic is the default model provider. Bedrock and OpenAI-compatible endpoints work too.
 
 ## Quick start
 
@@ -88,7 +88,7 @@ It binds to localhost by default. Set `ui.auth_token` before exposing it anywher
 flowchart LR
     U[Slack · Telegram · CLI] --> A[Adapters]
     A --> E[Agent engine]
-    E <--> L[Anthropic API or AWS Bedrock]
+    E <--> L[Anthropic, AWS Bedrock, OpenAI, or xAI]
     E --> S[Skills and tool calls]
     E <--> M[Memory and sessions]
     S --> H{Human MCP}
@@ -299,6 +299,21 @@ llm:
 ```
 
 The `model` value is a Bedrock model ID, not an Anthropic alias. The IAM principal needs `bedrock:InvokeModel` for every model the agent will use. More model and credential examples are in [Configuration: LLM providers](docs/configuration.md#llm).
+
+### OpenAI and xAI
+
+```yaml
+llm:
+  provider: openai_compatible
+  model: gpt-5.1
+  openai_compatible:
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+```
+
+For xAI, use `https://api.x.ai/v1`, an xAI model, and `${XAI_API_KEY}`.
+See [Configuration: OpenAI-compatible](docs/configuration.md#openai-compatible)
+for retries and release limitations.
 
 ### CLI reference
 

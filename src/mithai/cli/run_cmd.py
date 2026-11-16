@@ -254,15 +254,9 @@ def _maybe_start_embedded_api(config: dict, engine, adapter) -> None:
         return
 
     ui_token = os.environ.get("MITHAI_UI_TOKEN", "")
-    # Fail fast for a managed Slack adapter: the embedded API (including
-    # /slack/events) is auth-gated only by this Bearer token. An empty OR
-    # unresolved-placeholder token (${VAR} left un-substituted) makes _check_auth
-    # allow everything, so on a multi-tenant host any local process could inject
-    # events. Refuse to start rather than expose an open endpoint.
-    if (not ui_token or ui_token.startswith("${")) and getattr(adapter, "_managed", False):
+    if not ui_token.strip() or ui_token.strip().startswith("${"):
         logger.error(
-            "MITHAI_UI_TOKEN is empty but the Slack adapter is managed: refusing to "
-            "start the embedded API server (it would be unauthenticated). Set MITHAI_UI_TOKEN."
+            "MITHAI_UI_TOKEN is missing or unresolved: refusing to start the embedded API server."
         )
         return
     api_config = copy.deepcopy(config)
@@ -615,10 +609,15 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
         )
 
     elif adapter_type == "telegram":
+        allowed_chat_ids = _parse_id_list(adapter_config.get("allowed_chat_ids"))
+        if not allowed_chat_ids or not any(str(chat).strip() for chat in allowed_chat_ids):
+            raise click.ClickException(
+                "Telegram requires at least one allowed_chat_ids entry before it can start."
+            )
         from mithai.adapters.telegram import TelegramAdapter
         return TelegramAdapter(
             bot_token=adapter_config["bot_token"],
-            allowed_chat_ids=_parse_id_list(adapter_config.get("allowed_chat_ids")),
+            allowed_chat_ids=allowed_chat_ids,
         )
 
     elif adapter_type == "slack_http":

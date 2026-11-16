@@ -276,9 +276,24 @@ def init(target_dir):
         if tg_token == "(existing)":
             tg_token = ""
 
+        existing_chats = existing_tg.get("allowed_chat_ids") or []
+        default_chats = (
+            ", ".join(str(chat) for chat in existing_chats)
+            if isinstance(existing_chats, list) else str(existing_chats)
+        )
+        chat_ids = Prompt.ask(
+            "    Allowed Chat IDs (comma-separated; use private chats for untrusted groups)",
+            default=default_chats,
+            console=console,
+        )
+        if not chat_ids.strip():
+            warn("Telegram will not start until allowed chat IDs are configured")
+
         config["adapter"]["telegram"] = {
             "bot_token": "${TELEGRAM_BOT_TOKEN}",
-            "allowed_chat_ids": existing_tg.get("allowed_chat_ids", []),
+            "allowed_chat_ids": existing_chats if chat_ids == default_chats else [
+                chat.strip() for chat in chat_ids.split(",") if chat.strip()
+            ],
         }
 
         if tg_token:

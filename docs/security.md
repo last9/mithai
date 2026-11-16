@@ -137,7 +137,7 @@ TOOLS = [
 - It should not be exposed to the public internet
 - Skills that call internal APIs should use private DNS names, not public endpoints
 
-**Audit logging.** mithai logs every tool call and approval decision. Forward these logs to your SIEM or log aggregator. The memory system writes approval history to `memory/approvals.json` — include this in your backup and audit rotation.
+**Audit logging.** mithai logs every tool call and approval decision. Forward these logs to your SIEM or log aggregator. The state backend writes approval history to `.mithai/state/approvals/` — include this in your backup and audit rotation.
 
 ---
 

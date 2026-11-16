@@ -88,7 +88,7 @@ def seeded_client(config, state, memory):
         ],
     })
     memory.write("MEMORY.md", "# Knowledge\n- DaemonSets use rollout restart")
-    memory.write_json("approvals.json", {
+    state.set("approvals", "history", {
         "shell__run_command": {
             "df -h": {"approved": 5, "denied": 0},
             "rm -rf /": {"approved": 0, "denied": 2},

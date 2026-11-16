@@ -125,18 +125,24 @@ class TestApprovals:
     def test_get_approvals_empty(self, ctrl):
         assert ctrl.get_approvals() == {}
 
-    def test_get_approvals_with_data(self, ctrl, memory):
+    def test_agent_histories_remain_separate(self, ctrl, state):
+        state.set("approvals", "history_a", {"shell__run_command": {"x": {"approved": 2, "denied": 0}}})
+        state.set("approvals", "history_b", {"shell__run_command": {"x": {"approved": 2, "denied": 0}}})
+        assert len(ctrl.get_approvals()) == 2
+        assert ctrl.get_approval_stats()["auto_promoted_count"] == 0
+
+    def test_get_approvals_with_data(self, ctrl, state):
         data = {
             "shell__run_command": {
                 "df -h": {"approved": 5, "denied": 0},
                 "rm -rf /": {"approved": 0, "denied": 2},
             }
         }
-        memory.write_json("approvals.json", data)
+        state.set("approvals", "history", data)
         result = ctrl.get_approvals()
         assert result["shell__run_command"]["df -h"]["approved"] == 5
 
-    def test_approval_stats(self, ctrl, memory):
+    def test_approval_stats(self, ctrl, state):
         data = {
             "shell__run_command": {
                 "df -h": {"approved": 5, "denied": 0},
@@ -144,7 +150,7 @@ class TestApprovals:
                 "rm -rf /": {"approved": 0, "denied": 2},
             }
         }
-        memory.write_json("approvals.json", data)
+        state.set("approvals", "history", data)
         stats = ctrl.get_approval_stats()
         assert stats["total_approved"] == 8
         assert stats["total_denied"] == 2

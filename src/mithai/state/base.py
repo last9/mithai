@@ -1,6 +1,7 @@
 """Abstract state backend interface."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 
@@ -20,6 +21,15 @@ class StateBackend(ABC):
     @abstractmethod
     def set(self, namespace: str, key: str, value: Any) -> None:
         """Set a value by namespace + key."""
+        ...
+
+    @abstractmethod
+    def update(self, namespace: str, key: str, fn: Callable[[Any | None], Any]) -> Any:
+        """Atomically replace a value with ``fn(current)`` and return it.
+
+        ``current`` is None when the key is unset. Concurrent updates of the
+        same key are serialized, so no read-modify-write is lost.
+        """
         ...
 
     @abstractmethod

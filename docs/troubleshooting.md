@@ -426,13 +426,13 @@ Add a temporary `print` or log statement to `resolve_human` to confirm it is bei
 
 4. **Has auto-promote kicked in?**
 
-After `learning.approval_auto_promote` consecutive approvals (default: 3) with no denials for the same tool+input combination, mithai auto-promotes that specific input to auto-execute. This is stored in `memory/approvals.json`. Check:
+After `learning.approval_auto_promote` consecutive approvals (default: 3) with no denials for the same tool+input combination, mithai auto-promotes that specific input to auto-execute. This is stored in the state backend (`.mithai/state/approvals/` by default). Check:
 
 ```bash
 cat .mithai/state/approvals/history.json
 ```
 
-**Fix:** If auto-promote removed an approval you want to keep, delete the relevant entry from `memory/approvals.json`, or set `learning.approval_auto_promote: 0` to disable auto-promotion entirely.
+**Fix:** If auto-promote removed an approval you want to keep, delete the relevant entry from `.mithai/state/approvals/history.json` (or the agent's `history_<hash>.json`), or set `learning.approval_auto_promote: 0` to disable auto-promotion entirely.
 
 ---
 

@@ -283,7 +283,7 @@ if memory:
     memory.write("incidents.md", "- pod OOMKilled at 14:23\n", append=True)
 
     # Read a JSON file as a dict
-data = memory.read_json("facts.json") or {}
+    data = memory.read_json("facts.json") or {}
 ```
 
 Files are stored in `memory/` (configurable). Paths are relative to that root.

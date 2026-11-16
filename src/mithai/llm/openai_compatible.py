@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from enum import Enum
+from http.client import RemoteDisconnected
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
@@ -165,7 +166,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     self._wait(attempt)
                     continue
                 raise _classify_http_error(exc.code, body) from None
-            except (URLError, TimeoutError):
+            except (URLError, TimeoutError, RemoteDisconnected):
                 if attempt < self._max_retries:
                     self._wait(attempt)
                     continue

@@ -282,6 +282,43 @@ def test_retry_can_recover_from_transient_failure(api_server):
     assert len(handler.requests) == 2
 
 
+def test_disconnect_retries(api_server, monkeypatch):
+    server, handler = api_server
+    original = handler.do_POST
+    attempts = []
+
+    def flaky(self):
+        attempts.append(1)
+        if len(attempts) == 1:
+            self.close_connection = True
+            return
+        original(self)
+
+    monkeypatch.setattr(handler, "do_POST", flaky)
+    handler.responses = [(200, _success())]
+
+    response = _provider(server, max_retries=2).create_message(system="s", messages=[])
+
+    assert response.stop_reason == "end_turn"
+    assert len(attempts) == 2
+
+
+def test_repeated_disconnects_exhaust_retries(api_server, monkeypatch):
+    server, handler = api_server
+    attempts = []
+
+    def disconnect(self):
+        attempts.append(1)
+        self.close_connection = True
+
+    monkeypatch.setattr(handler, "do_POST", disconnect)
+
+    with pytest.raises(ProviderError, match="transport failed"):
+        _provider(server, max_retries=2).create_message(system="s", messages=[])
+
+    assert len(attempts) == 3
+
+
 def test_metrics_identify_provider(api_server, monkeypatch):
     from mithai.telemetry import metrics
 

@@ -679,12 +679,16 @@ def _create_llm(config: dict):
     elif provider == "openai_compatible":
         from mithai.llm.openai_compatible import OpenAICompatibleProvider
 
+        raw_llm_config = config.get("llm", {})
+        raw_provider_config = raw_llm_config.get("openai_compatible", {})
         api_key = llm_config.get("api_key")
         if not api_key or (api_key.startswith("${") and api_key.endswith("}")):
             raise click.ClickException(
                 "openai_compatible provider is not configured: set llm.openai_compatible.api_key"
             )
-        missing = [key for key in ("base_url", "model") if not llm_config.get(key)]
+        missing = [key for key in ("base_url",) if not llm_config.get(key)]
+        if not (raw_llm_config.get("model") or raw_provider_config.get("model")):
+            missing.append("model")
         if missing:
             raise click.ClickException(
                 "openai_compatible provider requires llm."

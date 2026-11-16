@@ -132,3 +132,19 @@ def test_create_llm_openai_compatible_requires_explicit_base_url():
     }
     with pytest.raises(click.ClickException, match="base_url"):
         _create_llm(config)
+
+
+def test_create_llm_openai_compatible_requires_explicit_model():
+    import click
+
+    config = {
+        "llm": {
+            "provider": "openai_compatible",
+            "openai_compatible": {
+                "api_key": "key",
+                "base_url": "https://api.openai.com/v1",
+            },
+        }
+    }
+    with pytest.raises(click.ClickException, match="model"):
+        _create_llm(config)

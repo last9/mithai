@@ -654,6 +654,24 @@ def _create_llm(config: dict):
             model=llm_config.get("model", "claude-sonnet-4-6"),
         )
 
+    elif provider == "openai":
+        from mithai.llm.openai_compatible import OpenAICompatibleProvider
+
+        missing = [key for key in ("api_key", "model") if not llm_config.get(key)]
+        if missing:
+            raise click.ClickException(
+                "openai provider requires "
+                + " and ".join(f"llm.openai.{key}" if key == "api_key" else "llm.model" for key in missing)
+                + " in config.yaml"
+            )
+        return OpenAICompatibleProvider(
+            api_key=llm_config["api_key"],
+            model=llm_config["model"],
+            base_url=llm_config.get("base_url", "https://api.openai.com/v1"),
+            max_retries=llm_config.get("max_retries", 2),
+            timeout=llm_config.get("timeout", 60),
+        )
+
     elif provider == "bedrock":
         from mithai.llm.bedrock import BedrockProvider
 

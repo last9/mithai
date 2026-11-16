@@ -1,6 +1,8 @@
 """Contract tests for the OpenAI-compatible provider."""
 
 import json
+import socket
+import struct
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -379,6 +381,37 @@ def test_body_disconnect_retries(api_server, monkeypatch, status):
         self.close_connection = True
 
     monkeypatch.setattr(handler, "do_POST", interrupted)
+    handler.responses = [(200, _success())]
+
+    response = _provider(server, max_retries=2).create_message(system="s", messages=[])
+
+    assert response.stop_reason == "end_turn"
+    assert len(attempts) == 2
+
+
+def test_response_body_reset_retries(api_server, monkeypatch):
+    server, handler = api_server
+    original = handler.do_POST
+    attempts = []
+
+    def reset_during_body(self):
+        attempts.append(1)
+        if len(attempts) > 1:
+            return original(self)
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.send_response(200)
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        self.wfile.write(b'{"choices":')
+        self.wfile.flush()
+        self.connection.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_LINGER,
+            struct.pack("ii", 1, 0),
+        )
+        self.connection.close()
+
+    monkeypatch.setattr(handler, "do_POST", reset_during_body)
     handler.responses = [(200, _success())]
 
     response = _provider(server, max_retries=2).create_message(system="s", messages=[])

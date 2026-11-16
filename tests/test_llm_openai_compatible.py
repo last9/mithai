@@ -361,6 +361,54 @@ def test_disconnect_retries(api_server, monkeypatch):
     assert len(attempts) == 2
 
 
+@pytest.mark.parametrize("status", [200, 503])
+def test_body_disconnect_retries(api_server, monkeypatch, status):
+    server, handler = api_server
+    original = handler.do_POST
+    attempts = []
+
+    def interrupted(self):
+        attempts.append(1)
+        if len(attempts) > 1:
+            return original(self)
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.send_response(status)
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        self.wfile.write(b'{"error":')
+        self.close_connection = True
+
+    monkeypatch.setattr(handler, "do_POST", interrupted)
+    handler.responses = [(200, _success())]
+
+    response = _provider(server, max_retries=2).create_message(system="s", messages=[])
+
+    assert response.stop_reason == "end_turn"
+    assert len(attempts) == 2
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_repeated_body_disconnects_exhaust_retries(api_server, monkeypatch, status):
+    server, handler = api_server
+    attempts = []
+
+    def interrupted(self):
+        attempts.append(1)
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.send_response(status)
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        self.wfile.write(b'{"error":')
+        self.close_connection = True
+
+    monkeypatch.setattr(handler, "do_POST", interrupted)
+
+    with pytest.raises(ProviderError, match="transport failed"):
+        _provider(server, max_retries=2).create_message(system="s", messages=[])
+
+    assert len(attempts) == 3
+
+
 def test_repeated_disconnects_exhaust_retries(api_server, monkeypatch):
     server, handler = api_server
     attempts = []

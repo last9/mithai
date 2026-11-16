@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from enum import Enum
-from http.client import RemoteDisconnected
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
@@ -158,15 +158,19 @@ class OpenAICompatibleProvider(LLMProvider):
                 method="POST",
             )
             try:
-                with urlopen(request, timeout=self._timeout) as raw:
-                    return _normalize_response(json.load(raw))
-            except HTTPError as exc:
-                body = _read_error(exc)
-                if exc.code in _RETRYABLE_STATUSES and attempt < self._max_retries:
-                    self._wait(attempt)
-                    continue
-                raise _classify_http_error(exc.code, body) from None
-            except (URLError, TimeoutError, RemoteDisconnected):
+                try:
+                    raw = urlopen(request, timeout=self._timeout)
+                except HTTPError as exc:
+                    with exc:
+                        body = _read_error(exc)
+                    if exc.code in _RETRYABLE_STATUSES and attempt < self._max_retries:
+                        self._wait(attempt)
+                        continue
+                    raise _classify_http_error(exc.code, body) from None
+                with raw:
+                    body = json.load(raw)
+                return _normalize_response(body)
+            except (URLError, TimeoutError, HTTPException):
                 if attempt < self._max_retries:
                     self._wait(attempt)
                     continue

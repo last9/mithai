@@ -676,6 +676,31 @@ def _create_llm(config: dict):
             session_token=llm_config.get("session_token"),
         )
 
+    elif provider == "openai_compatible":
+        from mithai.llm.openai_compatible import OpenAICompatibleProvider
+
+        api_key = llm_config.get("api_key")
+        if not api_key or (api_key.startswith("${") and api_key.endswith("}")):
+            raise click.ClickException(
+                "openai_compatible provider is not configured: set llm.openai_compatible.api_key"
+            )
+        missing = [key for key in ("base_url", "model") if not llm_config.get(key)]
+        if missing:
+            raise click.ClickException(
+                "openai_compatible provider requires llm."
+                + ", llm.".join(missing)
+                + " in config.yaml"
+            )
+        return OpenAICompatibleProvider(
+            api_key=api_key,
+            base_url=llm_config["base_url"],
+            model=llm_config["model"],
+            max_retries=(
+                llm_config["max_retries"] if llm_config.get("max_retries") is not None else 2
+            ),
+            timeout=llm_config["timeout"] if llm_config.get("timeout") is not None else 60,
+        )
+
     else:
         raise click.ClickException(f"Unknown LLM provider: {provider}")
 

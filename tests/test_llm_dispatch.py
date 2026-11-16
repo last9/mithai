@@ -80,3 +80,55 @@ def test_create_llm_bedrock_missing_keys_raises_clickexception():
     assert "bedrock provider requires" in msg
     assert "access_key_id" in msg
     assert "region" in msg
+
+
+@pytest.mark.parametrize(
+    ("base_url", "model"),
+    [
+        ("https://api.openai.com/v1", "gpt-5.1"),
+        ("https://api.x.ai/v1", "grok-4-fast"),
+    ],
+)
+def test_create_llm_openai_compatible(base_url, model):
+    config = {
+        "llm": {
+            "provider": "openai_compatible",
+            "model": model,
+            "openai_compatible": {"api_key": "key", "base_url": base_url},
+        }
+    }
+    provider = _create_llm(config)
+    assert provider._base_url == base_url
+    assert provider._model == model
+
+
+@pytest.mark.parametrize("api_key", [None, "", "${OPENAI_API_KEY}"])
+def test_create_llm_openai_compatible_missing_optional_key_is_not_configured(api_key):
+    import click
+
+    config = {
+        "llm": {
+            "provider": "openai_compatible",
+            "model": "gpt-5.1",
+            "openai_compatible": {
+                "api_key": api_key,
+                "base_url": "https://api.openai.com/v1",
+            },
+        }
+    }
+    with pytest.raises(click.ClickException, match="not configured"):
+        _create_llm(config)
+
+
+def test_create_llm_openai_compatible_requires_explicit_base_url():
+    import click
+
+    config = {
+        "llm": {
+            "provider": "openai_compatible",
+            "model": "gpt-5.1",
+            "openai_compatible": {"api_key": "key"},
+        }
+    }
+    with pytest.raises(click.ClickException, match="base_url"):
+        _create_llm(config)

@@ -57,12 +57,21 @@ class LLMAnthropicConfig(BaseModel):
     api_key: str | None = None
 
 
+class LLMOpenAICompatibleConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    api_key: str | None = None
+    base_url: str | None = None
+    max_retries: int | None = None
+    timeout: float | None = None
+
+
 class LLMConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     provider: str | None = None
     model: str | None = None
     max_tokens: int | None = None
     anthropic: LLMAnthropicConfig | None = None
+    openai_compatible: LLMOpenAICompatibleConfig | None = None
 
 
 class FilesystemMemoryConfig(BaseModel):

@@ -94,9 +94,13 @@ class OpenAICompatibleProvider(LLMProvider):
             self._model,
             response.usage.get("input_tokens", 0),
             response.usage.get("output_tokens", 0),
+            system="openai_compatible",
         )
         record_operation_duration(
-            self._model, response.stop_reason, time.monotonic() - started
+            self._model,
+            response.stop_reason,
+            time.monotonic() - started,
+            system="openai_compatible",
         )
         return response
 

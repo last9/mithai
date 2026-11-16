@@ -3,6 +3,7 @@
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import Mock
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -263,6 +264,22 @@ def test_retry_can_recover_from_transient_failure(api_server):
     response = _provider(server, max_retries=2).create_message(system="s", messages=[])
     assert response.stop_reason == "end_turn"
     assert len(handler.requests) == 2
+
+
+def test_metrics_identify_provider(api_server, monkeypatch):
+    from mithai.telemetry import metrics
+
+    server, handler = api_server
+    handler.responses = [(200, _success())]
+    tokens, duration = Mock(), Mock()
+    monkeypatch.setattr(metrics, "_token_usage", tokens)
+    monkeypatch.setattr(metrics, "_op_duration", duration)
+
+    _provider(server).create_message(system="s", messages=[])
+
+    calls = tokens.record.call_args_list + duration.record.call_args_list
+    assert len(calls) == 3
+    assert {call.args[1]["gen_ai.system"] for call in calls} == {"openai_compatible"}
 
 
 def test_telemetry_contains_metadata_but_no_content_or_credentials(api_server, monkeypatch):

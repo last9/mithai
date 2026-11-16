@@ -96,6 +96,30 @@ def test_openai_text_response_and_deployed_auth_transport(api_server):
     assert request["body"]["max_tokens"] == 42
 
 
+def test_o3_completion_budget(api_server):
+    from mithai.cli.run_cmd import _create_llm
+
+    api_server.responses.append((200, OPENAI_RESPONSE))
+    provider = _create_llm({
+        "llm": {
+            "provider": "openai_compatible",
+            "model": "o3",
+            "openai_compatible": {
+                "api_key": "fixture-key",
+                "base_url": f"http://127.0.0.1:{api_server.server_port}/v1",
+            },
+        }
+    })
+
+    provider.create_message(
+        system="", messages=[{"role": "user", "content": "hello"}], max_tokens=42
+    )
+
+    sent = api_server.requests[0]["body"]
+    assert "max_tokens" not in sent
+    assert sent["max_completion_tokens"] == 42
+
+
 def test_xai_tool_response_and_tool_result_translation(api_server):
     api_server.responses.append((200, XAI_TOOL_RESPONSE))
     provider = _provider(api_server)

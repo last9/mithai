@@ -125,6 +125,25 @@ def test_xai_tool_response_and_tool_result_translation(api_server):
     ]
 
 
+def test_image_attachment_is_translated_to_data_url(api_server):
+    api_server.responses.append((200, OPENAI_RESPONSE))
+
+    _provider(api_server).create_message(system="", messages=[{
+        "role": "user",
+        "content": [
+            {"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": "aW1n"
+            }},
+            {"type": "text", "text": "describe this"},
+        ],
+    }])
+
+    assert api_server.requests[0]["body"]["messages"][-1]["content"] == [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1n"}},
+        {"type": "text", "text": "describe this"},
+    ]
+
+
 @pytest.mark.parametrize("missing", ["content", "usage"])
 def test_missing_or_null_optional_response_fields(api_server, missing):
     payload = {"model": "grok", "choices": [{"message": {"content": None}, "finish_reason": None}]}

@@ -182,12 +182,24 @@ def _messages_to_openai(system: str, messages: list[dict]) -> list[dict]:
             result.append({"role": role, "content": content})
             continue
 
-        text_parts: list[str] = []
+        content_parts: list[dict[str, Any]] = []
         tool_calls: list[dict] = []
         for block in content:
             block_type = block.get("type")
             if block_type == "text":
-                text_parts.append(block.get("text", ""))
+                content_parts.append({"type": "text", "text": block.get("text", "")})
+            elif block_type == "image":
+                source = block.get("source") or {}
+                if source.get("type") != "base64" or not all(
+                    source.get(key) for key in ("media_type", "data")
+                ):
+                    raise ValueError("unsupported image source")
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{source['media_type']};base64,{source['data']}"
+                    },
+                })
             elif block_type == "tool_use":
                 tool_calls.append({
                     "id": block["id"],
@@ -205,11 +217,20 @@ def _messages_to_openai(system: str, messages: list[dict]) -> list[dict]:
                 })
         if tool_calls:
             converted: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
-            if text_parts:
-                converted["content"] = "\n".join(text_parts)
+            text = "\n".join(
+                part["text"] for part in content_parts if part["type"] == "text"
+            )
+            if text:
+                converted["content"] = text
             result.append(converted)
-        elif text_parts:
-            result.append({"role": role, "content": "\n".join(text_parts)})
+        elif content_parts:
+            if all(part["type"] == "text" for part in content_parts):
+                converted_content: str | list[dict[str, Any]] = "\n".join(
+                    part["text"] for part in content_parts
+                )
+            else:
+                converted_content = content_parts
+            result.append({"role": role, "content": converted_content})
     return result
 
 

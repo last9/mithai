@@ -2,6 +2,7 @@
 
 import json
 import threading
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock
 
@@ -204,6 +205,21 @@ def test_blank_or_missing_credentials_fail_before_transport(api_server, api_key)
     assert handler.requests == []
 
 
+def test_header_failure_hides_credentials(api_server):
+    server, _ = api_server
+    provider = OpenAICompatibleProvider(
+        api_key="synthetic-secret\n",
+        model="grok-test",
+        base_url=f"http://127.0.0.1:{server.server_port}/v1",
+        max_retries=0,
+    )
+
+    with pytest.raises(ProviderError) as caught:
+        provider.create_message(system="s", messages=[])
+
+    assert "synthetic-secret" not in "".join(traceback.format_exception(caught.value))
+
+
 @pytest.mark.parametrize("status", [401, 403])
 @pytest.mark.parametrize("code", ["invalid_api_key", "token_expired"])
 def test_refused_and_expired_authentication_are_classified(api_server, status, code):
@@ -308,3 +324,29 @@ def test_telemetry_contains_metadata_but_no_content_or_credentials(api_server, m
     assert span.attributes["gen_ai.usage.input_tokens"] == 11
     for secret in ("private-system", "private-prompt", "private_tool", "secret-token"):
         assert secret not in serialized
+
+
+def test_telemetry_exception_hides_credentials(api_server, monkeypatch):
+    from mithai.telemetry import tracer as tracer_module
+
+    server, _ = api_server
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(tracer_module, "_tracer", tracer_provider.get_tracer("test"))
+    provider = OpenAICompatibleProvider(
+        api_key="synthetic-secret\n",
+        model="grok-test",
+        base_url=f"http://127.0.0.1:{server.server_port}/v1",
+        max_retries=0,
+    )
+
+    with pytest.raises(ProviderError):
+        provider.create_message(system="s", messages=[])
+
+    serialized = json.dumps([
+        {"name": event.name, "attributes": dict(event.attributes)}
+        for span in exporter.get_finished_spans()
+        for event in span.events
+    ])
+    assert "synthetic-secret" not in serialized

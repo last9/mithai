@@ -134,6 +134,9 @@ class OpenAICompatibleProvider(LLMProvider):
             return response
 
     def _call_api(self, system, messages, tools, max_tokens) -> LLMResponse:
+        if not _is_safe_header_value(self._api_key):
+            raise ProviderError("LLM provider credentials are invalid") from None
+
         payload: dict[str, Any] = {
             "model": self._model,
             "max_tokens": max_tokens,
@@ -162,13 +165,13 @@ class OpenAICompatibleProvider(LLMProvider):
                     self._wait(attempt)
                     continue
                 raise _classify_http_error(exc.code, body) from None
-            except (URLError, TimeoutError) as exc:
+            except (URLError, TimeoutError):
                 if attempt < self._max_retries:
                     self._wait(attempt)
                     continue
-                raise ProviderError("LLM provider transport failed") from exc
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ProviderError("LLM provider returned an invalid response") from exc
+                raise ProviderError("LLM provider transport failed") from None
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                raise ProviderError("LLM provider returned an invalid response") from None
         raise AssertionError("retry loop exhausted without returning or raising")
 
     def _wait(self, attempt: int) -> None:
@@ -182,6 +185,10 @@ def _completion_url(base_url: str) -> str:
         raise ValueError("base_url must be an HTTP(S) origin and path without query or fragment")
     path = f"{parsed.path.rstrip('/')}/chat/completions"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def _is_safe_header_value(value: str) -> bool:
+    return all(32 <= ord(char) <= 126 for char in value)
 
 
 def _translate_tool(tool: dict) -> dict:

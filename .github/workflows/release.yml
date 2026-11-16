@@ -83,7 +83,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             platform: darwin-arm64
           - runner: ubuntu-latest
             platform: linux-amd64

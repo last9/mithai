@@ -7,7 +7,7 @@ import time
 from enum import Enum
 from http.client import HTTPException
 from typing import Any
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -170,7 +170,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 with raw:
                     body = json.load(raw)
                 return _normalize_response(body)
-            except (URLError, TimeoutError, HTTPException):
+            except (OSError, HTTPException):
                 if attempt < self._max_retries:
                     self._wait(attempt)
                     continue

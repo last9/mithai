@@ -1,6 +1,7 @@
 """Skill: Shell command runner with dynamic approval."""
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -31,12 +32,21 @@ DEFAULT_ALLOWED = ["df -h", "free -h", "uptime", "whoami", "uname -a", "ps aux"]
 
 
 def _load_approvals(ctx: dict) -> dict:
-    """Load approval history from memory."""
+    """Load approval history from state, outside agent-writable memory."""
+    state = ctx.get("state")
     memory = ctx.get("memory")
-    if memory is None:
+    if state is None:
         return {}
     try:
-        return memory.read_json("approvals.json") or {}
+        key = ctx.get("approval_key", "history")
+        from mithai.memory.filesystem import FilesystemMemoryBackend
+        from mithai.state.filesystem import FilesystemStateBackend
+
+        if isinstance(memory, FilesystemMemoryBackend) and isinstance(state, FilesystemStateBackend):
+            target = state._path("approvals", key).resolve()
+            if any(parent.exists() and os.path.samefile(parent, memory._base) for parent in target.parents):
+                return {}
+        return state.get("approvals", key) or {}
     except Exception:
         return {}
 

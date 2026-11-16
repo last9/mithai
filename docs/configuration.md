@@ -143,6 +143,10 @@ Make sure the Slack app has enough channel visibility for `conversations.info` o
 
 ### Telegram
 
+Telegram requires at least one `allowed_chat_ids` entry to start. An allowed group
+chat permits every member to send the agent commands. Use a private chat if group
+membership is not fully trusted.
+
 ```yaml
 adapter:
   telegram:
@@ -158,6 +162,8 @@ No configuration required. Use `mithai chat` to start an interactive session.
 ### API
 
 Headless adapter for webhook and programmatic use. The process stays alive while the embedded API server (`MITHAI_UI_PORT`) handles all traffic. No Slack or terminal connection required.
+
+The embedded API requires a nonempty `MITHAI_UI_TOKEN` for every adapter and transport. Requests must provide the token; without it, the embedded server does not start.
 
 ```yaml
 adapter:

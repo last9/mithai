@@ -76,3 +76,24 @@ def test_init_writes_dotenv_and_gitignore(tmp_path, monkeypatch):
     assert gitignore_path.exists()
     assert ".env" in gitignore_path.read_text().splitlines()
     assert (tmp_path / "skills").is_dir()
+
+
+def test_init_prompts_for_telegram_chat_ids(tmp_path, monkeypatch):
+    import mithai.cli.init_cmd as init_mod
+
+    _patch_init_prompts(monkeypatch)
+    monkeypatch.setattr(
+        init_mod.Prompt, "ask", staticmethod(lambda prompt, *_, default=None, **__: (
+            "sk-ant-test" if "API key" in prompt else
+            "123, -456" if "Chat IDs" in prompt else default
+        )),
+    )
+    monkeypatch.setattr(
+        init_mod.Confirm, "ask", staticmethod(lambda prompt, *_, default=False, **__: (
+            "telegram" in prompt.lower() or default
+        )),
+    )
+    result = CliRunner().invoke(init, ["--dir", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    cfg = yaml.safe_load((tmp_path / "config.yaml").read_text())
+    assert cfg["adapter"]["telegram"]["allowed_chat_ids"] == ["123", "-456"]

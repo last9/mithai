@@ -120,3 +120,32 @@ def test_embedded_api_refuses_when_managed_and_token_unset(monkeypatch):
         monkeypatch.setenv("MITHAI_UI_TOKEN", tok)
         rc._maybe_start_embedded_api({"ui": {}}, object(), _Managed())
     assert created["n"] == 0, "embedded API must not start without a real token in managed mode"
+
+
+def test_embedded_api_refuses_missing_token_for_any_adapter(monkeypatch):
+    import mithai.cli.run_cmd as rc
+
+    create_app = MagicMock(side_effect=AssertionError("unauthenticated app created"))
+    monkeypatch.setattr("mithai.ui.app.create_app", create_app)
+    for transport in ("MITHAI_UI_PORT", "MITHAI_UI_SOCKET"):
+        monkeypatch.delenv("MITHAI_UI_PORT", raising=False)
+        monkeypatch.delenv("MITHAI_UI_SOCKET", raising=False)
+        monkeypatch.setenv(transport, "8421" if transport.endswith("PORT") else "/tmp/mithai-test.sock")
+        for token in ("", "${MITHAI_UI_TOKEN}", "   "):
+            monkeypatch.setenv("MITHAI_UI_TOKEN", token)
+            rc._maybe_start_embedded_api({"ui": {}}, object(), object())
+    create_app.assert_not_called()
+
+
+def test_embedded_api_passes_token_to_app(monkeypatch):
+    import pytest
+    import mithai.cli.run_cmd as rc
+
+    create_app = MagicMock(side_effect=RuntimeError("stop before starting server"))
+    monkeypatch.setattr("mithai.ui.app.create_app", create_app)
+    monkeypatch.delenv("MITHAI_UI_SOCKET", raising=False)
+    monkeypatch.setenv("MITHAI_UI_PORT", "8421")
+    monkeypatch.setenv("MITHAI_UI_TOKEN", "secret-token")
+    with pytest.raises(RuntimeError, match="stop before starting server"):
+        rc._maybe_start_embedded_api({"ui": {}}, object(), object())
+    assert create_app.call_args.args[0]["ui"]["auth_token"] == "secret-token"

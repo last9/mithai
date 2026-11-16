@@ -277,8 +277,8 @@ mithai stores two kinds of persistent data:
 
 | What | Default path | Contains |
 |---|---|---|
-| Memory | `./memory/` | `MEMORY.md`, daily logs, approval history, channel context |
-| State | `./.mithai/state/` | Session history (conversation turns) |
+| Memory | `./memory/` | `MEMORY.md`, daily logs, channel context |
+| State | `./.mithai/state/` | Session history (conversation turns) and approval history |
 
 If either directory is lost, the agent loses its accumulated knowledge and conversation history. Users will experience the agent as amnesiac — it will not remember previous interactions or facts it was told.
 

@@ -322,7 +322,6 @@ if memory:
 ```
 memory/
 ├── MEMORY.md             # main knowledge base, injected into every prompt
-├── approvals.json        # approval history (used by shell skill for auto-promote)
 ├── playbooks/            # step-by-step runbooks
 │   └── restart.md
 └── daily/
@@ -342,7 +341,7 @@ skills:
       approval_auto_promote: 3    # approve 3 times → runs automatically
 ```
 
-The approval history is stored in `memory/approvals.json`. You can inspect or reset it at any time.
+Approval history is stored in the state backend, separate from agent-writable memory. The default single-agent file is `.mithai/state/approvals/history.json`. Old `memory/approvals.json` files are not imported; commands must be approved again. Auto-promotion is disabled when filesystem approval state is inside the memory directory.
 
 The agent also runs a reflection pass after each conversation (when `learning.reflection: true`), writing a brief summary to `memory/daily/YYYY-MM-DD.md`. Over time this becomes a log of what the agent has learned and done.
 

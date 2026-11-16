@@ -429,7 +429,7 @@ Add a temporary `print` or log statement to `resolve_human` to confirm it is bei
 After `learning.approval_auto_promote` consecutive approvals (default: 3) with no denials for the same tool+input combination, mithai auto-promotes that specific input to auto-execute. This is stored in `memory/approvals.json`. Check:
 
 ```bash
-cat memory/approvals.json
+cat .mithai/state/approvals/history.json
 ```
 
 **Fix:** If auto-promote removed an approval you want to keep, delete the relevant entry from `memory/approvals.json`, or set `learning.approval_auto_promote: 0` to disable auto-promotion entirely.
@@ -467,11 +467,11 @@ adapter:
 **Diagnosis:** Auto-promote requires the same tool *and* the same normalized input to be approved `approval_auto_promote` times (default: 3) with zero denials. Check:
 
 1. Is `learning.enabled: true` in `config.yaml`?
-2. Is `memory` configured and the memory directory writable?
-3. Is the approval count in `memory/approvals.json` actually incrementing?
+2. Is the state backend writable and outside the memory directory?
+3. Is the approval count in the state backend actually incrementing?
 
 ```bash
-cat memory/approvals.json
+cat .mithai/state/approvals/history.json
 ```
 
 You should see something like:
@@ -496,7 +496,7 @@ learning:
   approval_auto_promote: 3   # promote after this many consecutive approvals
 ```
 
-**Fix:** Verify the memory backend is writing (`cat memory/approvals.json` shows real data), check the `approved` count is incrementing, and confirm the threshold matches your config.
+**Fix:** Verify the state backend is writing, check the `approved` count is incrementing, and confirm the threshold matches your config. Multi-agent histories have separate files under `.mithai/state/approvals/`.
 
 ---
 

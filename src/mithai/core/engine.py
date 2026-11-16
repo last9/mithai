@@ -6,6 +6,7 @@ with Human MCP checks, and coordinates all components.
 """
 
 import json
+import hashlib
 import logging
 import re
 import time
@@ -117,6 +118,9 @@ class Engine:
         self._state = state
         self._memory = memory
         self._agent_id = agent_id
+        self._approval_key = (
+            "history_" + hashlib.sha256(agent_id.encode()).hexdigest() if agent_id else "history"
+        )
 
         # Load skills — accept pre-filtered skills for multi-agent, otherwise load all
         if skills is not None:
@@ -504,6 +508,7 @@ class Engine:
                         skill_config=get_skill_config(self._config, skill_name),
                         memory=self._memory,
                     )
+                    skill_ctx["approval_key"] = self._approval_key
 
                     # Resolve dynamic human level — let the skill decide
                     # MCP tools have static human levels from the skill's MCP_TOOLS declaration
@@ -1024,10 +1029,10 @@ class Engine:
 
     def _record_approval(self, prefixed_name: str, tool_input: dict, approved: bool) -> None:
         """Record an approval decision for learning."""
-        if not self._memory:
+        if not self._state:
             return
         try:
-            data = self._memory.read_json("approvals.json") or {}
+            data = self._state.get("approvals", self._approval_key) or {}
 
             # Key by tool name, sub-key by a normalized input string
             if prefixed_name not in data:
@@ -1047,6 +1052,6 @@ class Engine:
             else:
                 data[prefixed_name][input_key]["denied"] += 1
 
-            self._memory.write_json("approvals.json", data)
+            self._state.set("approvals", self._approval_key, data)
         except Exception:
             logger.debug("Failed to record approval", exc_info=True)

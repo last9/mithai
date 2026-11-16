@@ -60,9 +60,12 @@ class ControlRoomData:
     # ── Approvals ──
 
     def get_approvals(self) -> dict:
-        if not self._memory:
-            return {}
-        return self._memory.read_json("approvals.json") or {}
+        approvals = dict(self._state.get("approvals", "history") or {})
+        for key in self._state.list_keys("approvals"):
+            if key.startswith("history_"):
+                for tool, history in (self._state.get("approvals", key) or {}).items():
+                    approvals[f"agent {key[8:20]} / {tool}"] = history
+        return approvals
 
     def get_approval_stats(self) -> dict:
         approvals = self.get_approvals()

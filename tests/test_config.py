@@ -6,6 +6,18 @@ from mithai.core.config import load_config, get_skill_paths
 from mithai.cli.run_cmd import _parse_id_list
 
 
+def test_telegram_requires_chat_allowlist():
+    from mithai.cli.run_cmd import _create_adapter
+    import click
+    import pytest
+
+    for value in (None, [], "", [""]):
+        with pytest.raises(click.ClickException, match="allowed_chat_ids"):
+            _create_adapter({}, "telegram", adapter_config={"bot_token": "token", "allowed_chat_ids": value})
+    with pytest.raises(click.ClickException, match="allowed_chat_ids"):
+        _create_adapter({"adapter": {"telegram": {"bot_token": "token"}}}, "telegram")
+
+
 def test_load_config(tmp_path):
     config = {
         "adapter": {"type": "cli"},

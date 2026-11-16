@@ -2,7 +2,7 @@
 
 ## Reporting Vulnerabilities
 
-Please report security issues privately by emailing security@last9.io. Do not open a public issue for vulnerabilities, leaked credentials, or exploit details.
+Please report security issues privately by emailing support@last9.io and asking for the security team. Do not open a public issue for vulnerabilities, leaked credentials, or exploit details.
 
 Include:
 

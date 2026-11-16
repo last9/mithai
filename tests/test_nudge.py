@@ -24,6 +24,7 @@ from mithai.adapters.base import IncomingMessage
 from mithai.core.engine import Engine
 from mithai.core.skill_loader import ToolDefinition
 from mithai.llm.base import LLMResponse
+from mithai.llm.openai_compatible import _response_from_openai
 from mithai.state.memory import MemoryStateBackend
 
 
@@ -325,6 +326,37 @@ def _assert_tool_pairing_valid(messages):
 
 
 class TestMaxTokensTruncatedToolUse:
+    def test_openai_truncated_call_recovery_does_not_execute_tool(self, tmp_skill_dir):
+        response = _response_from_openai({
+            "model": "gpt-test",
+            "choices": [{
+                "finish_reason": "length",
+                "message": {"tool_calls": [{
+                    "id": "call_cut",
+                    "function": {"name": "test_skill__echo", "arguments": '{"message":'},
+                }]},
+            }],
+        })
+        llm = MagicMock()
+        llm.create_message.side_effect = [response, _end_turn("recovered")]
+        engine = _make_engine(tmp_skill_dir, llm)
+        engine._router.route = MagicMock()
+
+        result = engine.handle(_msg(), MagicMock())
+
+        assert result == "recovered"
+        engine._router.route.assert_not_called()
+        recovery_messages = llm.create_message.call_args_list[1].kwargs["messages"]
+        recovery_results = [
+            block
+            for message in recovery_messages
+            if isinstance(message["content"], list)
+            for block in message["content"]
+            if block.get("type") == "tool_result"
+        ]
+        assert recovery_results[-1]["tool_use_id"] == "call_cut"
+        assert "did not execute" in recovery_results[-1]["content"]
+
     def test_orphan_tool_use_closed_before_any_further_llm_call(self, tmp_skill_dir):
         """A max_tokens response carrying tool_use blocks must never leave the
         message array invalid for the next API call (the onboarding 400 bug)."""

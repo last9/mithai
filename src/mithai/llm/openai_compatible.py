@@ -244,12 +244,16 @@ def _response_from_openai(raw: dict) -> LLMResponse:
     text = message.get("content")
     if isinstance(text, str) and text:
         content.append({"type": "text", "text": text})
+    finish_reason = choice.get("finish_reason")
     for call in message.get("tool_calls") or []:
         function = call.get("function") or {}
-        try:
-            arguments = json.loads(function.get("arguments") or "{}")
-        except json.JSONDecodeError:
-            raise ValueError("invalid tool arguments") from None
+        if finish_reason == "length":
+            arguments = {}
+        else:
+            try:
+                arguments = json.loads(function.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                raise ValueError("invalid tool arguments") from None
         if not isinstance(arguments, dict):
             raise ValueError("invalid tool arguments")
         content.append({
@@ -259,7 +263,6 @@ def _response_from_openai(raw: dict) -> LLMResponse:
             "input": arguments,
         })
 
-    finish_reason = choice.get("finish_reason")
     stop_reason = "tool_use" if finish_reason == "tool_calls" else (
         "max_tokens" if finish_reason == "length" else "end_turn"
     )

@@ -1,5 +1,6 @@
 """Contract tests for OpenAI-compatible chat-completions providers."""
 
+import copy
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -195,3 +196,17 @@ def test_invalid_tool_arguments_is_response_error(api_server):
     api_server.responses.append((200, payload))
     with pytest.raises(ProviderResponseError, match="invalid tool arguments"):
         _provider(api_server).create_message(system="", messages=[])
+
+
+def test_truncated_tool_arguments_are_returned_for_engine_recovery(api_server):
+    payload = copy.deepcopy(XAI_TOOL_RESPONSE)
+    payload["choices"][0]["finish_reason"] = "length"
+    payload["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = '{"city":'
+    api_server.responses.append((200, payload))
+
+    response = _provider(api_server).create_message(system="", messages=[])
+
+    assert response.stop_reason == "max_tokens"
+    assert response.content == [{
+        "type": "tool_use", "id": "call_7", "name": "weather", "input": {}
+    }]

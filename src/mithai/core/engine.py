@@ -1031,27 +1031,23 @@ class Engine:
         """Record an approval decision for learning."""
         if not self._state:
             return
-        try:
-            data = self._state.get("approvals", self._approval_key) or {}
+        # For shell commands, use the command string as key
+        if "command" in tool_input:
+            input_key = tool_input["command"]
+        else:
+            input_key = json.dumps(tool_input, sort_keys=True, separators=(",", ":"))
 
+        def count(data: dict | None) -> dict:
             # Key by tool name, sub-key by a normalized input string
-            if prefixed_name not in data:
-                data[prefixed_name] = {}
+            data = data or {}
+            counts = data.setdefault(prefixed_name, {}).setdefault(
+                input_key, {"approved": 0, "denied": 0}
+            )
+            counts["approved" if approved else "denied"] += 1
+            return data
 
-            # For shell commands, use the command string as key
-            if "command" in tool_input:
-                input_key = tool_input["command"]
-            else:
-                input_key = json.dumps(tool_input, sort_keys=True, separators=(",", ":"))
-
-            if input_key not in data[prefixed_name]:
-                data[prefixed_name][input_key] = {"approved": 0, "denied": 0}
-
-            if approved:
-                data[prefixed_name][input_key]["approved"] += 1
-            else:
-                data[prefixed_name][input_key]["denied"] += 1
-
-            self._state.set("approvals", self._approval_key, data)
+        try:
+            # A locked read-modify-write: concurrent adapters must not drop a denial.
+            self._state.update("approvals", self._approval_key, count)
         except Exception:
             logger.debug("Failed to record approval", exc_info=True)

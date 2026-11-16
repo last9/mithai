@@ -295,8 +295,10 @@ Key-value store for ephemeral state within a session. Also persisted to disk.
 ```python
 state = ctx.get("state")
 if state:
-    state.set("last_checked", "2026-03-16T14:23:00Z")
-    value = state.get("last_checked")
+    state.set("http_checker", "last_checked", "2026-03-16T14:23:00Z")
+    value = state.get("http_checker", "last_checked")
+    # Read-modify-write under a lock, so concurrent callers don't lose updates
+    state.update("http_checker", "runs", lambda current: (current or 0) + 1)
 ```
 
 ### `ctx["channel_id"]`

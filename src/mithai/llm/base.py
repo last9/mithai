@@ -5,6 +5,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class ProviderUnavailableError(RuntimeError):
+    """The configured provider cannot currently serve the request."""
+
+
+class ProviderResponseError(RuntimeError):
+    """The provider rejected the request or returned an invalid response."""
+
+
 @dataclass
 class LLMResponse:
     """Normalized response from any LLM provider."""

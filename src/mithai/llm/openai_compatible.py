@@ -1,6 +1,7 @@
 """Provider for OpenAI-compatible chat-completions APIs."""
 
 import json
+import re
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -107,7 +108,7 @@ class OpenAICompatibleProvider(LLMProvider):
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": _messages_to_openai(system, messages),
-            "max_tokens": max_tokens,
+            _completion_token_parameter(self._model): max_tokens,
         }
         if tools:
             payload["tools"] = [_tool_to_openai(tool) for tool in tools]
@@ -152,6 +153,12 @@ class OpenAICompatibleProvider(LLMProvider):
                     f"OpenAI-compatible provider returned an invalid response ({_safe_reason(exc)})"
                 ) from None
         raise AssertionError("unreachable")
+
+
+def _completion_token_parameter(model: str) -> str:
+    if re.match(r"^o\d(?:$|-)", model):
+        return "max_completion_tokens"
+    return "max_tokens"
 
 
 def _safe_reason(exc: Exception) -> str:

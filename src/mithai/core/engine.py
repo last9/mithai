@@ -174,12 +174,9 @@ class Engine:
         # Separate cheap LLM for verification; falls back to main LLM if not configured
         verifier_config = config.get("verifier", {})
         verifier_model = verifier_config.get("model")
-        if verifier_model and isinstance(self._llm, self._llm.__class__):
+        if verifier_model:
             try:
-                self._verifier_llm = self._llm.__class__(
-                    api_key=get_llm_config(config).get("api_key", ""),
-                    model=verifier_model,
-                )
+                self._verifier_llm = self._llm.with_model(verifier_model)
             except Exception:
                 logger.warning("Could not create verifier LLM, falling back to main LLM")
                 self._verifier_llm = self._llm

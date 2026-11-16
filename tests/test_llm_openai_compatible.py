@@ -113,6 +113,37 @@ def test_request_uses_exact_transport_boundary_and_normalizes_response(api_serve
     assert response.usage == {"input_tokens": 11, "output_tokens": 7}
 
 
+def test_verifier_request_uses_configured_provider_endpoint(api_server):
+    from mithai.cli.run_cmd import _create_llm
+    from mithai.core.engine import Engine
+    from mithai.state.memory import MemoryStateBackend
+
+    server, handler = api_server
+    handler.responses = [(200, _success())]
+    config = {
+        "llm": {
+            "provider": "openai",
+            "model": "grok-test",
+            "openai": {
+                "api_key": "synthetic-key",
+                "base_url": f"http://127.0.0.1:{server.server_port}/v1",
+            },
+        },
+        "verifier": {"model": "grok-small"},
+    }
+    engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
+
+    engine._verifier_llm.create_message(
+        system="verify",
+        messages=[{"role": "user", "content": "tool result"}],
+    )
+
+    _, headers, path, body = handler.requests[0]
+    assert headers["Host"] == f"127.0.0.1:{server.server_port}"
+    assert path == "/v1/chat/completions"
+    assert body["model"] == "grok-small"
+
+
 def test_tool_call_round_trip(api_server):
     server, handler = api_server
     handler.responses = [(200, _success(tool=True)), (200, _success())]

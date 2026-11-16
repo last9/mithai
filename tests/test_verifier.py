@@ -339,6 +339,28 @@ class TestVerifiedSkillsFromSkillTag:
 # ---------------------------------------------------------------------------
 
 class TestVerifierModel:
+    def test_openai_verifier_preserves_configured_endpoint(self):
+        from mithai.cli.run_cmd import _create_llm
+        from mithai.core.engine import Engine
+        from mithai.state.memory import MemoryStateBackend
+
+        config = {
+            "llm": {
+                "provider": "openai",
+                "model": "grok-test",
+                "openai": {
+                    "api_key": "synthetic-key",
+                    "base_url": "https://api.x.ai/v1",
+                },
+            },
+            "verifier": {"model": "grok-small"},
+        }
+
+        engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
+
+        assert engine._verifier_llm._url == engine._llm._url
+        assert engine._verifier_llm._model == "grok-small"
+
     def test_engine_uses_verifier_llm_not_main_llm(self):
         """When verifier.model is set, verify() is called with _verifier_llm, not _llm."""
         from mithai.core.engine import Engine

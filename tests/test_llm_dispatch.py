@@ -60,6 +60,19 @@ def test_create_llm_unknown_provider_raises():
     assert "Unknown LLM provider: gemini" in str(exc_info.value.message)
 
 
+def test_openai_requires_explicit_model():
+    import click
+
+    config = {
+        "llm": {
+            "provider": "openai",
+            "openai": {"api_key": "synthetic-key"},
+        }
+    }
+    with pytest.raises(click.ClickException, match="llm.model"):
+        _create_llm(config)
+
+
 def test_create_llm_bedrock_missing_keys_raises_clickexception():
     """Missing bedrock config keys must produce a clean ClickException, not KeyError."""
     import click

@@ -644,6 +644,11 @@ def _create_adapter(config: dict, adapter_type: str, adapter_config: dict | None
 
 
 def _create_llm(config: dict):
+    raw_llm_config = config.get("llm", {})
+    raw_provider = raw_llm_config.get("provider", "anthropic")
+    if raw_provider == "openai" and not raw_llm_config.get("model"):
+        raise click.ClickException("openai provider requires llm.model in config.yaml")
+
     llm_config = get_llm_config(config)
     provider = llm_config["provider"]
 

@@ -200,9 +200,10 @@ The response returns 202 immediately; the engine runs in the background. Human a
 
 ## `llm`
 
-mithai supports two LLM providers:
+mithai supports three LLM providers:
 
 - **`anthropic`** (default): direct Claude API access via the `anthropic` Python SDK.
+- **`openai`**: OpenAI-compatible Chat Completions, including OpenAI and xAI.
 - **`bedrock`**: AWS Bedrock via the unified Converse API (works across Anthropic/Llama/Cohere/Mistral models on Bedrock). Requires `pip install 'mithai[bedrock]'`.
 
 Switch by setting `llm.provider` and providing the matching config block.
@@ -225,6 +226,58 @@ llm:
 | `claude-sonnet-4-6` | Default. Best balance of capability and speed. |
 | `claude-opus-4-6` | Complex reasoning, multi-step tasks, high-stakes decisions. |
 | `claude-haiku-4-5` | High-volume, latency-sensitive, simple queries. |
+
+### OpenAI-compatible
+
+The `openai` provider uses the Chat Completions protocol and requires no optional dependency.
+Use the official versioned base URL for either service:
+
+```yaml
+# OpenAI
+llm:
+  provider: openai
+  model: gpt-5.1
+  max_tokens: 4096
+  openai:
+    api_key: ${OPENAI_API_KEY}
+    base_url: https://api.openai.com/v1
+    max_retries: 2
+    timeout: 600
+```
+
+For xAI, set `model` to an available Grok model, `api_key` to `${XAI_API_KEY}`, and
+`base_url` to `https://api.x.ai/v1`. Mithai appends `/chat/completions` exactly once.
+The 600-second default timeout accommodates long, unstreamed completions; lower it explicitly
+for latency-sensitive agents.
+Requests to `api.openai.com` use `max_completion_tokens`; other compatible endpoints retain
+`max_tokens`.
+
+`max_retries` is the number of retries after the initial request. HTTP 429, 500, 502, 503,
+504, and 529 plus transport failures are retried with exponential backoff. Other HTTP
+failures are returned immediately. After retries, callers can use this stable contract:
+
+```python
+from mithai.llm.openai_compatible import AvailabilityFailure, UnavailableReason
+
+try:
+    response = provider.create_message(system=system, messages=messages)
+except AvailabilityFailure as error:
+    if error.reason is UnavailableReason.USAGE_LIMIT:
+        ...  # known usage/credit-limit code, including OpenAI quota HTTP 429
+    elif error.reason is UnavailableReason.AUTHENTICATION:
+        ...  # refused or expired credentials returned with HTTP 401/403
+    elif error.reason is UnavailableReason.OVERLOAD:
+        ...  # HTTP 529 after retries
+```
+
+Known usage and billing codes are classified before retry handling regardless of HTTP status.
+Ordinary rate-limit HTTP 429 responses remain retryable. Validation, content-policy, and other
+unclassified responses remain `ProviderError`. Error bodies, credentials, prompts, responses,
+and tool inputs are excluded from exceptions and telemetry.
+
+Compatibility is limited to text messages and function tool calls accepted by Chat
+Completions. Image, audio, reasoning, and provider-specific content blocks are not forwarded.
+The release is package version `0.14.0`; tag `v0.14.0` identifies its exact release commit.
 
 ### AWS Bedrock
 

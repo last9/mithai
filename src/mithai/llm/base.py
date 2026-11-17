@@ -1,8 +1,9 @@
 """Abstract LLM provider interface."""
 
+import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 
 @dataclass
@@ -51,3 +52,9 @@ class LLMProvider(ABC):
             "tool_use_id": tool_use_id,
             "content": content,
         }
+
+    def with_model(self, model: str) -> Self:
+        """Return an equivalent provider configured to use another model."""
+        provider = copy.copy(self)
+        provider._model = model
+        return provider

@@ -32,7 +32,7 @@ An incident might start in Slack and continue from a terminal. A teammate can lo
 
 The Slack, Telegram and CLI adapters can all run at once. An approval request goes back to the place where the command was asked for. Skills belong to the project rather than one user; they are folders with instructions and, if needed, Python tools.
 
-Anthropic is the default model provider. Bedrock works too.
+Anthropic is the default model provider. OpenAI-compatible APIs and Bedrock work too.
 
 ## Quick start
 
@@ -277,6 +277,23 @@ Last9 GenAI span enrichment is included with the telemetry extra. Without
 telemetry configuration, chat behaves as before.
 
 ## Advanced usage
+
+### OpenAI-compatible APIs
+
+Use the built-in `openai` provider with OpenAI or xAI; no extra package is required:
+
+```yaml
+llm:
+  provider: openai
+  model: gpt-5.1                 # use grok-4.1-fast for xAI
+  openai:
+    api_key: ${OPENAI_API_KEY}   # use ${XAI_API_KEY} for xAI
+    base_url: https://api.openai.com/v1  # xAI: https://api.x.ai/v1
+```
+
+The provider calls the base URL's `/chat/completions` endpoint and retries transient
+HTTP failures twice. See [Configuration: LLM providers](docs/configuration.md#openai-compatible)
+for the error contract and compatibility details.
 
 ### AWS Bedrock
 

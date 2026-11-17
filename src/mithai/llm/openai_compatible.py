@@ -244,13 +244,13 @@ def _translate_messages(messages: list[dict]) -> list[dict]:
             } for block in tool_uses]
             translated.append(item)
         elif tool_results:
-            if text:
-                translated.append({"role": role, "content": text})
             translated.extend({
                 "role": "tool",
                 "tool_call_id": block["tool_use_id"],
                 "content": _tool_result_content(block.get("content", "")),
             } for block in tool_results)
+            if text:
+                translated.append({"role": role, "content": text})
         else:
             translated.append({"role": role, "content": text})
     return translated

@@ -80,6 +80,13 @@ Skills are loaded dynamically by `skill_loader.py` via `importlib`.
 
 Tests use `pytest` with `pytest-asyncio` (async mode = `"auto"`). Test fixtures for skills and config are in `tests/conftest.py`. Tests create temporary skill directories with `SKILL.md` + `tools.py` to test the full skill loading pipeline.
 
+### LLM Provider Integrations
+
+- Inventory every content block when adding a translator, preserve protocol adjacency, and wire-test mixed blocks and attachments.
+- Classify provider- and model-specific API fields explicitly, and wire-test every supported endpoint/model payload.
+- Validate provider-required settings from raw configuration before shared defaults are flattened, including omitted values at dispatch.
+- Parse provider termination state before truncation can invalidate fields, and integration-test recovery without executing incomplete tool calls.
+
 When bumping the CA bundle (`certifi`), prove the change with a TLS handshake through a CONNECT proxy: the new bundle rejects the distrusted host, the old bundle accepts it, and a normal host still passes.
 
 ## Documented Solutions

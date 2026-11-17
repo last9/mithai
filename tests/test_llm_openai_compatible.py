@@ -5,6 +5,7 @@ import socket
 import struct
 import threading
 import traceback
+from io import BytesIO
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock
 
@@ -117,6 +118,36 @@ def test_request_uses_exact_transport_boundary_and_normalizes_response(api_serve
     assert response.usage == {"input_tokens": 11, "output_tokens": 7}
 
 
+@pytest.mark.parametrize(("base_url", "token_field"), [
+    ("https://api.openai.com/v1", "max_completion_tokens"),
+    ("https://api.x.ai/v1", "max_tokens"),
+])
+def test_token_limit_field_matches_provider_endpoint(monkeypatch, base_url, token_field):
+    requests = []
+
+    class Response(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def respond(request, timeout):
+        requests.append((request, timeout))
+        return Response(json.dumps(_success()).encode())
+
+    monkeypatch.setattr("mithai.llm.openai_compatible.urlopen", respond)
+    provider = OpenAICompatibleProvider(
+        api_key="secret-token", model="current-model", base_url=base_url
+    )
+
+    provider.create_message(system="s", messages=[], max_tokens=23)
+
+    body = json.loads(requests[0][0].data)
+    assert body[token_field] == 23
+    assert ({"max_tokens", "max_completion_tokens"} - {token_field}).isdisjoint(body)
+
+
 def test_verifier_request_uses_configured_provider_endpoint(api_server):
     from mithai.cli.run_cmd import _create_llm
     from mithai.core.engine import Engine
@@ -193,6 +224,27 @@ def test_tool_call_round_trip(api_server):
         }],
     }
     assert second_body["messages"][2] == {"role": "tool", "tool_call_id": "call_1", "content": "ok"}
+
+
+def test_tool_results_precede_text_from_the_same_user_message(api_server):
+    server, handler = api_server
+    handler.responses = [(200, _success())]
+    provider = _provider(server)
+
+    provider.create_message(system="s", messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "both tools finished"},
+            provider.format_tool_result("call_1", "one"),
+            provider.format_tool_result("call_2", "two"),
+        ],
+    }])
+
+    assert handler.requests[0][3]["messages"][1:] == [
+        {"role": "tool", "tool_call_id": "call_1", "content": "one"},
+        {"role": "tool", "tool_call_id": "call_2", "content": "two"},
+        {"role": "user", "content": "both tools finished"},
+    ]
 
 
 def test_partial_arguments_preserve_truncation(api_server):
@@ -294,13 +346,30 @@ def test_refused_and_expired_authentication_are_classified(api_server, status, c
     assert "secret" not in str(caught.value)
 
 
+@pytest.mark.parametrize("status", [400, 429])
 @pytest.mark.parametrize("code", ["insufficient_quota", "billing_hard_limit_reached", "credit_balance_too_low"])
-def test_usage_limit_http_400_is_classified(api_server, code):
+def test_usage_limit_is_classified_without_retry(api_server, status, code):
     server, handler = api_server
-    handler.responses = [(400, {"error": {"code": code, "message": "limit"}})]
+    handler.responses = [(status, {"error": {"code": code, "message": "limit"}})]
     with pytest.raises(AvailabilityFailure) as caught:
-        _provider(server).create_message(system="s", messages=[])
+        _provider(server, max_retries=2).create_message(system="s", messages=[])
     assert caught.value.reason is UnavailableReason.USAGE_LIMIT
+    assert caught.value.status_code == status
+    assert len(handler.requests) == 1
+
+
+def test_default_timeout_allows_long_unstreamed_completions():
+    from mithai.cli.run_cmd import _create_llm
+
+    provider = _create_llm({
+        "llm": {
+            "provider": "openai",
+            "model": "gpt-5.1",
+            "openai": {"api_key": "synthetic-key"},
+        }
+    })
+
+    assert provider._timeout == 600
 
 
 @pytest.mark.parametrize("status,code", [

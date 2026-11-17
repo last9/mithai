@@ -674,7 +674,7 @@ def _create_llm(config: dict):
             model=llm_config["model"],
             base_url=llm_config.get("base_url", "https://api.openai.com/v1"),
             max_retries=llm_config.get("max_retries", 2),
-            timeout=llm_config.get("timeout", 60),
+            timeout=llm_config.get("timeout", 600),
         )
 
     elif provider == "bedrock":

@@ -62,7 +62,7 @@ class LLMOpenAIConfig(BaseModel):
     api_key: str | None = None
     base_url: str = "https://api.openai.com/v1"
     max_retries: int = 2
-    timeout: float = 60
+    timeout: float = 600
 
 
 class LLMConfig(BaseModel):

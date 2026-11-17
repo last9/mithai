@@ -242,11 +242,13 @@ llm:
     api_key: ${OPENAI_API_KEY}
     base_url: https://api.openai.com/v1
     max_retries: 2
-    timeout: 60
+    timeout: 600
 ```
 
 For xAI, set `model` to an available Grok model, `api_key` to `${XAI_API_KEY}`, and
 `base_url` to `https://api.x.ai/v1`. Mithai appends `/chat/completions` exactly once.
+The 600-second default timeout accommodates long, unstreamed completions; lower it explicitly
+for latency-sensitive agents.
 
 `max_retries` is the number of retries after the initial request. HTTP 429, 500, 502, 503,
 504, and 529 plus transport failures are retried with exponential backoff. Other HTTP

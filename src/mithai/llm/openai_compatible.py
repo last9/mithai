@@ -57,7 +57,7 @@ class OpenAICompatibleProvider(LLMProvider):
         *,
         max_retries: int = 2,
         retry_delay: float = 0.5,
-        timeout: float = 60,
+        timeout: float = 600,
     ):
         if not api_key or not api_key.strip():
             raise ValueError("openai_compatible requires a non-blank api_key")

@@ -140,7 +140,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         payload: dict[str, Any] = {
             "model": self._model,
-            "max_tokens": max_tokens,
+            _token_limit_field(self._url): max_tokens,
             "messages": [{"role": "system", "content": system}, *_translate_messages(messages)],
         }
         if tools:
@@ -190,6 +190,12 @@ def _completion_url(base_url: str) -> str:
         raise ValueError("base_url must be an HTTP(S) origin and path without query or fragment")
     path = f"{parsed.path.rstrip('/')}/chat/completions"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def _token_limit_field(completion_url: str) -> str:
+    if urlsplit(completion_url).hostname == "api.openai.com":
+        return "max_completion_tokens"
+    return "max_tokens"
 
 
 def _is_safe_header_value(value: str) -> bool:

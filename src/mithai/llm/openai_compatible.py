@@ -163,10 +163,16 @@ class OpenAICompatibleProvider(LLMProvider):
                 except HTTPError as exc:
                     with exc:
                         body = _read_error(exc)
+                    classified = _classify_http_error(exc.code, body)
+                    if (
+                        isinstance(classified, AvailabilityFailure)
+                        and classified.reason is UnavailableReason.USAGE_LIMIT
+                    ):
+                        raise classified from None
                     if exc.code in _RETRYABLE_STATUSES and attempt < self._max_retries:
                         self._wait(attempt)
                         continue
-                    raise _classify_http_error(exc.code, body) from None
+                    raise classified from None
                 with raw:
                     body = json.load(raw)
                 return _normalize_response(body)
@@ -303,7 +309,7 @@ def _read_error(error: HTTPError) -> dict:
 def _classify_http_error(status: int, body: dict) -> ProviderError:
     error = body.get("error") if isinstance(body.get("error"), dict) else {}
     code = error.get("code")
-    if status == 400 and code in _USAGE_LIMIT_CODES:
+    if code in _USAGE_LIMIT_CODES:
         return AvailabilityFailure(UnavailableReason.USAGE_LIMIT, status_code=status)
     if status in {401, 403}:
         return AvailabilityFailure(UnavailableReason.AUTHENTICATION, status_code=status)

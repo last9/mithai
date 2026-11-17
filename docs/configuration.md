@@ -249,6 +249,8 @@ For xAI, set `model` to an available Grok model, `api_key` to `${XAI_API_KEY}`, 
 `base_url` to `https://api.x.ai/v1`. Mithai appends `/chat/completions` exactly once.
 The 600-second default timeout accommodates long, unstreamed completions; lower it explicitly
 for latency-sensitive agents.
+Requests to `api.openai.com` use `max_completion_tokens`; other compatible endpoints retain
+`max_tokens`.
 
 `max_retries` is the number of retries after the initial request. HTTP 429, 500, 502, 503,
 504, and 529 plus transport failures are retried with exponential backoff. Other HTTP
@@ -261,16 +263,17 @@ try:
     response = provider.create_message(system=system, messages=messages)
 except AvailabilityFailure as error:
     if error.reason is UnavailableReason.USAGE_LIMIT:
-        ...  # known usage/credit-limit code returned with HTTP 400
+        ...  # known usage/credit-limit code, including OpenAI quota HTTP 429
     elif error.reason is UnavailableReason.AUTHENTICATION:
         ...  # refused or expired credentials returned with HTTP 401/403
     elif error.reason is UnavailableReason.OVERLOAD:
         ...  # HTTP 529 after retries
 ```
 
-Validation, content-policy, and all other HTTP 400 responses remain `ProviderError`, as do
-other statuses. Error bodies, credentials, prompts, responses, and tool inputs are excluded
-from exceptions and telemetry.
+Known usage and billing codes are classified before retry handling regardless of HTTP status.
+Ordinary rate-limit HTTP 429 responses remain retryable. Validation, content-policy, and other
+unclassified responses remain `ProviderError`. Error bodies, credentials, prompts, responses,
+and tool inputs are excluded from exceptions and telemetry.
 
 Compatibility is limited to text messages and function tool calls accepted by Chat
 Completions. Image, audio, reasoning, and provider-specific content blocks are not forwarded.

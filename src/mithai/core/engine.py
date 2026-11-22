@@ -91,6 +91,45 @@ def _strip_tool_call_syntax(text):
     return cleaned.strip()
 
 
+# Tool results kept in session history, like each tool call's result_summary.
+_HISTORY_RESULT_CHARS = 500
+
+
+def _replayable_exchange(exchange: list[dict]) -> list[dict] | None:
+    """Return the turn's assistant/tool messages to persist for verbatim replay.
+
+    ``_build_history`` rebuilds tool calls from their summaries, which drops
+    provider-specific blocks such as Responses API ``reasoning`` items. Stateless
+    Responses requests must replay those in their original position, so a turn
+    carrying them keeps its exchange, with text sanitized and tool results capped.
+    Returns None when reconstruction loses nothing.
+    """
+    if not any(
+        block.get("type") not in ("text", "tool_use")
+        for message in exchange
+        if message["role"] == "assistant" and isinstance(message["content"], list)
+        for block in message["content"]
+    ):
+        return None
+    persisted = []
+    for message in exchange:
+        content = message["content"]
+        if isinstance(content, list):
+            content = [_history_block(block) for block in content]
+            content = [block for block in content if block is not None]
+        persisted.append({"role": message["role"], "content": content})
+    return persisted
+
+
+def _history_block(block: dict) -> dict | None:
+    if block.get("type") == "text":
+        text = _strip_tool_call_syntax(block.get("text"))
+        return {"type": "text", "text": text} if text else None
+    if block.get("type") == "tool_result" and isinstance(block.get("content"), str):
+        return {**block, "content": block["content"][:_HISTORY_RESULT_CHARS]}
+    return block
+
+
 class Engine:
     """
     The brain of mithai.
@@ -383,6 +422,7 @@ class Engine:
             user_content = text_content
 
         messages = history + [{"role": "user", "content": user_content}]
+        exchange_start = len(messages)
 
         # Initial LLM call
         adapter.on_thinking_start()
@@ -583,7 +623,7 @@ class Engine:
                         "tool": prefixed_name,
                         "input": tool_input,
                         "approved": approved,
-                        "result_summary": result[:500],
+                        "result_summary": result[:_HISTORY_RESULT_CHARS],
                     })
 
                     # Record approval pattern for learning
@@ -612,6 +652,10 @@ class Engine:
         # Close Last9 workflow context after tool-use loop
         if _wf_active:
             _wf_ctx.__exit__(None, None, None)
+
+        # Captured before the nudge below: the final reply replaces the last
+        # assistant message's text when this exchange is replayed.
+        exchange = _replayable_exchange(messages[exchange_start:])
 
         # Extract raw text first (no fallback yet) so the nudge check sees "" not "(no response)"
         response_text = self._extract_raw_text(response)
@@ -657,6 +701,7 @@ class Engine:
             tool_calls=turn_tool_calls,
             assistant_response=response_text,
             images=all_images if all_images else None,
+            exchange=exchange,
         )
         self._sessions.append_turn(session_key, turn)
 
@@ -924,6 +969,19 @@ class Engine:
                 user_content = turn["user_message"]
 
             messages.append({"role": "user", "content": user_content})
+
+            exchange = turn.get("exchange")
+            if exchange:
+                # Replay in original order; the final reply (which may come from a
+                # nudge or carry a fact-check note) replaces the last message's text.
+                kept = [b for b in exchange[-1]["content"] if b.get("type") != "text"]
+                messages.extend(exchange[:-1])
+                messages.append({"role": "assistant", "content": kept + [{
+                    "type": "text",
+                    "text": _strip_tool_call_syntax(turn.get("assistant_response"))
+                    or "(no response)",
+                }]})
+                continue
 
             tool_calls = turn.get("tool_calls", [])
             if tool_calls:

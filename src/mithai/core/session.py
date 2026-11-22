@@ -144,12 +144,16 @@ class SessionManager:
         tool_calls: list[dict],
         assistant_response: str,
         images: list[dict] | None = None,
+        exchange: list[dict] | None = None,
     ) -> dict:
         """Build a turn dict from the components of a single interaction.
 
         *images* is an optional list of ``{"data": "<base64>", "media_type": "image/png"}``
         dicts persisted so that ``_build_history`` can reconstruct multi-modal
         messages for recent turns.
+
+        *exchange* is the turn's assistant/tool message sequence, persisted only when
+        it carries provider-specific blocks that ``_build_history`` must replay verbatim.
         """
         turn: dict = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -160,4 +164,6 @@ class SessionManager:
         }
         if images:
             turn["images"] = images
+        if exchange:
+            turn["exchange"] = exchange
         return turn

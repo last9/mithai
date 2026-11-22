@@ -247,6 +247,79 @@ def test_responses_config_round_trips_tool_call_with_reasoning(api_server):
     assert second.usage == {"input_tokens": 11, "output_tokens": 7}
 
 
+def test_responses_reasoning_items_survive_into_next_user_turn(api_server):
+    from mithai.adapters.base import IncomingMessage
+    from mithai.cli.run_cmd import _create_llm
+    from mithai.core.engine import Engine
+    from mithai.state.memory import MemoryStateBackend
+
+    server, handler = api_server
+    final = _responses_success()
+    final["output"].insert(
+        0, {"type": "reasoning", "id": "rs_2", "summary": [], "encrypted_content": "blob2"}
+    )
+    handler.responses = [
+        (200, _responses_success(tool=True)),
+        (200, final),
+        (200, _responses_success()),
+    ]
+    config = _openai_config(server, api="responses")
+    engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
+    adapter = Mock()
+    adapter.fetch_thread_context.return_value = None
+
+    for text in ("first", "second"):
+        engine.handle(
+            IncomingMessage(
+                text=text, channel_id="C1", user_id="alice", platform="slack",
+                thread_id="1.0", message_id="1.0",
+            ),
+            adapter,
+        )
+
+    replayed = handler.requests[2][3]["input"]
+    assert [item.get("type") or item["role"] for item in replayed] == [
+        "user",
+        "reasoning",
+        "function_call",
+        "function_call_output",
+        "reasoning",
+        "assistant",
+        "user",
+    ]
+    assert replayed[1] == {
+        "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "blob",
+    }
+    assert replayed[2]["call_id"] == replayed[3]["call_id"] == "call_1"
+    assert replayed[4]["encrypted_content"] == "blob2"
+    assert replayed[5] == {"role": "assistant", "content": "done"}
+    assert replayed[6] == {"role": "user", "content": "second"}
+
+
+def test_replayable_exchange_only_kept_for_provider_blocks():
+    from mithai.core.engine import _replayable_exchange
+
+    call = {"type": "tool_use", "id": "call_1", "name": "shell__run", "input": {}}
+    result = {"type": "tool_result", "tool_use_id": "call_1", "content": "x" * 600}
+    plain = [
+        {"role": "assistant", "content": [call]},
+        {"role": "user", "content": [result]},
+        {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+    ]
+    assert _replayable_exchange(plain) is None
+
+    reasoning = {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "b"}
+    leaked = '<function_calls><invoke name="x"></invoke></function_calls>'
+    persisted = _replayable_exchange([
+        {"role": "assistant", "content": [reasoning, {"type": "text", "text": leaked}, call]},
+        *plain[1:],
+    ])
+
+    assert persisted[0]["content"] == [reasoning, call]
+    assert persisted[1]["content"][0]["content"] == "x" * 500
+    assert result["content"] == "x" * 600
+
+
 def test_chat_completions_passes_reasoning_effort_when_set(api_server):
     server, handler = api_server
     handler.responses = [(200, _success())]

@@ -203,7 +203,7 @@ The response returns 202 immediately; the engine runs in the background. Human a
 mithai supports three LLM providers:
 
 - **`anthropic`** (default): direct Claude API access via the `anthropic` Python SDK.
-- **`openai`**: OpenAI-compatible Chat Completions, including OpenAI and xAI.
+- **`openai`**: OpenAI-compatible Chat Completions or Responses API, including OpenAI and xAI.
 - **`bedrock`**: AWS Bedrock via the unified Converse API (works across Anthropic/Llama/Cohere/Mistral models on Bedrock). Requires `pip install 'mithai[bedrock]'`.
 
 Switch by setting `llm.provider` and providing the matching config block.
@@ -229,8 +229,8 @@ llm:
 
 ### OpenAI-compatible
 
-The `openai` provider uses the Chat Completions protocol and requires no optional dependency.
-Use the official versioned base URL for either service:
+The `openai` provider speaks the Chat Completions protocol by default and requires no optional
+dependency. Use the official versioned base URL for either service:
 
 ```yaml
 # OpenAI
@@ -243,10 +243,21 @@ llm:
     base_url: https://api.openai.com/v1
     max_retries: 2
     timeout: 600
+    api: chat_completions        # or "responses"
+    # reasoning_effort: medium   # optional; sent only when set
 ```
 
 For xAI, set `model` to an available Grok model, `api_key` to `${XAI_API_KEY}`, and
 `base_url` to `https://api.x.ai/v1`. Mithai appends `/chat/completions` exactly once.
+
+Set `api: responses` for reasoning models that reject function tools on Chat Completions;
+requests then go to `/responses` (`max_output_tokens`, `instructions`). Mithai sends them with
+`store: false` and requests encrypted reasoning content, keeping reasoning items in the
+conversation so they are passed back on the next turn. `reasoning_effort` is sent as
+`reasoning_effort` on Chat Completions and `reasoning.effort` on Responses. Retries, error
+classification and telemetry are identical on both APIs. Responses usage reports
+`cached_input_tokens` and `reasoning_tokens` alongside input and output tokens, as Chat
+Completions does when the endpoint returns those details.
 The 600-second default timeout accommodates long, unstreamed completions; lower it explicitly
 for latency-sensitive agents.
 Requests to `api.openai.com` use `max_completion_tokens`; other compatible endpoints retain

@@ -669,12 +669,19 @@ def _create_llm(config: dict):
                 + " and ".join(f"llm.openai.{key}" if key == "api_key" else "llm.model" for key in missing)
                 + " in config.yaml"
             )
+        api = llm_config.get("api", "chat_completions")
+        if api not in ("chat_completions", "responses"):
+            raise click.ClickException(
+                "llm.openai.api must be chat_completions or responses in config.yaml"
+            )
         return OpenAICompatibleProvider(
             api_key=llm_config["api_key"],
             model=llm_config["model"],
             base_url=llm_config.get("base_url", "https://api.openai.com/v1"),
             max_retries=llm_config.get("max_retries", 2),
             timeout=llm_config.get("timeout", 600),
+            api=api,
+            reasoning_effort=llm_config.get("reasoning_effort"),
         )
 
     elif provider == "bedrock":

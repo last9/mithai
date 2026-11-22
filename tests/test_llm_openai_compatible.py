@@ -57,6 +57,11 @@ def api_server():
         server.server_close()
 
 
+@pytest.fixture(params=["chat_completions", "responses"])
+def any_api(request):
+    return request.param
+
+
 def _provider(server, **kwargs):
     return OpenAICompatibleProvider(
         api_key="secret-token",
@@ -146,6 +151,143 @@ def test_token_limit_field_matches_provider_endpoint(monkeypatch, base_url, toke
     body = json.loads(requests[0][0].data)
     assert body[token_field] == 23
     assert ({"max_tokens", "max_completion_tokens"} - {token_field}).isdisjoint(body)
+
+
+def _responses_success(*, tool=False):
+    output = [{
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "done"}],
+    }]
+    if tool:
+        output = [
+            {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "blob"},
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "shell__run",
+                "arguments": '{"command":"uptime"}',
+            },
+        ]
+    return {
+        "model": "gpt-test",
+        "status": "completed",
+        "output": output,
+        "usage": {"input_tokens": 11, "output_tokens": 7},
+    }
+
+
+def _ok(api):
+    return _responses_success() if api == "responses" else _success()
+
+
+def _openai_config(server, **openai):
+    return {
+        "llm": {
+            "provider": "openai",
+            "model": "gpt-test",
+            "openai": {
+                "api_key": "synthetic-key",
+                "base_url": f"http://127.0.0.1:{server.server_port}/v1",
+                "max_retries": 0,
+                **openai,
+            },
+        },
+    }
+
+
+def test_default_config_sends_chat_completions(api_server):
+    from mithai.cli.run_cmd import _create_llm
+
+    server, handler = api_server
+    handler.responses = [(200, _success())]
+
+    _create_llm(_openai_config(server)).create_message(system="s", messages=[])
+
+    _, _, path, body = handler.requests[0]
+    assert path == "/v1/chat/completions"
+    assert "reasoning_effort" not in body
+
+
+def test_responses_config_round_trips_tool_call_with_reasoning(api_server):
+    from mithai.cli.run_cmd import _create_llm
+
+    server, handler = api_server
+    handler.responses = [(200, _responses_success(tool=True)), (200, _responses_success())]
+    provider = _create_llm(_openai_config(server, api="responses", reasoning_effort="medium"))
+    tools = [{"name": "shell__run", "description": "Run", "input_schema": {"type": "object"}}]
+
+    first = provider.create_message(system="s", messages=[], tools=tools, max_tokens=99)
+    second = provider.create_message(
+        system="s",
+        messages=[
+            {"role": "assistant", "content": first.content},
+            {"role": "user", "content": [provider.format_tool_result("call_1", "ok")]},
+        ],
+        tools=tools,
+    )
+
+    paths = [request[2] for request in handler.requests]
+    assert paths == ["/v1/responses", "/v1/responses"]
+    first_body = handler.requests[0][3]
+    assert first_body["max_output_tokens"] == 99
+    assert first_body["reasoning"] == {"effort": "medium"}
+    assert first.stop_reason == "tool_use"
+    assert handler.requests[1][3]["input"] == [
+        {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "blob"},
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "shell__run",
+            "arguments": '{"command":"uptime"}',
+        },
+        {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+    ]
+    assert second.content == [{"type": "text", "text": "done"}]
+    assert second.usage == {"input_tokens": 11, "output_tokens": 7}
+
+
+def test_chat_completions_passes_reasoning_effort_when_set(api_server):
+    server, handler = api_server
+    handler.responses = [(200, _success())]
+
+    _provider(server, reasoning_effort="low").create_message(system="s", messages=[])
+
+    assert handler.requests[0][3]["reasoning_effort"] == "low"
+
+
+def test_chat_completions_maps_cached_and_reasoning_usage(api_server):
+    server, handler = api_server
+    body = _success()
+    body["usage"].update({
+        "prompt_tokens_details": {"cached_tokens": 4},
+        "completion_tokens_details": {"reasoning_tokens": 5},
+    })
+    handler.responses = [(200, body)]
+
+    response = _provider(server).create_message(system="s", messages=[])
+
+    assert response.usage == {
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "cached_input_tokens": 4,
+        "reasoning_tokens": 5,
+    }
+
+
+def test_unknown_api_is_rejected():
+    with pytest.raises(ValueError, match="api must be one of"):
+        OpenAICompatibleProvider(api_key="k", model="m", api="completions")
+
+
+def test_create_llm_reports_unknown_api():
+    import click
+
+    from mithai.cli.run_cmd import _create_llm
+
+    config = {"llm": {"provider": "openai", "model": "m", "openai": {"api_key": "k", "api": "x"}}}
+    with pytest.raises(click.ClickException, match="llm.openai.api"):
+        _create_llm(config)
 
 
 def test_verifier_request_uses_configured_provider_endpoint(api_server):
@@ -334,12 +476,12 @@ def test_header_failure_hides_credentials(api_server):
 
 @pytest.mark.parametrize("status", [401, 403])
 @pytest.mark.parametrize("code", ["invalid_api_key", "token_expired"])
-def test_refused_and_expired_authentication_are_classified(api_server, status, code):
+def test_refused_and_expired_authentication_are_classified(api_server, any_api, status, code):
     server, handler = api_server
     handler.responses = [(status, {"error": {"code": code, "message": "credential secret"}})]
 
     with pytest.raises(AvailabilityFailure) as caught:
-        _provider(server).create_message(system="s", messages=[])
+        _provider(server, api=any_api).create_message(system="s", messages=[])
 
     assert caught.value.reason is UnavailableReason.AUTHENTICATION
     assert caught.value.status_code == status
@@ -348,11 +490,11 @@ def test_refused_and_expired_authentication_are_classified(api_server, status, c
 
 @pytest.mark.parametrize("status", [400, 429])
 @pytest.mark.parametrize("code", ["insufficient_quota", "billing_hard_limit_reached", "credit_balance_too_low"])
-def test_usage_limit_is_classified_without_retry(api_server, status, code):
+def test_usage_limit_is_classified_without_retry(api_server, any_api, status, code):
     server, handler = api_server
     handler.responses = [(status, {"error": {"code": code, "message": "limit"}})]
     with pytest.raises(AvailabilityFailure) as caught:
-        _provider(server, max_retries=2).create_message(system="s", messages=[])
+        _provider(server, api=any_api, max_retries=2).create_message(system="s", messages=[])
     assert caught.value.reason is UnavailableReason.USAGE_LIMIT
     assert caught.value.status_code == status
     assert len(handler.requests) == 1
@@ -382,31 +524,31 @@ def test_default_timeout_allows_long_unstreamed_completions():
     (502, "bad_gateway"),
     (503, "unavailable"),
 ])
-def test_other_statuses_are_not_availability_failures(api_server, status, code):
+def test_other_statuses_are_not_availability_failures(api_server, any_api, status, code):
     server, handler = api_server
     handler.responses = [(status, {"error": {"code": code, "message": "detail"}})] * 3
     with pytest.raises(ProviderError) as caught:
-        _provider(server).create_message(system="s", messages=[])
+        _provider(server, api=any_api).create_message(system="s", messages=[])
     assert not isinstance(caught.value, AvailabilityFailure)
     assert caught.value.status_code == status
 
 
-def test_http_529_is_classified_only_after_retry_exhaustion(api_server):
+def test_http_529_is_classified_only_after_retry_exhaustion(api_server, any_api):
     server, handler = api_server
     handler.responses = [(529, {"error": {"message": "overloaded"}})] * 3
 
     with pytest.raises(AvailabilityFailure) as caught:
-        _provider(server, max_retries=2).create_message(system="s", messages=[])
+        _provider(server, api=any_api, max_retries=2).create_message(system="s", messages=[])
 
     assert caught.value.reason is UnavailableReason.OVERLOAD
     assert caught.value.status_code == 529
     assert len(handler.requests) == 3
 
 
-def test_retry_can_recover_from_transient_failure(api_server):
+def test_retry_can_recover_from_transient_failure(api_server, any_api):
     server, handler = api_server
-    handler.responses = [(503, {"error": {"message": "busy"}}), (200, _success())]
-    response = _provider(server, max_retries=2).create_message(system="s", messages=[])
+    handler.responses = [(503, {"error": {"message": "busy"}}), (200, _ok(any_api))]
+    response = _provider(server, api=any_api, max_retries=2).create_message(system="s", messages=[])
     assert response.stop_reason == "end_turn"
     assert len(handler.requests) == 2
 
@@ -543,17 +685,19 @@ def test_metrics_identify_provider(api_server, monkeypatch):
     assert {call.args[1]["gen_ai.system"] for call in calls} == {"openai_compatible"}
 
 
-def test_telemetry_contains_metadata_but_no_content_or_credentials(api_server, monkeypatch):
+def test_telemetry_contains_metadata_but_no_content_or_credentials(
+    api_server, monkeypatch, any_api
+):
     from mithai.telemetry import tracer as tracer_module
 
     server, handler = api_server
-    handler.responses = [(200, _success())]
+    handler.responses = [(200, _ok(any_api))]
     exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider()
     tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
     monkeypatch.setattr(tracer_module, "_tracer", tracer_provider.get_tracer("test"))
 
-    _provider(server).create_message(
+    _provider(server, api=any_api).create_message(
         system="private-system",
         messages=[{"role": "user", "content": "private-prompt"}],
         tools=[{

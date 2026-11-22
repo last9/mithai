@@ -344,7 +344,7 @@ def _image_message(text):
 
 @pytest.mark.parametrize("case", [
     "long_tool_output", "leaked_tool_syntax", "thread_backfill", "pending_observation",
-    "image_outside_budget",
+    "image_outside_budget", "assistant_phase",
 ])
 def test_responses_replay_keeps_every_request_an_exact_prefix_of_the_next(api_server, case):
     """Stateless Responses requests must resend the original input and outputs unchanged."""
@@ -363,6 +363,8 @@ def test_responses_replay_keeps_every_request_an_exact_prefix_of_the_next(api_se
         final["output"][0]["content"][0]["text"] = (
             'done\n<function_calls><invoke name="x"></invoke></function_calls>'
         )
+    if case == "assistant_phase":
+        final["output"][0]["phase"] = "final_answer"
     for _ in turns:
         handler.responses += [(200, _responses_success(tool=True)), (200, final)]
     config = _openai_config(server, api="responses")
@@ -394,6 +396,8 @@ def test_responses_replay_keeps_every_request_an_exact_prefix_of_the_next(api_se
         assert later[:len(earlier)] == earlier
     assert len(inputs) == 2 * len(turns)
     reply = {"role": "assistant", "content": final["output"][0]["content"][0]["text"]}
+    if case == "assistant_phase":
+        reply["phase"] = "final_answer"
     assert inputs[-1].count(reply) == len(turns) - 1
 
 
@@ -416,6 +420,9 @@ def test_replayable_exchange_only_kept_for_provider_blocks():
     assert persisted == exchange
     persisted[0]["content"].append({"type": "text", "text": "later"})
     assert exchange[0]["content"] == [reasoning, call]
+
+    phased = {"type": "text", "text": "done", "phase": "final_answer"}
+    assert _replayable_exchange([*plain[:2], {"role": "assistant", "content": [phased]}])
 
 
 def test_chat_completions_passes_reasoning_effort_when_set(api_server):

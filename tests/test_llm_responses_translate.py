@@ -116,6 +116,47 @@ def test_multi_turn_tool_conversation_round_trips_reasoning_items():
     }
 
 
+def test_assistant_message_phase_round_trips_and_is_omitted_when_absent():
+    response = normalize_response({
+        "model": "m",
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "phase": "commentary",
+                "content": [{"type": "output_text", "text": "Checking."}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "phase": "final_answer",
+                "content": [{"type": "output_text", "text": "Up 3 days."}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "No phase."}],
+            },
+        ],
+    })
+
+    request = build_request(
+        model="m",
+        system="s",
+        messages=[{"role": "assistant", "content": response.content}],
+        tools=None,
+        max_tokens=10,
+        reasoning_effort=None,
+    )
+
+    assert request["input"] == [
+        {"role": "assistant", "content": "Checking.", "phase": "commentary"},
+        {"role": "assistant", "content": "Up 3 days.", "phase": "final_answer"},
+        {"role": "assistant", "content": "No phase."},
+    ]
+
+
 def test_request_omits_optional_fields_when_unset():
     request = build_request(
         model="m", system="s", messages=[], tools=None, max_tokens=10, reasoning_effort=None

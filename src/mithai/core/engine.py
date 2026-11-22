@@ -91,17 +91,14 @@ def _strip_tool_call_syntax(text):
     return cleaned.strip()
 
 
-# Tool results kept in session history, like each tool call's result_summary.
-_HISTORY_RESULT_CHARS = 500
-
-
 def _replayable_exchange(exchange: list[dict]) -> list[dict] | None:
     """Return the turn's assistant/tool messages to persist for verbatim replay.
 
     ``_build_history`` rebuilds tool calls from their summaries, which drops
     provider-specific blocks such as Responses API ``reasoning`` items. Stateless
-    Responses requests must replay those in their original position, so a turn
-    carrying them keeps its exchange, with text sanitized and tool results capped.
+    Responses requests must resend the original input and every output item
+    unchanged, or the model may discard its reasoning, so a turn carrying such
+    blocks keeps its exchange exactly as sent: unsanitized, tool results uncapped.
     Returns None when reconstruction loses nothing.
     """
     if not any(
@@ -111,23 +108,15 @@ def _replayable_exchange(exchange: list[dict]) -> list[dict] | None:
         for block in message["content"]
     ):
         return None
-    persisted = []
-    for message in exchange:
-        content = message["content"]
-        if isinstance(content, list):
-            content = [_history_block(block) for block in content]
-            content = [block for block in content if block is not None]
-        persisted.append({"role": message["role"], "content": content})
-    return persisted
-
-
-def _history_block(block: dict) -> dict | None:
-    if block.get("type") == "text":
-        text = _strip_tool_call_syntax(block.get("text"))
-        return {"type": "text", "text": text} if text else None
-    if block.get("type") == "tool_result" and isinstance(block.get("content"), str):
-        return {**block, "content": block["content"][:_HISTORY_RESULT_CHARS]}
-    return block
+    return [
+        {
+            "role": message["role"],
+            "content": list(message["content"])
+            if isinstance(message["content"], list)
+            else message["content"],
+        }
+        for message in exchange
+    ]
 
 
 class Engine:
@@ -623,7 +612,7 @@ class Engine:
                         "tool": prefixed_name,
                         "input": tool_input,
                         "approved": approved,
-                        "result_summary": result[:_HISTORY_RESULT_CHARS],
+                        "result_summary": result[:500],
                     })
 
                     # Record approval pattern for learning
@@ -653,8 +642,6 @@ class Engine:
         if _wf_active:
             _wf_ctx.__exit__(None, None, None)
 
-        # Captured before the nudge below: the final reply replaces the last
-        # assistant message's text when this exchange is replayed.
         exchange_api = self._llm.native_api
         exchange = _replayable_exchange(messages[exchange_start:]) if exchange_api else None
 
@@ -682,6 +669,9 @@ class Engine:
                 call_type="synthesis",
             )
             response_text = self._extract_raw_text(nudge_response).strip()
+            # The nudge reply may hold tool calls that never ran, so it cannot be
+            # replayed verbatim; history falls back to the portable reconstruction.
+            exchange = None
 
         response_text = response_text or "(no response)"
 
@@ -939,15 +929,23 @@ class Engine:
 
         Images are included for the most recent ``_MAX_IMAGE_HISTORY_TURNS``
         turns that have them, keeping older turns text-only to avoid context bloat.
+        Turns replayed natively (see ``_replayable_exchange``) always keep their
+        images and are not counted: their input must be resent unchanged.
         """
         turns = session.get("turns", [])
         recent = turns[-self._max_history:] if turns else []
+        # Provider-specific blocks only replay to the API that produced them;
+        # after a provider change the portable reconstruction below is used.
+        native = {
+            idx for idx, turn in enumerate(recent)
+            if turn.get("exchange") and turn.get("exchange_api") == self._llm.native_api
+        }
 
         # Find which turns may carry images (only the last N)
         image_budget = self._MAX_IMAGE_HISTORY_TURNS
-        image_turn_indices: set[int] = set()
+        image_turn_indices: set[int] = set(native)
         for idx in range(len(recent) - 1, -1, -1):
-            if recent[idx].get("images") and image_budget > 0:
+            if recent[idx].get("images") and idx not in native and image_budget > 0:
                 image_turn_indices.add(idx)
                 image_budget -= 1
 
@@ -972,19 +970,8 @@ class Engine:
 
             messages.append({"role": "user", "content": user_content})
 
-            exchange = turn.get("exchange")
-            # Provider-specific blocks only replay to the API that produced them;
-            # after a provider change the portable reconstruction below is used.
-            if exchange and turn.get("exchange_api") == self._llm.native_api:
-                # Replay in original order; the final reply (which may come from a
-                # nudge or carry a fact-check note) replaces the last message's text.
-                kept = [b for b in exchange[-1]["content"] if b.get("type") != "text"]
-                messages.extend(exchange[:-1])
-                messages.append({"role": "assistant", "content": kept + [{
-                    "type": "text",
-                    "text": _strip_tool_call_syntax(turn.get("assistant_response"))
-                    or "(no response)",
-                }]})
+            if turn_idx in native:
+                messages.extend(turn["exchange"])
                 continue
 
             tool_calls = turn.get("tool_calls", [])

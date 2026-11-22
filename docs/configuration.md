@@ -253,7 +253,10 @@ For xAI, set `model` to an available Grok model, `api_key` to `${XAI_API_KEY}`, 
 Set `api: responses` for reasoning models that reject function tools on Chat Completions;
 requests then go to `/responses` (`max_output_tokens`, `instructions`). Mithai sends them with
 `store: false` and requests encrypted reasoning content, keeping reasoning items in the
-conversation so they are passed back on the next turn. `reasoning_effort` is sent as
+conversation so they are passed back on the next turn. To keep that reasoning, each turn's
+input and output are stored and resent verbatim: full tool outputs and every image stay in
+session history (up to `sessions.max_history` turns) instead of the usual 500-character summaries and
+two-turn image window. `reasoning_effort` is sent as
 `reasoning_effort` on Chat Completions and `reasoning.effort` on Responses. Retries, error
 classification and telemetry are identical on both APIs. Responses usage reports
 `cached_input_tokens` and `reasoning_tokens` alongside input and output tokens, as Chat

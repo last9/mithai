@@ -296,6 +296,46 @@ def test_responses_reasoning_items_survive_into_next_user_turn(api_server):
     assert replayed[6] == {"role": "user", "content": "second"}
 
 
+def test_responses_exchange_is_rebuilt_portably_after_switching_provider(api_server):
+    from mithai.adapters.base import IncomingMessage
+    from mithai.cli.run_cmd import _create_llm
+    from mithai.core.engine import Engine
+    from mithai.llm.bedrock import BedrockProvider
+    from mithai.state.memory import MemoryStateBackend
+
+    server, handler = api_server
+    handler.responses = [(200, _responses_success(tool=True)), (200, _responses_success())]
+    state = MemoryStateBackend()
+    bedrock = BedrockProvider(
+        access_key_id="x", secret_access_key="y", region="us-east-1", model="claude",
+    )
+    bedrock._client = Mock()
+    bedrock._client.converse.return_value = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+        "stopReason": "end_turn",
+        "usage": {"inputTokens": 1, "outputTokens": 1},
+    }
+    adapter = Mock()
+    adapter.fetch_thread_context.return_value = None
+    config = _openai_config(server, api="responses")
+
+    for text, llm in (("first", _create_llm(config)), ("second", bedrock)):
+        Engine(config, llm, state, skills={}).handle(
+            IncomingMessage(
+                text=text, channel_id="C1", user_id="alice", platform="slack",
+                thread_id="1.0", message_id="1.0",
+            ),
+            adapter,
+        )
+
+    sent = bedrock._client.converse.call_args_list[0].kwargs["messages"]
+    blocks = [block for message in sent for block in message["content"]]
+    assert not any(block.get("type") == "reasoning" for block in blocks)
+    assert [list(block) for block in blocks] == [
+        ["text"], ["toolUse"], ["toolResult"], ["text"], ["text"],
+    ]
+
+
 def test_replayable_exchange_only_kept_for_provider_blocks():
     from mithai.core.engine import _replayable_exchange
 
@@ -812,3 +852,14 @@ def test_telemetry_exception_hides_credentials(api_server, monkeypatch):
         for event in span.events
     ])
     assert "synthetic-secret" not in serialized
+
+
+def test_native_api_scopes_replay_to_responses_endpoint():
+    def provider(base_url, api="responses"):
+        return OpenAICompatibleProvider(api_key="k", model="m", base_url=base_url, api=api)
+
+    openai = provider("https://api.openai.com/v1")
+
+    assert openai.native_api == openai.with_model("other").native_api
+    assert openai.native_api != provider("https://api.x.ai/v1").native_api
+    assert provider("https://api.openai.com/v1", api="chat_completions").native_api is None

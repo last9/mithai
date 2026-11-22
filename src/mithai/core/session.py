@@ -145,6 +145,7 @@ class SessionManager:
         assistant_response: str,
         images: list[dict] | None = None,
         exchange: list[dict] | None = None,
+        exchange_api: str | None = None,
     ) -> dict:
         """Build a turn dict from the components of a single interaction.
 
@@ -153,7 +154,8 @@ class SessionManager:
         messages for recent turns.
 
         *exchange* is the turn's assistant/tool message sequence, persisted only when
-        it carries provider-specific blocks that ``_build_history`` must replay verbatim.
+        it carries provider-specific blocks that ``_build_history`` must replay verbatim,
+        and *exchange_api* the ``LLMProvider.native_api`` that produced it.
         """
         turn: dict = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -166,4 +168,5 @@ class SessionManager:
             turn["images"] = images
         if exchange:
             turn["exchange"] = exchange
+            turn["exchange_api"] = exchange_api
         return turn

@@ -655,7 +655,8 @@ class Engine:
 
         # Captured before the nudge below: the final reply replaces the last
         # assistant message's text when this exchange is replayed.
-        exchange = _replayable_exchange(messages[exchange_start:])
+        exchange_api = self._llm.native_api
+        exchange = _replayable_exchange(messages[exchange_start:]) if exchange_api else None
 
         # Extract raw text first (no fallback yet) so the nudge check sees "" not "(no response)"
         response_text = self._extract_raw_text(response)
@@ -702,6 +703,7 @@ class Engine:
             assistant_response=response_text,
             images=all_images if all_images else None,
             exchange=exchange,
+            exchange_api=exchange_api,
         )
         self._sessions.append_turn(session_key, turn)
 
@@ -971,7 +973,9 @@ class Engine:
             messages.append({"role": "user", "content": user_content})
 
             exchange = turn.get("exchange")
-            if exchange:
+            # Provider-specific blocks only replay to the API that produced them;
+            # after a provider change the portable reconstruction below is used.
+            if exchange and turn.get("exchange_api") == self._llm.native_api:
                 # Replay in original order; the final reply (which may come from a
                 # nudge or carry a fact-check note) replaces the last message's text.
                 kept = [b for b in exchange[-1]["content"] if b.get("type") != "text"]

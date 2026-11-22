@@ -81,6 +81,11 @@ class OpenAICompatibleProvider(LLMProvider):
         self._retry_delay = retry_delay
         self._timeout = timeout
 
+    @property
+    def native_api(self) -> str | None:
+        # Encrypted reasoning items are only valid at the endpoint that issued them.
+        return f"responses {self._url}" if self._api == "responses" else None
+
     def create_message(
         self,
         *,

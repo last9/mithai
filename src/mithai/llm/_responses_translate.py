@@ -3,6 +3,7 @@
 Requests are stateless (``store: false``): reasoning items come back with
 ``encrypted_content`` and are kept in the assistant message as ``reasoning`` blocks, so the
 next turn can replay them in their original position before the function calls they led to.
+Assistant text blocks likewise carry the message's ``phase`` so replay preserves it.
 """
 
 from __future__ import annotations
@@ -91,7 +92,10 @@ def _assistant_items(content: list[dict]) -> list[dict]:
                 "encrypted_content": block.get("encrypted_content"),
             })
         elif kind == "text" and block.get("text"):
-            items.append({"role": "assistant", "content": block["text"]})
+            item = {"role": "assistant", "content": block["text"]}
+            if block.get("phase"):
+                item["phase"] = block["phase"]
+            items.append(item)
         elif kind == "tool_use":
             items.append({
                 "type": "function_call",
@@ -134,7 +138,12 @@ def normalize_response(raw: dict) -> LLMResponse:
                 part.get("text") or part.get("refusal") or "" for part in item["content"]
             )
             if text:
-                content.append({"type": "text", "text": text})
+                block = {"type": "text", "text": text}
+                # Replay must keep the original phase, or the model may take a
+                # commentary preamble for its final answer.
+                if item.get("phase"):
+                    block["phase"] = item["phase"]
+                content.append(block)
         elif kind == "function_call":
             content.append({
                 "type": "tool_use",

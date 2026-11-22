@@ -91,18 +91,26 @@ def _strip_tool_call_syntax(text):
     return cleaned.strip()
 
 
+# Assistant block fields that ``_build_history`` can rebuild from a turn's summary.
+_PORTABLE_BLOCK_KEYS = {
+    "text": {"type", "text"},
+    "tool_use": {"type", "id", "name", "input"},
+}
+
+
 def _replayable_exchange(exchange: list[dict]) -> list[dict] | None:
     """Return the turn's assistant/tool messages to persist for verbatim replay.
 
     ``_build_history`` rebuilds tool calls from their summaries, which drops
-    provider-specific blocks such as Responses API ``reasoning`` items. Stateless
+    provider-specific blocks and fields such as Responses API ``reasoning`` items
+    and assistant message ``phase``. Stateless
     Responses requests must resend the original input and every output item
     unchanged, or the model may discard its reasoning, so a turn carrying such
     blocks keeps its exchange exactly as sent: unsanitized, tool results uncapped.
     Returns None when reconstruction loses nothing.
     """
     if not any(
-        block.get("type") not in ("text", "tool_use")
+        set(block) - _PORTABLE_BLOCK_KEYS.get(block.get("type"), set())
         for message in exchange
         if message["role"] == "assistant" and isinstance(message["content"], list)
         for block in message["content"]

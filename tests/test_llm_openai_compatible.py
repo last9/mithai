@@ -336,6 +336,67 @@ def test_responses_exchange_is_rebuilt_portably_after_switching_provider(api_ser
     ]
 
 
+def _image_message(text):
+    from mithai.adapters.base import ImageAttachment
+
+    return {"text": text, "images": [ImageAttachment(data="aW1n", media_type="image/png")]}
+
+
+@pytest.mark.parametrize("case", [
+    "long_tool_output", "leaked_tool_syntax", "thread_backfill", "pending_observation",
+    "image_outside_budget",
+])
+def test_responses_replay_keeps_every_request_an_exact_prefix_of_the_next(api_server, case):
+    """Stateless Responses requests must resend the original input and outputs unchanged."""
+    from mithai.adapters.base import IncomingMessage
+    from mithai.cli.run_cmd import _create_llm
+    from mithai.core.engine import Engine
+    from mithai.core.skill_loader import ToolDefinition
+    from mithai.state.memory import MemoryStateBackend
+
+    server, handler = api_server
+    turns =[{"text": "first"}, {"text": "second"}, {"text": "third"}]
+    if case == "image_outside_budget":
+        turns = [_image_message(t) for t in ("first", "second", "third")] + [{"text": "fourth"}]
+    final = _responses_success()
+    if case == "leaked_tool_syntax":
+        final["output"][0]["content"][0]["text"] = (
+            'done\n<function_calls><invoke name="x"></invoke></function_calls>'
+        )
+    for _ in turns:
+        handler.responses += [(200, _responses_success(tool=True)), (200, final)]
+    config = _openai_config(server, api="responses")
+    engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
+    result = "x" * 501 if case == "long_tool_output" else "ok"
+    engine._router.get_definition = Mock(return_value=ToolDefinition("run", "Run", {}))
+    engine._router.route = Mock(return_value=result)
+    adapter = Mock()
+    adapter.fetch_thread_context.return_value = (
+        ["bob: disk is full"] if case == "thread_backfill" else None
+    )
+
+    for index, turn in enumerate(turns):
+        if case == "pending_observation" and index == 1:
+            engine.observe(IncomingMessage(
+                text="bob: it recovered", channel_id="C1", user_id="bob", platform="slack",
+                thread_id="1.0", message_id="1.5",
+            ))
+        engine.handle(
+            IncomingMessage(
+                channel_id="C1", user_id="alice", platform="slack",
+                thread_id="1.0", message_id=f"{index + 2}.0", **turn,
+            ),
+            adapter,
+        )
+
+    inputs = [body["input"] for _, _, _, body in handler.requests]
+    for earlier, later in zip(inputs, inputs[1:]):
+        assert later[:len(earlier)] == earlier
+    assert len(inputs) == 2 * len(turns)
+    reply = {"role": "assistant", "content": final["output"][0]["content"][0]["text"]}
+    assert inputs[-1].count(reply) == len(turns) - 1
+
+
 def test_replayable_exchange_only_kept_for_provider_blocks():
     from mithai.core.engine import _replayable_exchange
 
@@ -349,15 +410,12 @@ def test_replayable_exchange_only_kept_for_provider_blocks():
     assert _replayable_exchange(plain) is None
 
     reasoning = {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "b"}
-    leaked = '<function_calls><invoke name="x"></invoke></function_calls>'
-    persisted = _replayable_exchange([
-        {"role": "assistant", "content": [reasoning, {"type": "text", "text": leaked}, call]},
-        *plain[1:],
-    ])
+    exchange = [{"role": "assistant", "content": [reasoning, call]}, *plain[1:]]
+    persisted = _replayable_exchange(exchange)
 
-    assert persisted[0]["content"] == [reasoning, call]
-    assert persisted[1]["content"][0]["content"] == "x" * 500
-    assert result["content"] == "x" * 600
+    assert persisted == exchange
+    persisted[0]["content"].append({"type": "text", "text": "later"})
+    assert exchange[0]["content"] == [reasoning, call]
 
 
 def test_chat_completions_passes_reasoning_effort_when_set(api_server):

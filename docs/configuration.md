@@ -289,9 +289,11 @@ Ordinary rate-limit HTTP 429 responses remain retryable. Validation, content-pol
 unclassified responses remain `ProviderError`. Error bodies, credentials, prompts, responses,
 and tool inputs are excluded from exceptions and telemetry.
 
-Compatibility is limited to text messages and function tool calls accepted by Chat
-Completions. Image, audio, reasoning, and provider-specific content blocks are not forwarded.
-The release is package version `0.14.0`; tag `v0.14.0` identifies its exact release commit.
+Chat Completions compatibility is limited to text messages and function tool calls; image,
+audio, reasoning, and provider-specific content blocks are not forwarded. Responses also
+forwards user images and reasoning items.
+The provider shipped in package version `0.14.0`; Responses API support in `0.15.0`. Tags
+`v0.14.0` and `v0.15.0` identify their exact release commits.
 
 ### AWS Bedrock
 

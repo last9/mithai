@@ -2,6 +2,19 @@
 
 All notable public changes will be documented here.
 
+## 0.15.0
+
+- Add OpenAI Responses API support: set `llm.openai.api: responses` so reasoning
+  models can call function tools. Requests are stateless and replay encrypted
+  reasoning items, so those sessions keep full tool outputs and images in history.
+- Pass an optional `llm.openai.reasoning_effort` on either API.
+- Report cached input and reasoning tokens from Chat Completions when returned.
+
+## 0.14.0
+
+- Add the OpenAI-compatible provider for OpenAI and xAI Chat Completions, with
+  retries and typed availability errors (`AvailabilityFailure`, `UnavailableReason`).
+
 ## 0.13.1
 
 - Restrict Telegram access to configured chats and protect approval decisions.

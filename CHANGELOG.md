@@ -20,6 +20,18 @@ All notable public changes will be documented here.
 - Migrate existing skills from `prompt.md` to `SKILL.md`; `prompt.md` is no
   longer loaded as a skill prompt.
 
+## 0.15.0
+
+- OpenAI-compatible provider: optional Responses API (`api: responses`) so reasoning models can
+  call function tools; reasoning items are replayed statelessly across turns.
+- Optional `reasoning_effort` for both OpenAI APIs; usage reports cached input and reasoning tokens
+  when the endpoint returns them.
+
+## 0.14.0
+
+- OpenAI-compatible provider for OpenAI and xAI (Chat Completions) with classified availability
+  errors.
+
 ## 0.12.0
 
 - Prepare Mithai for open-source publication.

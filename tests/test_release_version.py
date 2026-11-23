@@ -31,3 +31,9 @@ def test_openai_compatible_provider_release_has_new_version():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     # 0.13.1 predates the OpenAI-compatible provider and availability errors.
     assert Version(project["version"]) >= Version("0.14.0")
+
+
+def test_responses_api_release_has_new_version():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    # 0.14.0 predates Responses API support in the OpenAI-compatible provider.
+    assert Version(project["version"]) >= Version("0.15.0")

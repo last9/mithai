@@ -53,6 +53,15 @@ class LLMProvider(ABC):
             "content": content,
         }
 
+    @property
+    def native_api(self) -> str | None:
+        """Identify the API whose provider-specific content blocks this provider emits.
+
+        Session history replays such blocks only to a provider with the same identity.
+        None means every block this provider emits is portable.
+        """
+        return None
+
     def with_model(self, model: str) -> Self:
         """Return an equivalent provider configured to use another model."""
         provider = copy.copy(self)

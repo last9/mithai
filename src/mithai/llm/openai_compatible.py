@@ -1,4 +1,4 @@
-"""OpenAI Chat Completions compatible LLM provider."""
+"""OpenAI-compatible LLM provider for the Chat Completions and Responses APIs."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+from mithai.llm import _responses_translate as responses
 from mithai.llm.base import LLMProvider, LLMResponse
 
 
@@ -44,10 +45,14 @@ _USAGE_LIMIT_CODES = frozenset({
     "insufficient_quota",
 })
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504, 529})
+_API_PATHS = {"chat_completions": "/chat/completions", "responses": "/responses"}
 
 
 class OpenAICompatibleProvider(LLMProvider):
-    """OpenAI-compatible Chat Completions API, including OpenAI and xAI."""
+    """OpenAI-compatible Chat Completions or Responses API, including OpenAI and xAI.
+
+    Responses is for reasoning models that reject function tools on Chat Completions.
+    """
 
     def __init__(
         self,
@@ -58,17 +63,28 @@ class OpenAICompatibleProvider(LLMProvider):
         max_retries: int = 2,
         retry_delay: float = 0.5,
         timeout: float = 600,
+        api: str = "chat_completions",
+        reasoning_effort: str | None = None,
     ):
         if not api_key or not api_key.strip():
             raise ValueError("openai_compatible requires a non-blank api_key")
         if max_retries < 0:
             raise ValueError("max_retries must be non-negative")
+        if api not in _API_PATHS:
+            raise ValueError(f"api must be one of {', '.join(_API_PATHS)}")
         self._api_key = api_key
         self._model = model
-        self._url = _completion_url(base_url)
+        self._api = api
+        self._url = _endpoint_url(base_url, _API_PATHS[api])
+        self._reasoning_effort = reasoning_effort
         self._max_retries = max_retries
         self._retry_delay = retry_delay
         self._timeout = timeout
+
+    @property
+    def native_api(self) -> str | None:
+        # Encrypted reasoning items are only valid at the endpoint that issued them.
+        return f"responses {self._url}" if self._api == "responses" else None
 
     def create_message(
         self,
@@ -138,13 +154,19 @@ class OpenAICompatibleProvider(LLMProvider):
         if not _is_safe_header_value(self._api_key):
             raise ProviderError("LLM provider credentials are invalid") from None
 
-        payload: dict[str, Any] = {
-            "model": self._model,
-            _token_limit_field(self._url): max_tokens,
-            "messages": [{"role": "system", "content": system}, *_translate_messages(messages)],
-        }
-        if tools:
-            payload["tools"] = [_translate_tool(tool) for tool in tools]
+        if self._api == "responses":
+            payload = responses.build_request(
+                model=self._model,
+                system=system,
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                reasoning_effort=self._reasoning_effort,
+            )
+            normalize = responses.normalize_response
+        else:
+            payload = self._chat_completions_request(system, messages, tools, max_tokens)
+            normalize = _normalize_response
         encoded = json.dumps(payload, separators=(",", ":")).encode()
 
         for attempt in range(self._max_retries + 1):
@@ -175,7 +197,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     raise classified from None
                 with raw:
                     body = json.load(raw)
-                return _normalize_response(body)
+                return normalize(body)
             except (OSError, HTTPException):
                 if attempt < self._max_retries:
                     self._wait(attempt)
@@ -185,21 +207,33 @@ class OpenAICompatibleProvider(LLMProvider):
                 raise ProviderError("LLM provider returned an invalid response") from None
         raise AssertionError("retry loop exhausted without returning or raising")
 
+    def _chat_completions_request(self, system, messages, tools, max_tokens) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self._model,
+            _token_limit_field(self._url): max_tokens,
+            "messages": [{"role": "system", "content": system}, *_translate_messages(messages)],
+        }
+        if self._reasoning_effort:
+            payload["reasoning_effort"] = self._reasoning_effort
+        if tools:
+            payload["tools"] = [_translate_tool(tool) for tool in tools]
+        return payload
+
     def _wait(self, attempt: int) -> None:
         if self._retry_delay:
             time.sleep(self._retry_delay * (2**attempt))
 
 
-def _completion_url(base_url: str) -> str:
+def _endpoint_url(base_url: str, api_path: str) -> str:
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.query or parsed.fragment:
         raise ValueError("base_url must be an HTTP(S) origin and path without query or fragment")
-    path = f"{parsed.path.rstrip('/')}/chat/completions"
+    path = f"{parsed.path.rstrip('/')}{api_path}"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
-def _token_limit_field(completion_url: str) -> str:
-    if urlsplit(completion_url).hostname == "api.openai.com":
+def _token_limit_field(endpoint_url: str) -> str:
+    if urlsplit(endpoint_url).hostname == "api.openai.com":
         return "max_completion_tokens"
     return "max_tokens"
 
@@ -247,24 +281,13 @@ def _translate_messages(messages: list[dict]) -> list[dict]:
             translated.extend({
                 "role": "tool",
                 "tool_call_id": block["tool_use_id"],
-                "content": _tool_result_content(block.get("content", "")),
+                "content": responses.tool_result_text(block.get("content", "")),
             } for block in tool_results)
             if text:
                 translated.append({"role": role, "content": text})
         else:
             translated.append({"role": role, "content": text})
     return translated
-
-
-def _tool_result_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            block.get("text", "") if isinstance(block, dict) else str(block)
-            for block in content
-        )
-    return str(content)
 
 
 def _normalize_response(raw: dict) -> LLMResponse:
@@ -291,10 +314,12 @@ def _normalize_response(raw: dict) -> LLMResponse:
         content=content,
         stop_reason=stop_reason,
         model=raw.get("model", ""),
-        usage={
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-        },
+        usage=responses.normalize_usage(
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+            cached_input_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+            reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+        ),
     )
 
 

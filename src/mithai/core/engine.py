@@ -91,6 +91,42 @@ def _strip_tool_call_syntax(text):
     return cleaned.strip()
 
 
+# Assistant block fields that ``_build_history`` can rebuild from a turn's summary.
+_PORTABLE_BLOCK_KEYS = {
+    "text": {"type", "text"},
+    "tool_use": {"type", "id", "name", "input"},
+}
+
+
+def _replayable_exchange(exchange: list[dict]) -> list[dict] | None:
+    """Return the turn's assistant/tool messages to persist for verbatim replay.
+
+    ``_build_history`` rebuilds tool calls from their summaries, which drops
+    provider-specific blocks and fields such as Responses API ``reasoning`` items
+    and assistant message ``phase``. Stateless
+    Responses requests must resend the original input and every output item
+    unchanged, or the model may discard its reasoning, so a turn carrying such
+    blocks keeps its exchange exactly as sent: unsanitized, tool results uncapped.
+    Returns None when reconstruction loses nothing.
+    """
+    if not any(
+        set(block) - _PORTABLE_BLOCK_KEYS.get(block.get("type"), set())
+        for message in exchange
+        if message["role"] == "assistant" and isinstance(message["content"], list)
+        for block in message["content"]
+    ):
+        return None
+    return [
+        {
+            "role": message["role"],
+            "content": list(message["content"])
+            if isinstance(message["content"], list)
+            else message["content"],
+        }
+        for message in exchange
+    ]
+
+
 class Engine:
     """
     The brain of mithai.
@@ -383,6 +419,7 @@ class Engine:
             user_content = text_content
 
         messages = history + [{"role": "user", "content": user_content}]
+        exchange_start = len(messages)
 
         # Initial LLM call
         adapter.on_thinking_start()
@@ -613,6 +650,9 @@ class Engine:
         if _wf_active:
             _wf_ctx.__exit__(None, None, None)
 
+        exchange_api = self._llm.native_api
+        exchange = _replayable_exchange(messages[exchange_start:]) if exchange_api else None
+
         # Extract raw text first (no fallback yet) so the nudge check sees "" not "(no response)"
         response_text = self._extract_raw_text(response)
         # Re-sanitize after the prefix strip: removing a leading "[Tools called:]"
@@ -637,6 +677,9 @@ class Engine:
                 call_type="synthesis",
             )
             response_text = self._extract_raw_text(nudge_response).strip()
+            # The nudge reply may hold tool calls that never ran, so it cannot be
+            # replayed verbatim; history falls back to the portable reconstruction.
+            exchange = None
 
         response_text = response_text or "(no response)"
 
@@ -657,6 +700,8 @@ class Engine:
             tool_calls=turn_tool_calls,
             assistant_response=response_text,
             images=all_images if all_images else None,
+            exchange=exchange,
+            exchange_api=exchange_api,
         )
         self._sessions.append_turn(session_key, turn)
 
@@ -892,15 +937,23 @@ class Engine:
 
         Images are included for the most recent ``_MAX_IMAGE_HISTORY_TURNS``
         turns that have them, keeping older turns text-only to avoid context bloat.
+        Turns replayed natively (see ``_replayable_exchange``) always keep their
+        images and are not counted: their input must be resent unchanged.
         """
         turns = session.get("turns", [])
         recent = turns[-self._max_history:] if turns else []
+        # Provider-specific blocks only replay to the API that produced them;
+        # after a provider change the portable reconstruction below is used.
+        native = {
+            idx for idx, turn in enumerate(recent)
+            if turn.get("exchange") and turn.get("exchange_api") == self._llm.native_api
+        }
 
         # Find which turns may carry images (only the last N)
         image_budget = self._MAX_IMAGE_HISTORY_TURNS
-        image_turn_indices: set[int] = set()
+        image_turn_indices: set[int] = set(native)
         for idx in range(len(recent) - 1, -1, -1):
-            if recent[idx].get("images") and image_budget > 0:
+            if recent[idx].get("images") and idx not in native and image_budget > 0:
                 image_turn_indices.add(idx)
                 image_budget -= 1
 
@@ -924,6 +977,10 @@ class Engine:
                 user_content = turn["user_message"]
 
             messages.append({"role": "user", "content": user_content})
+
+            if turn_idx in native:
+                messages.extend(turn["exchange"])
+                continue
 
             tool_calls = turn.get("tool_calls", [])
             if tool_calls:

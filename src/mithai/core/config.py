@@ -63,6 +63,8 @@ class LLMOpenAIConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     max_retries: int = 2
     timeout: float = 600
+    api: str = "chat_completions"  # or "responses"
+    reasoning_effort: str | None = None
 
 
 class LLMConfig(BaseModel):

@@ -292,7 +292,8 @@ llm:
 ```
 
 The provider calls the base URL's `/chat/completions` endpoint and retries transient
-HTTP failures twice. See [Configuration: LLM providers](docs/configuration.md#openai-compatible)
+HTTP failures twice. For reasoning models that need function tools, set `api: responses`
+under `openai` to use `/responses` instead. See [Configuration: LLM providers](docs/configuration.md#openai-compatible)
 for the error contract and compatibility details.
 
 ### AWS Bedrock

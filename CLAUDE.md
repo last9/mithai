@@ -86,6 +86,11 @@ Tests use `pytest` with `pytest-asyncio` (async mode = `"auto"`). Test fixtures 
 - Classify provider- and model-specific API fields explicitly, and wire-test every supported endpoint/model payload.
 - Validate provider-required settings from raw configuration before shared defaults are flattened, including omitted values at dispatch.
 - Parse provider termination state before truncation can invalidate fields, and integration-test recovery without executing incomplete tool calls.
+- Put connection setup and success/error body reads under one retry boundary; test clean-EOF and TCP-reset recovery and exhaustion at every phase.
+- Classify terminal provider error codes before status-based retries; table-test statuses shared by terminal and retryable codes.
+- Sanitize provider errors before they escape: suppress credential-bearing causes, validate headers before construction, and test via formatted tracebacks and exported exception attributes.
+- Clone the provider instance for alternate models so credentials, endpoints, retry policy and transport settings stay unchanged.
+- Pass provider identity explicitly to telemetry helpers whose defaults describe another backend, and assert every emitted measurement label.
 
 When bumping the CA bundle (`certifi`), prove the change with a TLS handshake through a CONNECT proxy: the new bundle rejects the distrusted host, the old bundle accepts it, and a normal host still passes.
 

@@ -527,11 +527,14 @@ class Engine:
 
                 if tool_def is None:
                     result = json.dumps({"error": f"Unknown tool: {prefixed_name}"})
-                    turn_tool_calls.append({
+                    stored_tool_call = {
                         "tool": prefixed_name,
                         "input": tool_input,
                         "error": f"Unknown tool: {prefixed_name}",
-                    })
+                    }
+                    if "extra_content" in block:
+                        stored_tool_call["extra_content"] = block["extra_content"]
+                    turn_tool_calls.append(stored_tool_call)
                 else:
                     # Build context early — needed for dynamic human resolution and execution
                     skill_name = prefixed_name.split("__")[0]
@@ -616,12 +619,15 @@ class Engine:
                         if on_tool_result:
                             on_tool_result(prefixed_name, tool_input, result)
 
-                    turn_tool_calls.append({
+                    stored_tool_call = {
                         "tool": prefixed_name,
                         "input": tool_input,
                         "approved": approved,
                         "result_summary": result[:500],
-                    })
+                    }
+                    if "extra_content" in block:
+                        stored_tool_call["extra_content"] = block["extra_content"]
+                    turn_tool_calls.append(stored_tool_call)
 
                     # Record approval pattern for learning
                     if effective_def.human is not None:
@@ -989,12 +995,15 @@ class Engine:
                 tool_result_blocks = []
                 for tc_idx, tc in enumerate(tool_calls):
                     tool_id = f"hist_{turn_idx}_{tc_idx}"
-                    tool_use_blocks.append({
+                    tool_use = {
                         "type": "tool_use",
                         "id": tool_id,
                         "name": tc["tool"],
                         "input": tc.get("input", {}),
-                    })
+                    }
+                    if "extra_content" in tc:
+                        tool_use["extra_content"] = tc["extra_content"]
+                    tool_use_blocks.append(tool_use)
                     result = tc.get("result_summary", "")
                     if tc.get("error"):
                         result = json.dumps({"error": tc["error"]})

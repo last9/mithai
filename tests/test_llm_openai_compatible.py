@@ -296,6 +296,42 @@ def test_responses_reasoning_items_survive_into_next_user_turn(api_server):
     assert replayed[6] == {"role": "user", "content": "second"}
 
 
+def test_chat_completion_extra_content_survives_into_next_user_turn(api_server):
+    from mithai.adapters.base import IncomingMessage
+    from mithai.cli.run_cmd import _create_llm
+    from mithai.core.engine import Engine
+    from mithai.core.skill_loader import ToolDefinition
+    from mithai.state.memory import MemoryStateBackend
+
+    server, handler = api_server
+    tool_response = _success(tool=True)
+    extra_content = {"google": {"thought_signature": "signed-thought"}}
+    tool_response["choices"][0]["message"]["tool_calls"][0]["extra_content"] = extra_content
+    handler.responses = [
+        (200, tool_response),
+        (200, _success()),
+        (200, _success()),
+    ]
+    config = _openai_config(server)
+    engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
+    engine._router.get_definition = Mock(return_value=ToolDefinition("run", "Run", {}))
+    engine._router.route = Mock(return_value="ok")
+    adapter = Mock()
+    adapter.fetch_thread_context.return_value = None
+
+    for text in ("first", "second"):
+        engine.handle(
+            IncomingMessage(
+                text=text, channel_id="C1", user_id="alice", platform="slack",
+                thread_id="1.0", message_id="1.0",
+            ),
+            adapter,
+        )
+
+    replayed_call = handler.requests[2][3]["messages"][2]["tool_calls"][0]
+    assert replayed_call["extra_content"] == extra_content
+
+
 def test_responses_exchange_is_rebuilt_portably_after_switching_provider(api_server):
     from mithai.adapters.base import IncomingMessage
     from mithai.cli.run_cmd import _create_llm

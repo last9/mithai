@@ -330,6 +330,92 @@ def test_chat_completion_extra_content_survives_into_next_user_turn(api_server):
 
     replayed_call = handler.requests[2][3]["messages"][2]["tool_calls"][0]
     assert replayed_call["extra_content"] == extra_content
+    session_key = engine._sessions.session_key("slack", "1.0")
+    persisted_call = engine._sessions.load(session_key)["turns"][0]["tool_calls"][0]
+    assert persisted_call["extra_content_api"] == engine._llm.native_api
+
+
+def test_chat_completion_extra_content_is_dropped_after_endpoint_switch(api_server):
+    from mithai.adapters.base import IncomingMessage
+    from mithai.cli.run_cmd import _create_llm
+    from mithai.core.engine import Engine
+    from mithai.core.skill_loader import ToolDefinition
+    from mithai.llm.openai_compatible import OpenAICompatibleProvider
+    from mithai.state.memory import MemoryStateBackend
+
+    server, handler = api_server
+    tool_response = _success(tool=True)
+    tool_response["choices"][0]["message"]["tool_calls"][0]["extra_content"] = {
+        "google": {"thought_signature": "signed-thought"}
+    }
+    handler.responses = [(200, tool_response), (200, _success()), (200, _success())]
+    config = _openai_config(server)
+    engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
+    engine._router.get_definition = Mock(return_value=ToolDefinition("run", "Run", {}))
+    engine._router.route = Mock(return_value="ok")
+    adapter = Mock()
+    adapter.fetch_thread_context.return_value = None
+
+    engine.handle(
+        IncomingMessage(
+            text="first", channel_id="C1", user_id="alice", platform="slack",
+            thread_id="1.0", message_id="1.0",
+        ),
+        adapter,
+    )
+    engine._llm = OpenAICompatibleProvider(
+        api_key="secret-token",
+        model="grok-test",
+        base_url=f"http://127.0.0.1:{server.server_port}/other/v1",
+        max_retries=0,
+    )
+    engine.handle(
+        IncomingMessage(
+            text="second", channel_id="C1", user_id="alice", platform="slack",
+            thread_id="1.0", message_id="2.0",
+        ),
+        adapter,
+    )
+
+    replayed_call = handler.requests[2][3]["messages"][2]["tool_calls"][0]
+    assert "extra_content" not in replayed_call
+
+
+def test_chat_completion_extra_content_is_dropped_for_anthropic_history(api_server):
+    from mithai.cli.run_cmd import _create_llm
+    from mithai.core.engine import Engine
+    from mithai.state.memory import MemoryStateBackend
+
+    server, _handler = api_server
+    config = _openai_config(server)
+    engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
+    engine._llm = Mock(native_api=None)
+    session = {
+        "turns": [
+            {
+                "user_message": "first",
+                "assistant_response": "done",
+                "tool_calls": [
+                    {
+                        "tool": "shell__run",
+                        "input": {"command": "uptime"},
+                        "result_summary": "ok",
+                        "extra_content": {
+                            "google": {"thought_signature": "signed-thought"}
+                        },
+                        "extra_content_api": (
+                            "chat_completions "
+                            f"http://127.0.0.1:{server.server_port}/v1/chat/completions"
+                        ),
+                    }
+                ],
+            }
+        ],
+    }
+
+    history = engine._build_history(session)
+
+    assert "extra_content" not in history[1]["content"][0]
 
 
 def test_responses_exchange_is_rebuilt_portably_after_switching_provider(api_server):
@@ -999,12 +1085,12 @@ def test_telemetry_exception_hides_credentials(api_server, monkeypatch):
     assert "synthetic-secret" not in serialized
 
 
-def test_native_api_scopes_replay_to_responses_endpoint():
+@pytest.mark.parametrize("api", ["chat_completions", "responses"])
+def test_native_api_scopes_replay_to_provider_endpoint(api):
     def provider(base_url, api="responses"):
         return OpenAICompatibleProvider(api_key="k", model="m", base_url=base_url, api=api)
 
-    openai = provider("https://api.openai.com/v1")
+    openai = provider("https://api.openai.com/v1", api=api)
 
     assert openai.native_api == openai.with_model("other").native_api
-    assert openai.native_api != provider("https://api.x.ai/v1").native_api
-    assert provider("https://api.openai.com/v1", api="chat_completions").native_api is None
+    assert openai.native_api != provider("https://api.x.ai/v1", api=api).native_api

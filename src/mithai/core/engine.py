@@ -534,6 +534,7 @@ class Engine:
                     }
                     if "extra_content" in block:
                         stored_tool_call["extra_content"] = block["extra_content"]
+                        stored_tool_call["extra_content_api"] = self._llm.native_api
                     turn_tool_calls.append(stored_tool_call)
                 else:
                     # Build context early — needed for dynamic human resolution and execution
@@ -627,6 +628,7 @@ class Engine:
                     }
                     if "extra_content" in block:
                         stored_tool_call["extra_content"] = block["extra_content"]
+                        stored_tool_call["extra_content_api"] = self._llm.native_api
                     turn_tool_calls.append(stored_tool_call)
 
                     # Record approval pattern for learning
@@ -1001,7 +1003,10 @@ class Engine:
                         "name": tc["tool"],
                         "input": tc.get("input", {}),
                     }
-                    if "extra_content" in tc:
+                    if (
+                        "extra_content" in tc
+                        and tc.get("extra_content_api") == self._llm.native_api
+                    ):
                         tool_use["extra_content"] = tc["extra_content"]
                     tool_use_blocks.append(tool_use)
                     result = tc.get("result_summary", "")

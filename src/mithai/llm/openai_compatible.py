@@ -83,8 +83,8 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @property
     def native_api(self) -> str | None:
-        # Encrypted reasoning items are only valid at the endpoint that issued them.
-        return f"responses {self._url}" if self._api == "responses" else None
+        # Provider-specific response fields are only valid at the endpoint that issued them.
+        return f"{self._api} {self._url}"
 
     def create_message(
         self,

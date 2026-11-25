@@ -250,6 +250,23 @@ llm:
 For xAI, set `model` to an available Grok model, `api_key` to `${XAI_API_KEY}`, and
 `base_url` to `https://api.x.ai/v1`. Mithai appends `/chat/completions` exactly once.
 
+For Gemini's OpenAI-compatible endpoint, use Chat Completions:
+
+```yaml
+llm:
+  provider: openai
+  model: gemini-4-neon
+  openai:
+    api_key: ${GEMINI_API_KEY}
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    reasoning_effort: high
+```
+
+Gemini maps `reasoning_effort` to its thinking levels. Gemini 4 Neon accepts `low`, `medium`,
+`high`, and `xhigh`; it rejects `minimal` and does not support `thinking_budget` through this
+configuration. Mithai preserves each tool call's thought signature when replaying conversation
+history, including when only one of several parallel calls carries a signature.
+
 Set `api: responses` for reasoning models that reject function tools on Chat Completions;
 requests then go to `/responses` (`max_output_tokens`, `instructions`). Mithai sends them with
 `store: false` and requests encrypted reasoning content, keeping reasoning items in the

@@ -268,14 +268,19 @@ def _translate_messages(messages: list[dict]) -> list[dict]:
             item: dict[str, Any] = {"role": "assistant"}
             if text:
                 item["content"] = text
-            item["tool_calls"] = [{
-                "id": block["id"],
-                "type": "function",
-                "function": {
-                    "name": block["name"],
-                    "arguments": json.dumps(block.get("input", {}), separators=(",", ":")),
-                },
-            } for block in tool_uses]
+            item["tool_calls"] = []
+            for block in tool_uses:
+                call = {
+                    "id": block["id"],
+                    "type": "function",
+                    "function": {
+                        "name": block["name"],
+                        "arguments": json.dumps(block.get("input", {}), separators=(",", ":")),
+                    },
+                }
+                if "extra_content" in block:
+                    call["extra_content"] = block["extra_content"]
+                item["tool_calls"].append(call)
             translated.append(item)
         elif tool_results:
             translated.extend({
@@ -300,12 +305,15 @@ def _normalize_response(raw: dict) -> LLMResponse:
         content.append({"type": "text", "text": message["content"]})
     for call in message.get("tool_calls") or []:
         function = call["function"]
-        content.append({
+        tool_use = {
             "type": "tool_use",
             "id": call["id"],
             "name": function["name"],
             "input": {} if truncated else json.loads(function.get("arguments") or "{}"),
-        })
+        }
+        if "extra_content" in call:
+            tool_use["extra_content"] = call["extra_content"]
+        content.append(tool_use)
     stop_reason = {"tool_calls": "tool_use", "stop": "end_turn", "length": "max_tokens"}.get(
         finish_reason, finish_reason
     )

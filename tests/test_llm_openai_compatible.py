@@ -546,6 +546,50 @@ def test_tool_call_round_trip(api_server):
     assert second_body["messages"][2] == {"role": "tool", "tool_call_id": "call_1", "content": "ok"}
 
 
+def test_tool_call_extra_content_round_trips_on_replay(api_server):
+    server, handler = api_server
+    first_body = _success(tool=True)
+    extra_content = {"google": {"thought_signature": "signed-thought"}}
+    first_body["choices"][0]["message"]["tool_calls"][0]["extra_content"] = extra_content
+    handler.responses = [(200, first_body), (200, _success())]
+    provider = _provider(server)
+
+    first = provider.create_message(system="system", messages=[])
+    provider.create_message(
+        system="system",
+        messages=[
+            {"role": "assistant", "content": first.content},
+            {"role": "user", "content": [provider.format_tool_result("call_1", "ok")]},
+        ],
+    )
+
+    assert first.content[0]["extra_content"] == extra_content
+    assert handler.requests[1][3]["messages"][1]["tool_calls"][0]["extra_content"] == extra_content
+
+
+def test_parallel_tool_calls_keep_extra_content_on_its_source_call(api_server):
+    server, handler = api_server
+    first_body = _success(tool=True)
+    tool_calls = first_body["choices"][0]["message"]["tool_calls"]
+    tool_calls[0]["extra_content"] = {"google": {"thought_signature": "first-only"}}
+    tool_calls.append({
+        "id": "call_2",
+        "type": "function",
+        "function": {"name": "shell__run", "arguments": '{"command":"date"}'},
+    })
+    handler.responses = [(200, first_body), (200, _success())]
+    provider = _provider(server)
+
+    first = provider.create_message(system="system", messages=[])
+    provider.create_message(system="system", messages=[{"role": "assistant", "content": first.content}])
+
+    replayed_calls = handler.requests[1][3]["messages"][1]["tool_calls"]
+    assert replayed_calls[0]["extra_content"] == {
+        "google": {"thought_signature": "first-only"}
+    }
+    assert "extra_content" not in replayed_calls[1]
+
+
 def test_tool_results_precede_text_from_the_same_user_message(api_server):
     server, handler = api_server
     handler.responses = [(200, _success())]

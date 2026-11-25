@@ -94,7 +94,8 @@ def _strip_tool_call_syntax(text):
 # Assistant block fields that ``_build_history`` can rebuild from a turn's summary.
 _PORTABLE_BLOCK_KEYS = {
     "text": {"type", "text"},
-    "tool_use": {"type", "id", "name", "input"},
+    # extra_content is stored with its source API and restored only for that API.
+    "tool_use": {"type", "id", "name", "input", "extra_content"},
 }
 
 

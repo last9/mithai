@@ -315,7 +315,7 @@ def test_chat_completion_extra_content_survives_into_next_user_turn(api_server):
     config = _openai_config(server)
     engine = Engine(config, _create_llm(config), MemoryStateBackend(), skills={})
     engine._router.get_definition = Mock(return_value=ToolDefinition("run", "Run", {}))
-    engine._router.route = Mock(return_value="ok")
+    engine._router.route = Mock(return_value="x" * 2000)
     adapter = Mock()
     adapter.fetch_thread_context.return_value = None
 
@@ -331,8 +331,11 @@ def test_chat_completion_extra_content_survives_into_next_user_turn(api_server):
     replayed_call = handler.requests[2][3]["messages"][2]["tool_calls"][0]
     assert replayed_call["extra_content"] == extra_content
     session_key = engine._sessions.session_key("slack", "1.0")
-    persisted_call = engine._sessions.load(session_key)["turns"][0]["tool_calls"][0]
+    first_turn = engine._sessions.load(session_key)["turns"][0]
+    assert "exchange" not in first_turn
+    persisted_call = first_turn["tool_calls"][0]
     assert persisted_call["extra_content_api"] == engine._llm.native_api
+    assert len(handler.requests[2][3]["messages"][3]["content"]) == 500
 
 
 def test_chat_completion_extra_content_is_dropped_after_endpoint_switch(api_server):

@@ -94,7 +94,8 @@ def _strip_tool_call_syntax(text):
 # Assistant block fields that ``_build_history`` can rebuild from a turn's summary.
 _PORTABLE_BLOCK_KEYS = {
     "text": {"type", "text"},
-    "tool_use": {"type", "id", "name", "input"},
+    # extra_content is stored with its source API and restored only for that API.
+    "tool_use": {"type", "id", "name", "input", "extra_content"},
 }
 
 
@@ -527,11 +528,15 @@ class Engine:
 
                 if tool_def is None:
                     result = json.dumps({"error": f"Unknown tool: {prefixed_name}"})
-                    turn_tool_calls.append({
+                    stored_tool_call = {
                         "tool": prefixed_name,
                         "input": tool_input,
                         "error": f"Unknown tool: {prefixed_name}",
-                    })
+                    }
+                    if "extra_content" in block:
+                        stored_tool_call["extra_content"] = block["extra_content"]
+                        stored_tool_call["extra_content_api"] = self._llm.native_api
+                    turn_tool_calls.append(stored_tool_call)
                 else:
                     # Build context early — needed for dynamic human resolution and execution
                     skill_name = prefixed_name.split("__")[0]
@@ -616,12 +621,16 @@ class Engine:
                         if on_tool_result:
                             on_tool_result(prefixed_name, tool_input, result)
 
-                    turn_tool_calls.append({
+                    stored_tool_call = {
                         "tool": prefixed_name,
                         "input": tool_input,
                         "approved": approved,
                         "result_summary": result[:500],
-                    })
+                    }
+                    if "extra_content" in block:
+                        stored_tool_call["extra_content"] = block["extra_content"]
+                        stored_tool_call["extra_content_api"] = self._llm.native_api
+                    turn_tool_calls.append(stored_tool_call)
 
                     # Record approval pattern for learning
                     if effective_def.human is not None:
@@ -989,12 +998,18 @@ class Engine:
                 tool_result_blocks = []
                 for tc_idx, tc in enumerate(tool_calls):
                     tool_id = f"hist_{turn_idx}_{tc_idx}"
-                    tool_use_blocks.append({
+                    tool_use = {
                         "type": "tool_use",
                         "id": tool_id,
                         "name": tc["tool"],
                         "input": tc.get("input", {}),
-                    })
+                    }
+                    if (
+                        "extra_content" in tc
+                        and tc.get("extra_content_api") == self._llm.native_api
+                    ):
+                        tool_use["extra_content"] = tc["extra_content"]
+                    tool_use_blocks.append(tool_use)
                     result = tc.get("result_summary", "")
                     if tc.get("error"):
                         result = json.dumps({"error": tc["error"]})
